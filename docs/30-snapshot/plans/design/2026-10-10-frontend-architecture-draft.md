@@ -82,6 +82,8 @@ A 成立的前提：
 | 跟著作業系統自動切深色 | 一律明確寫 `data-theme` | 執行紀錄頁固定深色，其他頁固定淺色，不隨系統變 |
 
 > token 命名的正式決定寫成 ADR（由架構 session 撰寫，見第 10 部分）；ADR 定案後，這一節以 ADR 為準。
+>
+> **已定案：ADR-0007**（`10-truth/adr/0007-design-token-naming.md`）。跟本節不同的四點以 ADR 為準：`--font-reading-serif` 沿用名字、改值（Loomy 原本只有中文明體）；黃色只當底色，「輪到你了」是黃底墨字（`--color-on-action`）；靛藍狀態的文字用 `--color-accent-mark-text`；「不跟系統自動切深色」本來就是 Loomy 的規定，所以不採用的 Loomy 規則是 4 條，不是 5 條。
 
 ### 設計 token
 
