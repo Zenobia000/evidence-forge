@@ -1,12 +1,11 @@
 # 議題追蹤器
 
-GitHub Issues，repo `<owner>/<repo>`，用 `gh` CLI。
-（`<owner>/<repo>` 是佔位；`/init-from-template` 會換成真的，或手動全文取代。）
+GitHub Issues，repo `Zenobia000/evidence-forge`，用 `gh` CLI。
 
 ## 開票
 
 ```bash
-gh issue create --repo <owner>/<repo> \
+gh issue create --repo Zenobia000/evidence-forge \
   --title "<標題>" --body-file <內文檔> --label <spec|ticket> [--milestone "<里程碑名>"]
 ```
 
@@ -16,7 +15,7 @@ gh issue create --repo <owner>/<repo> \
 ## 列出開著的票
 
 ```bash
-gh issue list --repo <owner>/<repo> --state open --label ticket --limit 100 \
+gh issue list --repo Zenobia000/evidence-forge --state open --label ticket --limit 100 \
   --json number,title,labels,milestone
 ```
 
@@ -27,14 +26,14 @@ gh issue list --repo <owner>/<repo> --state open --label ticket --limit 100 \
 加上阻塞關係：先查擋路那張票的內部 id，再掛到被擋的票上。
 
 ```bash
-id=$(gh api repos/<owner>/<repo>/issues/<擋路的票號> --jq .id)
-gh api -X POST repos/<owner>/<repo>/issues/<被擋的票號>/dependencies/blocked_by -F issue_id=$id
+id=$(gh api repos/Zenobia000/evidence-forge/issues/<擋路的票號> --jq .id)
+gh api -X POST repos/Zenobia000/evidence-forge/issues/<被擋的票號>/dependencies/blocked_by -F issue_id=$id
 ```
 
 查一張票被誰擋住：
 
 ```bash
-gh api repos/<owner>/<repo>/issues/<票號>/dependencies/blocked_by --jq '.[] | "\(.number) \(.state)"'
+gh api repos/Zenobia000/evidence-forge/issues/<票號>/dependencies/blocked_by --jq '.[] | "\(.number) \(.state)"'
 ```
 
 **可以動工**＝所有 blocked_by 的票都是 closed。
@@ -45,7 +44,7 @@ gh api repos/<owner>/<repo>/issues/<票號>/dependencies/blocked_by --jq '.[] | 
 （例：`docs/30-snapshot/plans/<日期>-<名稱>.md`〈里程碑與驗收節點〉）。
 
 ```bash
-gh api -X POST repos/<owner>/<repo>/milestones -f title="<名稱>" -f description="<說明>"
+gh api -X POST repos/Zenobia000/evidence-forge/milestones -f title="<名稱>" -f description="<說明>"
 ```
 
 ## 內文放在哪

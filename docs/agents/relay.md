@@ -8,7 +8,7 @@
 
 - **誰在做什麼**：看 GitHub，不看記憶。一張票開工，就在票上留一句 `開工：<哪台／哪個 session> <日期時間>` 並加標籤 `in-progress`；
   分支名帶票號（`feat/<票號>-<短描述>`）。PR 開了就把 `in-progress` 拿掉（PR 本身就是狀態）。
-- **接力日誌**：開一張 pinned issue，標題「接力日誌」，標籤 `relay`。號碼寫在這裡：`#<接力日誌票號>`（`/init-from-template` 建好之後填進來）。
+- **接力日誌**：開一張 pinned issue，標題「接力日誌」，標籤 `relay`。號碼：`#2`。
   每次下班（換手）前留一則，三段：
   1. 合進去的（PR 號）。
   2. 開著的（PR 號、等誰：審查幾輪、使用者按、還是對方接）。
@@ -20,7 +20,7 @@
 
 ```bash
 git fetch --prune origin
-gh issue view <接力日誌票號> --comments | tail -40   # 讀最新的換班留言
+gh issue view 2 --comments | tail -40   # 讀最新的換班留言
 gh pr list --state open                              # 誰開著、疊在誰上面
 gh issue list --label in-progress                    # 誰在做
 git branch -r                                        # 遠端有哪些分支、名字裡的票號

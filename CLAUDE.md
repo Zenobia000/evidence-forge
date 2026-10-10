@@ -1,15 +1,14 @@
-# your-project
+# evidence-forge
 
 ## 這個 repo 的狀態
 
-<!-- 佔位：/init-from-template 會問你，然後換掉這一段。寫兩三句：這個專案在做什麼、現在走到哪、有什麼不能動的東西。 -->
-（還沒填。）背景與方向見 `README.md`。開發的順序與停點見 `.claude/skills/PIPELINE.md`。
+Evidence-led Editorial Studio：貼一篇技術文章，系統追出它引用的來源、做研究，由創作者在定題 Gate 決定立場，再產出每個事實都附引用的 MDX 草稿。現在在規劃階段：需求（`docs/10-truth/requirements/prd.md`）、決策（ADR-0001～0006）、設計草案與排程計畫（`docs/30-snapshot/plans/`）都寫好了，還沒有產品程式；下一步是 R0 基線與契約，進度看 `docs/20-state/progress.md`。不能動的：`docs/30-snapshot/` 只增不改；決策以 ADR 為準，要推翻就先寫一份新的 ADR。
 
 ## Agent skills
 
 ### Issue tracker
 
-GitHub Issues（`<owner>/<repo>`，`gh` CLI）。見 `docs/agents/issue-tracker.md`。
+GitHub Issues（`Zenobia000/evidence-forge`，`gh` CLI）。見 `docs/agents/issue-tracker.md`。
 
 <!-- 選用：多台電腦或多個 session 輪流推這個 repo 時才留下面這一段；只有一條線就刪掉，連同 docs/agents/relay.md。 -->
 ### 多台電腦／多 session 接力

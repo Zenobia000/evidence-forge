@@ -1,21 +1,19 @@
 > 這套工作方式是怎麼長出來的、每一條規則背後出過什麼事：[`docs/history/how-this-workflow-grew.md`](docs/history/how-this-workflow-grew.md)
 
-# AI coding 工作流範本（Claude Code ＋ GitHub ＋ Python/uv）
+# evidence-forge — Evidence-led Editorial Studio
 
-## 這個範本是什麼
+## 這個專案是什麼
 
-讓 Claude Code 在一個 repo 裡**能放手做、又不會把東西弄壞**的一整套工作方式：家規、守衛（hook）、技能、文件分層、帳本，加上一副能跑的 Python 骨架。
+單人使用的研究與圖文產製工作室。貼一篇技術文章，拿到可追溯的證據、由你拍板的論點，和網站能直接預覽的 MDX 草稿。為什麼做、做給誰，見 `docs/00-intent/brief.md`。
 
-它不是事先設計的。前一個專案用 Claude Code 開發了五週，每出一次事就補一條規則；這裡把「工作方式」從產品裡拆出來，產品程式全部拿掉。所以每一條規則都有出處——查不到為什麼的時候，看最上面那份長文，或 `Ai-coding-principle/LESSONS.md` 對應的條目。
-
-範本原本服務的組合是 **Claude Code ＋ GitHub（Issues、PR、Actions）＋ pnpm／TypeScript**；這個 repo 把技術棧換成 **Python／uv**（pytest、mypy、ruff），CI 與合併閘的本機檢查（`human-only-paths.conf` 的 `check:`）已跟著改。`guard-git.sh` 寫死的預設檢查仍是 pnpm 版，所以 `check:` 那一行不能刪。
+工作方式（家規、守衛、技能、文件分層）來自 `ai-coding-workflow-template`，技術棧換成 Python／uv。`guard-git.sh` 寫死的預設檢查還是 pnpm 版，所以 `human-only-paths.conf` 的 `check:` 那一行不能刪。
 
 ## 快速開始
 
 需要：uv（Python 3.12 由 `.python-version` 釘住，`uv sync` 找不到時會自己下載）、`git`、`jq`、`gh`（並已 `gh auth login`）。**沒有 `jq` 的話守衛會擋下所有 shell 指令**——這是刻意的，見 `.claude/hooks/guard-git.sh`。
 
 1. **clone**：用這個範本開一個新 repo，clone 下來。
-2. **跑初始化技能**：在 repo 裡開 Claude Code，打 `/init-from-template`。它會問專案名、GitHub repo、分支模型、本機檢查指令、高風險路徑、要不要接力日誌，然後替換佔位、寫好守衛的設定、（問過之後）建標籤，最後列出下一步。
+2. **初始化**：已初始化（2026-10-10，`/init-from-template`）。
 3. **確認綠燈**：
 
    ```bash
