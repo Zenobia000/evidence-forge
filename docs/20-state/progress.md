@@ -22,7 +22,7 @@
 | 前端技術架構 | `30-snapshot/plans/design/2026-10-10-frontend-architecture-draft.md` | 待創作者確認 |
 | Run 狀態機 | `30-snapshot/plans/2026-10-10-run-state-machine-draft.md` | 待創作者與架構確認 |
 | 設計系統（Loomy，Artifact 版） | https://claude.ai/artifact/NxwdZTmM2cgFPgFVZVKP3z | 視覺 session 維護；token 命名待 ADR |
-| 13 頁 wireframe | https://claude.ai/artifact/5V74dVTcwULeRXbcko5rYt | 13 頁已畫；NFR-24 進度條待補 |
+| wireframe（13 頁＋Run 工作區 3 個整頁變體） | https://claude.ai/artifact/5V74dVTcwULeRXbcko5rYt（版本 1791633982-7d72） | 已照 IA（NFR-24、Q-10、三主題）與 ADR-0007 更新；R2 設計站的四頁可給創作者看 |
 
 ## 工作包
 

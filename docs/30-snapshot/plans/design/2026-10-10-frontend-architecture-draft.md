@@ -79,11 +79,13 @@ A 成立的前提：
 | 紅色只給不可逆操作與系統錯誤 | 關卡未通過、授權 denied、來源 unavailable 也用紅 | 這些都會擋下發布，看漏的代價跟系統錯誤一樣高 |
 | 寫作 app 專屬的規則（只能填 API key、不畫 Pro、寫作畫面沒有主要按鈕、側欄卡對齊段落、出處深淺滑桿） | 不適用 | 這是研究工作室，不是寫作 app |
 | 內文只用黑體、不用明體 | 標題用 Source Serif 4＋Noto Serif TC（Loomy 的 `--font-reading-serif`）；介面用 Inter＋Noto Sans TC | 創作者的 moodboard |
-| 跟著作業系統自動切深色 | 一律明確寫 `data-theme` | 執行紀錄頁固定深色，其他頁固定淺色，不隨系統變 |
+| 主題只能 `light` 或 `dark`，不跟系統 | 主題三選一：跟隨系統（預設）／淺色／深色，全部頁面一起切；仍一律明確寫 `data-theme`，多一個 `system` 值 | 創作者 2026-10-10 的要求；執行紀錄不再單獨固定深色（ADR-0008） |
 
 > token 命名的正式決定寫成 ADR（由架構 session 撰寫，見第 10 部分）；ADR 定案後，這一節以 ADR 為準。
 >
-> **已定案：ADR-0007**（`10-truth/adr/0007-design-token-naming.md`）。跟本節不同的四點以 ADR 為準：`--font-reading-serif` 沿用名字、改值（Loomy 原本只有中文明體）；黃色只當底色，「輪到你了」是黃底墨字（`--color-on-action`）；靛藍狀態的文字用 `--color-accent-mark-text`；「不跟系統自動切深色」本來就是 Loomy 的規定，所以不採用的 Loomy 規則是 4 條，不是 5 條。
+> **已定案：ADR-0007**（`10-truth/adr/0007-design-token-naming.md`）。跟本節不同的四點以 ADR 為準：`--font-reading-serif` 沿用名字、改值（Loomy 原本只有中文明體）；黃色只當底色，「輪到你了」是黃底墨字（`--color-on-action`）；靛藍狀態的文字用 `--color-accent-mark-text`；「不跟系統自動切深色」本來就是 Loomy 的規定。
+>
+> **主題：ADR-0008**（修正 ADR-0007 第 d 點）。創作者要求「預設跟隨系統」，Loomy 原文沒有 `system` 這個值，所以這是第 5 條不採用的 Loomy 規則；保留的是「一定要明確寫 `data-theme`」那一半。實作要點：深淺兩組值由產生 token 的程序一起產出，不手抄色碼；外觀偏好存在伺服器讀得到的地方（例：cookie），頁面才不會先閃一下錯的主題。
 
 ### 設計 token
 
