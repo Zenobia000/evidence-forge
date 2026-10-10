@@ -4,14 +4,15 @@
 
 case_id: 20261012-example-post
 labeled_at: 2026-10-12
-labeled_by: human           # human | claude-draft（AI 代標的草稿，要人看過才算數）
+labeled_by: human           # human，或 <模型>-draft（AI 代標的草稿，例：gpt-6-sol-draft；要人看過才算數）
 reviewed: false            # 人看過並修正後改成 true
 time_spent_min: 20          # 實際花了幾分鐘（讀＋標），用來估之後標註要花多少時間
 
 article:
   main_point: 一句話：這篇最想說服讀者的是什麼
   audience: 作者寫給誰看
-  type: opinion             # opinion 觀點 | tutorial 教學 | news 新聞整理 | research 研究報告 | product 產品介紹 | other
+  genre: roundup            # 主文類，harness/genres/ 的 id：news | hot-take | tutorial | tips | explainer | deep-dive | notes | review | case-study | opinion | story | roundup
+  secondary_genre: opinion  # 選填：次文類（例：電子報前半在論證）
 
 claims:
   - id: c1

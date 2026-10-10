@@ -1,5 +1,5 @@
 Feature: 整理別人的文章
-  # 需求：FR-DG-01、NFR-RUN-03｜故事：US-03｜檢查：C1、C5
+  # 需求：FR-DG-01、FR-DG-02、NFR-RUN-03｜故事：US-03｜檢查：C1、C5
 
   @happy-path @smoke
   Scenario: 整理出主張、觀點、結構、素材與研究方向
@@ -30,3 +30,20 @@ Feature: 整理別人的文章
     When 整理段處理這篇文章
     Then 那段話被當成文章內容整理
     And 沒有任何工具呼叫指向那個網址
+
+  @happy-path
+  Scenario: 先判斷文類，再依文類抽取
+    Given 一期電子報有多則連結，每則一兩句短評
+    When 整理段完成
+    Then 主文類是 roundup，並附判斷信心
+    And 產出包含 roundup 的抽取欄位：本期主題、每則的上游連結、重點與策展者評語
+
+  Scenario: 文類判斷信心低時提醒
+    Given 整理段對主文類的判斷信心低於門檻
+    When 工作單進待審
+    Then 待審畫面提醒「文類判斷信心低」，並列出次文類
+
+  Scenario: 轉述別人的主張記下上游
+    Given 原文寫「Armin Ronacher 認為高階 SDK 不好控制」並附連結
+    When 整理段完成
+    Then 那條主張標明被轉述者與上游連結
