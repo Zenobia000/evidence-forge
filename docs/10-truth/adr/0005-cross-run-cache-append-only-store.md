@@ -1,6 +1,7 @@
 # ADR-0005：跨 Run 快取，檔案儲存區只增不改
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0010、ADR-0011 修正實作——快取與只增不改改由閘道與工作單資料夾實作。原則不變。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。延伸 ADR-0003（State 與內容分開）與 ADR-0004（同一 Run 內的冪等），不覆蓋它們。
 
 ## 1. 背景與問題

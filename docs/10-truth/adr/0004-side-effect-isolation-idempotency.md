@@ -1,6 +1,7 @@
 # ADR-0004：外部副作用獨立成節點，用冪等鍵去重
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0010、ADR-0011 修正實作——不再有節點與 `operation_key`；所有外部呼叫經過閘道，靠請求 hash 快取與重播保證不重付。原則不變。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 
 ## 1. 背景與問題

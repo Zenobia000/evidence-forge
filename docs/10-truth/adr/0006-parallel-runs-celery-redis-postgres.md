@@ -1,6 +1,7 @@
 # ADR-0006：多個 Run 並行 — Celery＋Redis 排工作、PostgreSQL 存狀態、依資源限流
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0010 取代——工作單資料夾就是佇列，閘道的旗號就是資源鎖；不用 Celery、Redis、PostgreSQL。本文保留當時的理由。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **修正 ADR-0003 的持久化部分**：checkpoint 與 metadata 由 SQLite 改為 PostgreSQL。ADR-0003 的「State 只存 ID、內容放檔案儲存區」不變。
 

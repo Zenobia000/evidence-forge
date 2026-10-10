@@ -1,6 +1,7 @@
 # ADR-0001：工作流引擎用 LangGraph StateGraph，做成確定性節點圖
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0009 取代——agent 核心改用 Pi，流程寫成配方與 skill；人工停點由 ADR-0013 拿掉。本文保留當時的理由。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 
 ## 1. 背景與問題

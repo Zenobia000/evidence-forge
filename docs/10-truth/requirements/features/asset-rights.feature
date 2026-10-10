@@ -1,28 +1,26 @@
 Feature: 素材授權
-  # 需求：FR-08｜故事：US-08｜關卡：G4
+  # 需求：FR-AS-01、NFR-KEEP-03｜檢查：C4
 
-  @happy-path @smoke
-  Scenario: 授權清楚且已核准的圖片可以使用
-    Given 一張圖片的授權允許重製，創作者也已核准
-    When 系統打包內容
-    Then 那張圖片出現在內容包裡
-    And 素材清單記錄它的來源網址、出處頁、作者與授權
+  @happy-path
+  Scenario: 授權可用的圖可以嵌入稿子
+    Given 一張圖片的授權狀態是 ok
+    When 二創段在稿子裡嵌入它
+    Then C4 通過
+    And 素材清單記錄它的網址、出處頁、作者與授權
 
   @sad-path
-  Scenario Outline: 授權不明或被拒絕的圖片不會打包
+  Scenario Outline: 授權不明或被拒絕的圖不能嵌入
     Given 一張圖片的授權狀態是 "<license>"
-    When 系統打包內容
-    Then 那張圖片不會出現在公開的內容包裡
-    And 素材清單把它標成已擋下
-    And 那張圖片與它的授權資訊仍保存在本機，之後查得到為什麼擋下
+    When 二創段在稿子裡嵌入它
+    Then C4 不通過，執行器回二創段改成「參考圖」列出
+    And 那張圖與它的授權資訊仍保存在工作單資料夾，之後查得到為什麼沒用
 
     Examples:
       | license |
       | unknown |
       | denied  |
 
-  @sad-path
-  Scenario: 授權允許但創作者還沒核准，也不打包
-    Given 一張圖片的授權允許重製，但創作者還沒核准
-    When 系統打包內容
-    Then 那張圖片不會出現在公開的內容包裡
+  Scenario: 原文的圖預設只當參考
+    Given 電子報裡附了一張圖，沒有任何授權資訊
+    When 膠水層或補料段下載它
+    Then 它的授權狀態是 unknown

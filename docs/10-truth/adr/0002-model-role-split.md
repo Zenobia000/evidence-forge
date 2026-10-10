@@ -1,6 +1,7 @@
 # ADR-0002：模型分工 — Qwen 產問題、Opus 規劃與複核、Sonnet 寫作
 
 > **狀態：** 已接受（R5 重新評估） | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0011 修正——改成三個等級（local／strong／max）由配方宣告、失敗才升級；本機 Qwen 負責整理、補料、檢查，Sonnet 負責二創，Opus 只在升級時出現。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 
 ## 1. 背景與問題
