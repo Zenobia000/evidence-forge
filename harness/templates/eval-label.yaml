@@ -4,7 +4,7 @@
 
 case_id: 20261012-example-post
 labeled_at: 2026-10-12
-labeled_by: human           # human | claude-draft（AI 代標的草稿，要人看過才算數）
+labeled_by: human           # human，或 <模型>-draft（AI 代標的草稿，例：gpt-6-sol-draft；要人看過才算數）
 reviewed: false            # 人看過並修正後改成 true
 time_spent_min: 20          # 實際花了幾分鐘（讀＋標），用來估之後標註要花多少時間
 
