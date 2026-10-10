@@ -1,0 +1,88 @@
+# 每一步都附一句「它擋的是什麼、漏跑會怎樣」——那句理由才是這份檔案的價值。
+# 加新的一步時照這個規矩寫；**不要靠記憶把別的專案的步驟搬回來**，沒有理由的步驟只會吃額度。
+#
+# 為什麼有 concurrency 與 timeout：同一條 PR 連續 push 時，舊的 run 不會自己取消，
+# 每一次都把整套跑滿。前一個專案三天跑了 259 次、一天最多 157 次，把整個帳號的
+# Actions 免費額度（每月 2,000 分鐘）用完，連帶擋掉其他 repo 的部署。
+# concurrency 讓同一條 PR／分支只保留最新一個 run；timeout 擋住卡死的 run 把額度吃光。
+name: CI
+
+on:
+  push:
+    # main＋dev 兩條線的分支模型（見 Ai-coding-principle/GIT-FLOW.md）。單線開發就刪掉 dev。
+    branches: [main, dev]
+  pull_request:
+
+# 同一條 PR（或同一個分支的 push）只跑最新的一次，舊的直接取消。
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-uv 會照 .python-version 裝 Python，並快取下載過的套件。
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # --locked：uv.lock 跟 pyproject.toml 對不上就直接失敗，不會偷偷重新解析相依。
+      - run: uv sync --locked
+
+      # 型別錯誤在這裡擋，不留到執行時才炸。
+      - name: 型別
+        run: uv run mypy
+
+      # 擋會出錯的寫法（沒用到的變數、可變的預設參數之類）；排版風格不在這裡擋。
+      - name: Lint
+        run: uv run ruff check .
+
+      # 單元、功能、契約測試。
+      - name: 測試（pytest）
+        run: uv run pytest
+
+      # 合併閘要求 PR 的 checks 全綠才放行，而它自己的測試如果不在 checks 裡，
+      # 那些案例就只在有人手動想到時才跑。CI 上 gh 沒登入、也沒給 SAMPLE_PR，
+      # 需要真 PR 的那幾發會 skip 並印出原因——這是預期的。
+      - name: 合併閘的測試彈
+        run: bash .claude/hooks/test-guard-git.sh
+
+  # ── e2e（瀏覽器整合測試）：還沒有，有了再加 ────────────────────────────────
+  #
+  # 什麼時候拆成獨立 job：e2e 通常是整個流程裡最長的一步，跟型別、lint、單元串在
+  # 同一個 job 只是讓它們排隊等它。拆開之後兩個 job 並行，整體時間變成較長的那個。
+  # 合併閘看的是 PR 上全部的 checks，多一個 job 一樣會被看到。
+  #
+  # 什麼時候 shard：單一 job 超過 4 分（預設值，依專案調；見 PIPELINE〈鞏固站〉）就切。
+  # CI 機器通常只有 2 核，worker 開 2 個；用 matrix 切成 N 份、fail-fast: false，
+  # 每份只跑自己那一片。注意：**直接呼叫測試工具**，不要再包一層 script 轉參數——
+  # 分片參數被中間那層吃掉的話，每個 shard 都跑整套（前一個專案就是這樣第一次
+  # 跑了兩倍的時間才發現）。
+  #
+  # 省額度的做法：e2e 只在 PR 上跑（`if: github.event_name == 'pull_request'`），
+  # push 到 dev／main 不跑——進來的每一顆都從 PR 合進來，同一份樹已經跑過一次。
+  # 便宜的 check job 兩邊都跑，讓 dev 有自己的紅綠燈。
+  #
+  # 骨架（拿掉註解、換成你的工具與設定）：
+  #
+  # e2e:
+  #   if: github.event_name == 'pull_request'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 15
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       shard: [1, 2]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: astral-sh/setup-uv@v6
+  #       with: { enable-cache: true }
+  #     - run: uv sync --locked
+  #     # 瀏覽器要自己裝，漏了這步每一支都在 launch 就失敗。
+  #     - run: uv run playwright install --with-deps chromium
+  #     # --shard 需要 pytest-shard 之類的外掛；pytest 本身沒有這個參數。
+  #     - run: uv run pytest tests/e2e --shard-id=$(( ${{ matrix.shard }} - 1 )) --num-shards=2

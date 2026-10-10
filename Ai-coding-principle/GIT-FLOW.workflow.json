@@ -1,0 +1,302 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Git 協作規則：一條變更從票走到 main",
+    "output": "Ai-coding-principle/GIT-FLOW.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "numbers",
+        "label": "三個號碼怎麼串",
+        "focus": [
+          "ticket",
+          "branch",
+          "pr",
+          "squash"
+        ],
+        "note": "票號在分支名裡，PR 號由 GitHub 配，commit 標題結尾那個是 PR 號不是票號。"
+      },
+      {
+        "id": "sync",
+        "label": "分支怎麼跟上 main",
+        "focus": [
+          "branch",
+          "rebase_sync",
+          "merge_sync",
+          "pr"
+        ],
+        "note": "短分支 rebase，共享長分支才 merge。判準是有沒有第二個人在這條分支上工作。"
+      },
+      {
+        "id": "into-main",
+        "label": "三種合併方式的差異",
+        "focus": [
+          "tier",
+          "squash",
+          "rebase_merge",
+          "merge_button"
+        ],
+        "note": "squash 是預設，rebase 有條件，合併鍵不用。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "issue",
+      "label": "票（GitHub Issues）"
+    },
+    {
+      "id": "branch",
+      "label": "工作分支"
+    },
+    {
+      "id": "pr",
+      "label": "Pull Request 與合併閘"
+    },
+    {
+      "id": "main",
+      "label": "main"
+    },
+    {
+      "id": "exception",
+      "label": "例外與不走的路",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "open",
+      "label": "開票與開工",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "sync",
+      "label": "跟上 main",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "land",
+      "label": "進 main",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "merge_ways",
+      "label": "合併方式只有這兩種",
+      "lane": "main",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "ticket",
+    "branch",
+    "rebase_sync",
+    "pr",
+    "tier",
+    "squash"
+  ],
+  "nodes": [
+    {
+      "id": "ticket",
+      "lane": "issue",
+      "col": 0,
+      "type": "frontend",
+      "label": "票 #17",
+      "sublabel": "一條垂直切片",
+      "tag": "驗收條件二元"
+    },
+    {
+      "id": "branch",
+      "lane": "branch",
+      "col": 1,
+      "type": "backend",
+      "label": "fix/t17",
+      "sublabel": "t 後面是票號",
+      "tag": "一票一分支"
+    },
+    {
+      "id": "rebase_sync",
+      "lane": "branch",
+      "col": 2,
+      "type": "backend",
+      "label": "rebase main",
+      "sublabel": "短分支的預設",
+      "tag": "歷史不長菱形",
+      "width": 104
+    },
+    {
+      "id": "merge_sync",
+      "lane": "exception",
+      "col": 2,
+      "type": "messagebus",
+      "label": "merge main",
+      "sublabel": "共享長分支才用",
+      "tag": "rebase 會抽掉別人的基底",
+      "width": 104
+    },
+    {
+      "id": "pr",
+      "lane": "pr",
+      "col": 3,
+      "type": "frontend",
+      "label": "PR #23",
+      "sublabel": "base 一律 main",
+      "tag": "號碼由 GitHub 配"
+    },
+    {
+      "id": "tier",
+      "lane": "pr",
+      "col": 4,
+      "type": "security",
+      "label": "風險分級 T1–T4",
+      "sublabel": "按路徑判，不看判斷",
+      "tag": "human_only_path",
+      "width": 112
+    },
+    {
+      "id": "squash",
+      "lane": "main",
+      "col": 5,
+      "type": "cloud",
+      "label": "squash",
+      "sublabel": "一顆 PR 一顆 commit",
+      "tag": "預設",
+      "width": 112
+    },
+    {
+      "id": "rebase_merge",
+      "lane": "main",
+      "col": 4,
+      "type": "cloud",
+      "label": "rebase merge",
+      "sublabel": "保住 bisect 粒度",
+      "tag": "每顆各自通過才用",
+      "width": 104
+    },
+    {
+      "id": "human",
+      "lane": "exception",
+      "col": 4,
+      "type": "security",
+      "label": "T3／T4：人按",
+      "sublabel": "schema、閘門、刪除",
+      "width": 104
+    },
+    {
+      "id": "merge_button",
+      "lane": "exception",
+      "col": 5,
+      "type": "external",
+      "label": "合併鍵",
+      "sublabel": "不用",
+      "tag": "菱形會落進 main"
+    }
+  ],
+  "edges": [
+    {
+      "from": "ticket",
+      "to": "branch",
+      "label": "分支名帶票號"
+    },
+    {
+      "from": "branch",
+      "to": "rebase_sync",
+      "label": "單一任務、短命"
+    },
+    {
+      "from": "branch",
+      "to": "merge_sync",
+      "label": "有第二個人在上面",
+      "variant": "dashed",
+      "role": "error"
+    },
+    {
+      "from": "rebase_sync",
+      "to": "pr",
+      "label": "PR body 寫 Closes #17",
+      "variant": "emphasis"
+    },
+    {
+      "from": "merge_sync",
+      "to": "pr",
+      "label": "同樣走 PR",
+      "variant": "dashed"
+    },
+    {
+      "from": "pr",
+      "to": "tier",
+      "label": "檢查全綠才問下一題",
+      "variant": "emphasis"
+    },
+    {
+      "from": "tier",
+      "to": "rebase_merge",
+      "label": "每顆 commit 各自通過",
+      "variant": "dashed"
+    },
+    {
+      "from": "tier",
+      "to": "squash",
+      "label": "T1／T2 閘門放行",
+      "variant": "emphasis"
+    },
+    {
+      "from": "rebase_merge",
+      "to": "squash",
+      "label": "同樣進 main",
+      "variant": "dashed"
+    },
+    {
+      "from": "tier",
+      "to": "human",
+      "label": "T3／T4 擋下",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "from": "human",
+      "to": "merge_button",
+      "label": "網頁上仍按得到，閘門管不到",
+      "variant": "dashed",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "三個號碼各是什麼",
+      "items": [
+        "票號：開票的人給的，分支名 fix/t17 的 t 後面就是它",
+        "PR 號：GitHub 配的，與票共用同一個號碼池，所以 #N 看不出型別",
+        "標題結尾 (#23) 是 PR 號；內文 Closes #17 是票號"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "合併方式的差異與代價",
+      "items": [
+        "squash：main 每顆都是通過檢查的完整狀態，bisect 才可靠",
+        "代價：PR 內部的順序沒了，blame 指到 squash 那一顆",
+        "rebase merge 保住每顆，但條件是每顆各自通過——閘門驗不了"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "為什麼不用合併鍵",
+      "items": [
+        "合併鍵會把工作分支上的 merge 原樣帶進 main，長出菱形",
+        "菱形讓「這顆 PR 到底改了什麼」變難讀",
+        "前一個專案 main 上的兩個菱形就是這樣來的"
+      ]
+    }
+  ]
+}

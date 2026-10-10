@@ -1,0 +1,7 @@
+# 簽出一律 LF。
+#
+# Windows 上 core.autocrlf=true 會把簽出的檔案改寫成 CRLF —— 於是同一個 commit
+# 在 CI 全綠、在 Windows 上一堆測試紅（快照、逐 byte 比對、shell 腳本的 `\r`），
+# 而且每一條的錯誤訊息都看不出真正的原因（多出來的是 \r）。
+# 行尾不該由每台機器的 git 設定決定，所以釘在版控裡。
+* text=auto eol=lf

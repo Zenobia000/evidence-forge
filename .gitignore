@@ -1,0 +1,28 @@
+.scratch/
+dist/
+
+# Python：虛擬環境、位元碼與各工具的快取
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 技能底下的 Node 腳本（impeccable、archify）如果有人在本機裝了相依
+node_modules/
+
+# 其他機器的本地設定
+.claude/settings.local.json
+
+# 合併閘的本機退路要在乾淨的 worktree 跑，放這裡（guard-git.sh 的訊息會指到這）
+.claude/worktrees/
+
+# 憑證與本機設定。
+#
+# `.env` 是唯一該放 API 金鑰的地方 —— 不是對話、不是 shell history、
+# 不是任何進版控的檔案。`.env.example` 說明有哪些鍵，值一律留空。
+.env
+.env.local

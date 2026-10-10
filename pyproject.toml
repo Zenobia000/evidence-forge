@@ -1,0 +1,42 @@
+[project]
+name = "evidence-forge"
+version = "0.0.0"
+description = ""
+# 版本由 .python-version 釘住（uv 讀它）；這裡只寫允許的範圍。
+requires-python = ">=3.12,<3.14"
+# 執行期相依等第一個真的模組需要時才加（例：langgraph、fastapi、pydantic），不先佔位。
+dependencies = []
+
+# uv sync 預設會裝 dev 群組；CI 與本機檢查用同一組。
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "mypy>=1.13",
+    "ruff>=0.8",
+]
+
+# uv_build 預設找 src/<套件名>/，也就是 src/evidence_forge/。
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+# 單元、功能、契約測試都在這裡跑。瀏覽器的整合測試（e2e）如果有，走另一套工具，不歸 pytest。
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+
+# 型別錯誤在這裡擋，不留到執行時才炸。涵蓋 src/ 與 tests/。
+[tool.mypy]
+files = ["src", "tests"]
+mypy_path = "src"
+strict = true
+
+# Lint 只擋會出錯的寫法（沒用到的變數、可變的預設參數之類）；排版與命名風格不在這裡爭
+# （`.claude/skills/PIPELINE.md`〈審查與合併〉）。專案自己的規則加在 select 後面，每條附一句「它擋的是什麼」。
+[tool.ruff]
+target-version = "py312"
+extend-exclude = ["docs", ".claude", "Ai-coding-principle"]
+
+[tool.ruff.lint]
+# E4/E7/E9/F 是 ruff 預設；B（bugbear）擋常見的邏輯陷阱。
+select = ["E4", "E7", "E9", "F", "B"]

@@ -1,0 +1,389 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI 協作開發法寶流程圖",
+    "subtitle": "給已會用 AI coding 的工程師：用可驗收、可追溯、可收斂的方式，把 0→1 功能穩定做出來",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "views": [
+      {
+        "id": "main-line",
+        "label": "主線：S0 到 S6",
+        "focus": [
+          "s0",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "s5",
+          "s6"
+        ],
+        "note": "一條功能從「要解什麼」走到「可維護」。規格先於開工，切片小於大包，證據先於放行。"
+      },
+      {
+        "id": "loops",
+        "label": "四個回圈",
+        "focus": [
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "s5",
+          "s6"
+        ],
+        "note": "A 需求澄清（S2 回 S1）、B 切片（S3↔S4）、C 收斂（S4→S5→S6→S2）、D 中斷回補。走回頭路是設計的一部分，不是失敗。"
+      },
+      {
+        "id": "stops",
+        "label": "什麼時候必須停",
+        "focus": [
+          "s4",
+          "s5",
+          "halt",
+          "rework"
+        ],
+        "note": "連續失敗、文件腐爛、人看不懂、AI 亂改、測試追不到規格——停下理解，需要時開一張重構票，修完才回主線。"
+      },
+      {
+        "id": "paper-trail",
+        "label": "文件怎麼跟上",
+        "focus": [
+          "s4",
+          "ledger",
+          "s2",
+          "s5"
+        ],
+        "note": "每次提交同步更新規格與決策，不事後補。S5 檢查 Code、Spec、Test 三者是否還對得起來。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "define",
+      "label": "01 定義（人先想清楚）"
+    },
+    {
+      "id": "spec",
+      "label": "02 規格（決定做什麼）"
+    },
+    {
+      "id": "build",
+      "label": "03 施工與驗證（AI 動手，每片都驗）"
+    },
+    {
+      "id": "verify",
+      "label": "04 文件與追溯（規格跟著走）"
+    },
+    {
+      "id": "ex",
+      "label": "EX 中斷（先停再修）",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "p-explore",
+      "label": "探索區",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "p-build",
+      "label": "建造區",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p-converge",
+      "label": "收斂與穩定區",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "s0",
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "s6"
+  ],
+  "nodes": [
+    {
+      "id": "s0",
+      "lane": "define",
+      "col": 0,
+      "type": "frontend",
+      "label": "S0 問題定義",
+      "sublabel": "使用者、場景、成功條件",
+      "tag": "人定範圍與取捨",
+      "width": 170
+    },
+    {
+      "id": "s1",
+      "lane": "define",
+      "col": 1,
+      "type": "database",
+      "label": "S1 最小規格",
+      "sublabel": "FR／Flow／AC／關鍵規則",
+      "tag": "人拍板",
+      "width": 180
+    },
+    {
+      "id": "s2",
+      "lane": "spec",
+      "col": 2,
+      "type": "backend",
+      "label": "S2 切片規劃",
+      "sublabel": "切成可獨立驗收的小步",
+      "tag": "AI 切，人審",
+      "width": 176
+    },
+    {
+      "id": "s3",
+      "lane": "build",
+      "col": 3,
+      "type": "backend",
+      "label": "S3 AI 實作",
+      "sublabel": "一次一片，先打通主路徑",
+      "tag": "AI 做",
+      "width": 176
+    },
+    {
+      "id": "s4",
+      "lane": "build",
+      "col": 4,
+      "type": "backend",
+      "label": "S4 驗證回補",
+      "sublabel": "smoke／function／整合",
+      "tag": "紅燈先修到綠",
+      "width": 185
+    },
+    {
+      "id": "ledger",
+      "lane": "verify",
+      "col": 3,
+      "type": "messagebus",
+      "label": "記帳／同步文件",
+      "sublabel": "提交時同步規格與決策",
+      "width": 185
+    },
+    {
+      "id": "s5",
+      "lane": "build",
+      "col": 5,
+      "type": "security",
+      "label": "S5 收斂檢查點",
+      "sublabel": "程式、規格、測試對得上？",
+      "tag": "每 2–3 片一次",
+      "width": 180
+    },
+    {
+      "id": "s6",
+      "lane": "spec",
+      "col": 5,
+      "type": "cloud",
+      "label": "S6 重整收斂",
+      "sublabel": "收斂規格與 API 契約",
+      "tag": "人拍板",
+      "width": 180
+    },
+    {
+      "id": "halt",
+      "lane": "ex",
+      "col": 4,
+      "type": "security",
+      "label": "停下理解",
+      "sublabel": "人看不懂、AI 亂改",
+      "tag": "不准繼續改碼",
+      "width": 180
+    },
+    {
+      "id": "rework",
+      "lane": "ex",
+      "col": 3,
+      "type": "external",
+      "label": "重新插隊",
+      "sublabel": "開重構票處理技術債",
+      "width": 185
+    }
+  ],
+  "edges": [
+    {
+      "from": "s0",
+      "to": "s1",
+      "label": "收斂成規格",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s1",
+      "to": "s2",
+      "label": "AC 可驗收",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s2",
+      "to": "s3",
+      "label": "一片一條 AC",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s3",
+      "to": "s4",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s4",
+      "to": "s5",
+      "label": "證據齊了",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s5",
+      "to": "s6",
+      "label": "該收斂了",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "s2",
+      "to": "s1",
+      "label": "A｜AC 寫不清",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "s4",
+      "to": "s3",
+      "label": "B｜修到綠",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "s6",
+      "to": "s2",
+      "label": "C｜重切下輪",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "s4",
+      "to": "ledger",
+      "label": "PR 說明",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "ledger",
+      "to": "s2",
+      "label": "文件同步",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "s4",
+      "to": "halt",
+      "label": "連續失敗",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "from": "s5",
+      "to": "halt",
+      "label": "文件腐爛",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "from": "halt",
+      "to": "rework",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "from": "rework",
+      "to": "s2",
+      "label": "D｜修完回主線",
+      "variant": "security",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "六條法寶規則",
+      "items": [
+        "沒有最小規格，不要叫 AI 大量開工",
+        "一個切片只做一條可驗收功能",
+        "每次提交都附上對應的 AC 與測試",
+        "每 2–3 個切片一定做一次收斂檢查",
+        "涉及契約、資料模型、安全，一律人審",
+        "文件跟 PR 一起更新，不准事後補"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "紅黃綠燈：往下、先補、還是回頭",
+      "items": [
+        "綠燈：規格清楚、可驗收、證據齊 → 往下一步",
+        "黃燈：功能可做，但文件未同步或流程仍不穩 → 可前進，先補文件或補測試",
+        "紅燈：規格不明、重做過多、breaking change、測試不可追溯 → 停下來，回上一個節點"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "必停紅燈（沒有例外）",
+      "items": [
+        "AI 改了資料模型但沒更新規格",
+        "AI 改了 API contract",
+        "同一個功能第三次重做",
+        "PR 大到無法審",
+        "測試失敗但追不到是哪條需求",
+        "文件描述與畫面／程式行為不同"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "每一階段測什麼（深度不同，不是只在最後測）",
+      "items": [
+        "S0：不測 code，確認需求講不講得通",
+        "S1：規格審查、AC 可測性",
+        "S2：測試案例設計",
+        "S3：smoke test、happy path",
+        "S4：function、integration、必要時 visual diff",
+        "S5：contract／E2E 主路徑",
+        "S6：regression、收斂驗證"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "四個回圈：圖上的 A／B／C／D",
+      "items": [
+        "A｜需求澄清：S2 → S1——AC 寫不出來就回去補規格",
+        "B｜切片：S3 ↔ S4——一片做完、測完、修完，再進下一片",
+        "C｜收斂：S4 → S5 → S6 → S2——回頭補文件、補契約、補結構",
+        "D｜中斷：任何節點 → 停下理解 → 重新插隊 → 回 S2"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "哪些事人不能放手",
+      "items": [
+        "API breaking change、資料模型改動",
+        "權限與安全",
+        "跨模組的架構決策",
+        "UI／UX 大改",
+        "AI 適合的是：scaffold、小範圍實作、補測試、重複性 refactor、變更摘要"
+      ]
+    }
+  ]
+}
