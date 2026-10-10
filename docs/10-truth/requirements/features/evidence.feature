@@ -37,6 +37,14 @@ Feature: 證據與反證迴圈
     And 研究執行停在等待人工決定
 
   @edge-case
+  Scenario: 創作者授權的補搜最多再 2 輪
+    Given 自動補搜 2 輪後研究執行停在等人工決定
+    And 創作者已經授權過 2 輪補搜
+    When 創作者想再授權一輪補搜
+    Then 系統不接受這次授權
+    And 創作者只能用現有證據進入定題 Gate 或取消這次研究執行
+
+  @edge-case
   Scenario: 搜尋預算用完就停
     Given 這一輪已經用掉 20 個 credits
     When 系統想再發一個查詢

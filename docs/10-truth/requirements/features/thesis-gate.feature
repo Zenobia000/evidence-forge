@@ -15,6 +15,13 @@ Feature: 定題 Gate
     When 創作者改寫論點後核准
     Then 寫作使用創作者改寫的論點
 
+  @edge-case
+  Scenario: 修改論點後只重跑寫作，不重新研究
+    Given 這次研究執行已經寫出一版草稿
+    When 創作者回到定題 Gate 修改論點並核准
+    Then 系統只重新產生大綱與草稿
+    And 擷取、搜尋與證據複核都沿用原本的結果，沒有再次扣費
+
   @sad-path
   Scenario: 否決論點後不會產出稿子
     When 創作者否決論點
@@ -32,3 +39,10 @@ Feature: 定題 Gate
     When 創作者用同一個研究執行核准論點
     Then 研究執行從定題 Gate 接著往下走
     And 之前的搜尋沒有重新執行，也沒有重複扣費
+
+  @edge-case
+  Scenario: 匯出之後回到 Gate 改論點，產生新版，舊版保留
+    Given 這次研究執行已經匯出一份內容包
+    When 創作者回到定題 Gate 修改論點並核准
+    Then 系統產生新一版的草稿與內容包
+    And 原本那一版內容包仍然保留，可以打開

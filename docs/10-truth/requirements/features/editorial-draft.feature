@@ -28,3 +28,16 @@ Feature: 依證據寫作
     Given 草稿的結論和核准的論點相反
     When 系統做發表前檢查
     Then 這份草稿不會成為可發表的內容包
+
+  @sad-path
+  Scenario: 草稿不使用網頁元件
+    When 系統產生草稿
+    Then 草稿只用標準 Markdown 語法，不含任何網頁元件
+
+  @sad-path
+  Scenario: 發表前檢查沒過時，不自動重寫
+    Given 草稿有一個重要引用遺失
+    When 系統完成發表前檢查
+    Then 研究執行停在等發布審核
+    And 創作者看到沒過的關卡與原因
+    And 系統沒有自動重寫草稿，也沒有發出新的付費呼叫
