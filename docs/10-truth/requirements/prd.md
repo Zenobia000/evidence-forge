@@ -234,3 +234,4 @@ flowchart LR
 | ADR-0005 | 跨 Run 快取，檔案儲存區只增不改 |
 | ADR-0006 | 多個 Run 並行：Celery＋Redis 排工作、PostgreSQL 存狀態、依資源限流（修正 ADR-0003 的持久化） |
 | ADR-0007 | 設計 token：基礎用 Loomy 的名字，狀態用本專案的名字並指向 Loomy 顏色；不採用的 Loomy 規則 |
+| ADR-0008 | 外觀三選一（跟隨系統／淺色／深色），預設跟隨系統，所有頁面一起切（修正 ADR-0007 §3.4） |
