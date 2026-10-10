@@ -56,9 +56,9 @@
 
 - 每月 30 篇：Tavily 540 credits，在免費額度內；雲端 LLM 約 US$15。
 - 每月 100 篇：Tavily 超出免費額度 800 credits；總額約 US$56.40。
-- 18 credits 是假設。Tavily 的實際計價是：基本搜尋 1 credit、進階搜尋 2 credits；擷取每成功 5 個 URL 算 1 credit（進階 2 credits），失敗的不收。實際用量要在 R0 的基線量出來。
+- 18 credits 是假設。Tavily 的實際計價是：基本搜尋 1 credit、進階搜尋 2 credits；擷取每成功 5 個 URL 算 1 credit（進階 2 credits），失敗的不收。實際用量在 R2 搜尋功能做好後實測（`roadmap.md` R2）。
 - 沒算進去的：重試、Opus 的延伸思考 tokens、圖片擷取、人工編修時間。這份假設**不是成本上限**，上限由每次執行的預算設定擋（PRD NFR-04）。
-- 沒算進去的省錢機制：跨 Run 快取（NFR-02）、prompt caching（Opus／Sonnet 5.5 快取命中只算基本輸入價的 0.05 倍）、Batch API 半價（NFR-05）。實際成本應該比試算低，R0 基線量出來再更新。
+- 沒算進去的省錢機制：跨 Run 快取（NFR-02）、prompt caching（Opus／Sonnet 5.5 快取命中只算基本輸入價的 0.05 倍）、Batch API 半價（NFR-05）。實際成本應該比試算低，R2 實測後再更新。
 
 ### 5.2 模型分工假設
 
