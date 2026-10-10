@@ -1,6 +1,7 @@
 # ADR-0010：狀態放在資料夾，工作單就是佇列
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者（與架構 session 討論後拍板）
+> **後續修正：** 由 ADR-0014 修正——資料目錄改放專案根目錄的 `data/`（`.gitignore` 排除）。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **取代 ADR-0006**（Celery＋Redis＋PostgreSQL）。**修正 ADR-0003** 的儲存部分（ID 規則不變）。**修正 ADR-0004、ADR-0005 的實作方式**：原則不變（做過的不重付、只增不改、跨工作共用快取），改由檔案與閘道實作。
 
