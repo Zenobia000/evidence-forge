@@ -1,0 +1,8 @@
+# 訂閱源設定的範例。實際檔案放在 $EF_DATA/feeds.yaml（不進 repo）。S2 才會用到。
+- name: example-blog
+  connector: rss
+  params: { url: https://example.com/feed.xml }
+  schedule: "0 7 * * *"
+  recipe: restructure
+  goal: 整理成給台灣 PM 看的 1,500 字觀點文
+  budget: { usd: 0.50, tavily_credits: 20 }

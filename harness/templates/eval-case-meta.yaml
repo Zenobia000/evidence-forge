@@ -1,0 +1,8 @@
+# 評估案例的出處。放在 $EF_DATA/evals/cases/<case-id>/meta.yaml，旁邊放原文檔。
+title: 原文標題
+author: 作者
+url: https://example.com/post        # 沒有網址就留空
+published: 2026-10-01
+obtained_from: blog                   # blog | gmail | app | other
+language: en                          # zh | en | 其他
+length: long                          # short（讀 5 分鐘內）| long

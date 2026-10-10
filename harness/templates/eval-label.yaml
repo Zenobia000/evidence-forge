@@ -1,0 +1,37 @@
+# 評估案例的人工標註。一篇一檔：$EF_DATA/evals/labels/<case-id>.yaml
+# case-id 跟 $EF_DATA/evals/cases/ 底下的資料夾同名。
+# 只挑 5～10 條「關鍵主張」，不用每句都標；長文也一樣最多 10 條。
+
+case_id: 20261012-example-post
+labeled_at: 2026-10-12
+time_spent_min: 20          # 實際花了幾分鐘（讀＋標），用來估之後標註要花多少時間
+
+article:
+  main_point: 一句話：這篇最想說服讀者的是什麼
+  audience: 作者寫給誰看
+  type: opinion             # opinion 觀點 | tutorial 教學 | news 新聞整理 | research 研究報告 | product 產品介紹 | other
+
+claims:
+  - id: c1
+    text: 用你自己的話，一句寫出這條主張
+    quote: 從原文逐字複製一段（大約 20～80 字），證明作者真的這樣說
+    kind: fact              # fact 事實 | data 數據 | opinion 觀點 | prediction 預測 | recommendation 建議
+    weight: core            # core：拿掉它文章就站不住 | supporting：用來撐住 core 的
+    checkable: true         # 能不能用外部資料查證
+    evidence_hint: 要查證它需要什麼資料（可省略）
+  - id: c2
+    text: ...
+    quote: ...
+    kind: data
+    weight: supporting
+    checkable: true
+
+# 選填：你覺得值得延伸研究的方向，0～3 條
+directions:
+  - question: 值得追下去的問題
+    why: 為什麼值得追
+
+# 選填：很像主張、其實不是的句子（引用別人的話、反諷、作者自己也不同意的說法）
+not_claims:
+  - quote: 原文逐字
+    reason: 為什麼不算

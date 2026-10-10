@@ -1,10 +1,10 @@
 > 這套工作方式是怎麼長出來的、每一條規則背後出過什麼事：[`docs/history/how-this-workflow-grew.md`](docs/history/how-this-workflow-grew.md)
 
-# evidence-forge — Evidence-led Editorial Studio
+# evidence-forge — Evidence Forge
 
 ## 這個專案是什麼
 
-單人使用的研究與圖文產製工作室。貼一篇技術文章，拿到可追溯的證據、由你拍板的論點，和網站能直接預覽的 MDX 草稿。為什麼做、做給誰，見 `docs/00-intent/brief.md`。
+單人使用的內容產線。訂閱源（部落格、電子報、app 文章）的新文章自動接進來，AI 整理成主張與研究方向、補資料，再照你的目標、用你的風格二創；你只審結果、看帳單。為什麼做、做給誰，見 `docs/00-intent/brief.md`；怎麼運作，見 `docs/30-snapshot/plans/2026-10-10-architecture-draft-v0.3.md`。
 
 工作方式（家規、守衛、技能、文件分層）來自 `ai-coding-workflow-template`，技術棧換成 Python／uv。`guard-git.sh` 寫死的預設檢查還是 pnpm 版，所以 `human-only-paths.conf` 的 `check:` 那一行不能刪。
 
@@ -29,7 +29,7 @@
 | 路徑 | 是什麼 |
 | --- | --- |
 | `CLAUDE.md` | 給 Claude 的常駐指示：專案狀態、技能組態、派子代理、人語層 |
-| `CONTEXT.md` | 領域語言（空的，實體長出來一個填一個） |
+| `CONTEXT.md` | 領域語言（訂閱源、工作單、配方、閘道…） |
 | `.claude/hooks/` | 守衛。`guard-git.sh`（擋大量 add、force push、跳過 hook、按風險分級的合併閘）、`guard-secrets.sh`（擋把金鑰 commit 進去）、`human-only-paths.conf`（這個專案自己的高風險路徑與本機檢查指令）、`test-guard-git.sh`（守衛的測試，CI 會跑） |
 | `.claude/skills/` | 技能。大部分是上游快照，來源與哪些可以改見 `VENDOR.md`、`UPSTREAM.md`；開發順序見 `PIPELINE.md` |
 | `.claude/agents/` | 三格子代理角色（便宜快／強／最強），見 `Ai-coding-principle/MODEL-ROUTING.md` |

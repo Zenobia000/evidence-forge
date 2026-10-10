@@ -1,6 +1,7 @@
 # ADR-0003：State 只存 ID，內容放檔案儲存區；SQLite 起步
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者
+> **後續修正：** 由 ADR-0010 再修正——儲存改成一張工作單一個資料夾，不用 PostgreSQL、不用 checkpoint。ID 規則不變。
 > **後續修正：** 由 ADR-0006 修正——checkpoint 與 metadata 改用 PostgreSQL（為了多個 Run 並行）。「State 只存 ID、內容放檔案儲存區」不變。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 
