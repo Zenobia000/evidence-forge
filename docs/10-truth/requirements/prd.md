@@ -233,3 +233,4 @@ flowchart LR
 | ADR-0004 | 外部副作用獨立成節點，用冪等鍵去重 |
 | ADR-0005 | 跨 Run 快取，檔案儲存區只增不改 |
 | ADR-0006 | 多個 Run 並行：Celery＋Redis 排工作、PostgreSQL 存狀態、依資源限流（修正 ADR-0003 的持久化） |
+| ADR-0007 | 設計 token：基礎用 Loomy 的名字，狀態用本專案的名字並指向 Loomy 顏色；不採用的 Loomy 規則 |
