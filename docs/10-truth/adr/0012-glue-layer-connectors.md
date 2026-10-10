@@ -1,6 +1,7 @@
 # ADR-0012：膠水層用程式自己寫，不用 LLM，帳號授權不交給 agent
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者（與架構 session 討論後拍板）
+> **後續修正：** 由 ADR-0014 修正——帳號授權改放 `~/.config/evidence-forge/secrets/`（`EF_SECRETS`），不放資料目錄。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 
 ## 1. 背景與問題

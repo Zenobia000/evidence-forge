@@ -4,6 +4,8 @@
 
 case_id: 20261012-example-post
 labeled_at: 2026-10-12
+labeled_by: human           # human | claude-draft（AI 代標的草稿，要人看過才算數）
+reviewed: false            # 人看過並修正後改成 true
 time_spent_min: 20          # 實際花了幾分鐘（讀＋標），用來估之後標註要花多少時間
 
 article:
@@ -19,6 +21,7 @@ claims:
     weight: core            # core：拿掉它文章就站不住 | supporting：用來撐住 core 的
     checkable: true         # 能不能用外部資料查證
     evidence_hint: 要查證它需要什麼資料（可省略）
+    attributed_to: 這條若是作者轉述別人的說法，寫被轉述者與連結（例：Armin Ronacher, https://...）；作者自己的主張就省略
   - id: c2
     text: ...
     quote: ...
