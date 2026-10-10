@@ -1,6 +1,7 @@
 # ADR-0007：設計 token 命名 — 基礎用 Loomy 的名字，狀態用自己的名字
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者（產品流程、視覺兩個 session 提案，架構 session 撰寫）
+> **後續修正：** §3.4 最後一段（每頁固定深淺、「不跟系統」不算偏離）由 ADR-0008 修正——外觀改為三選一、預設跟隨系統。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **這份只記決定。** token 的值與元件規格的唯一的家是 `docs/10-truth/design/`（視覺 session 負責）；完整對照表的提案版本在 `30-snapshot/plans/design/2026-10-10-frontend-architecture-draft.md` 第 3 部分。
 
