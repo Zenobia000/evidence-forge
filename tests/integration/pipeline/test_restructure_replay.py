@@ -2,10 +2,10 @@
 
 錄音在 `tests/fixtures/recordings/restructure-library/`：用 `ef serve` 的 live 模式跑
 `tests/fixtures/articles/library-night.md`（為測試寫的虛構短文，ADR-0014：錄音與原文會進公開 repo）。
-整理段用本機 qwen3.5:9b，二創段用 `strong`（真的 Anthropic 金鑰）。作家設定用
+整理段與二創段都用本機 qwen3.5:9b（MVP 暫用 local，改回 strong 見 #63）。作家設定用
 `tests/fixtures/authors/`（同樣是為測試寫的），不用創作者自己的 `voice.md`。
 
-重錄（改了 system-prompt、skill、任務說明、文類定義、作家設定範例或升了 Pi，請求就會變；會花錢）：
+重錄（改了 system-prompt、skill、任務說明、文類定義、作家設定範例或升了 Pi，請求就會變；二創改回 strong 後會花錢）：
 
     D=<空資料夾>; mkdir -p $D && cp -r tests/fixtures/authors $D/
     EF_DATA=$D uv run ef new --recipe restructure --text "$(cat tests/fixtures/articles/library-night.md)"
@@ -143,15 +143,10 @@ def test_沒指定目標文類_用作家的預設_沒有風格檔的文類標未
 
 
 @pytest.mark.promise("NFR-COST-07")
-def test_錄音的帳本_整理用本機不花錢_二創用_strong_有花錢_沒有升級() -> None:
+def test_錄音的帳本_兩段都用本機_不花錢_沒有升級() -> None:
+    # MVP 的二創暫用 local（#63 改回 strong 時，這條改成二創段 strong 且金額大於 0）
     recorded = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.kind == "llm"]
-    by_stage = {
-        stage: [e for e in recorded if e.stage == stage]
-        for stage in ("digest", "compose")
-    }
-    assert by_stage["digest"] and by_stage["compose"]
-    for entry in by_stage["digest"]:
+    stages = {entry.stage for entry in recorded}
+    assert stages == {"digest", "compose"}
+    for entry in recorded:
         assert (entry.tier, entry.cost_usd, entry.escalated_from) == ("local", 0, None)
-    for entry in by_stage["compose"]:
-        assert entry.tier == "strong" and entry.escalated_from is None
-    assert sum(e.cost_usd for e in by_stage["compose"]) > 0
