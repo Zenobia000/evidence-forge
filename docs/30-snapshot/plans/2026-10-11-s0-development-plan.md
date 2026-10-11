@@ -49,6 +49,8 @@ S0 要回答的只有一件事：**「Pi＋本機 Qwen＋skill」能不能把一
 | 新增 | `src/evidence_forge/gateway/*` | 唯一會花錢、對外連線、拿得到雲端金鑰的地方（ADR-0011、NFR-SEC-04） |
 | 新增 | `src/evidence_forge/checks/*` | C1～C5 硬檢查，取代了人工關卡；放過捏造引句或照抄不會當場紅（PRD §7） |
 | 新增 | `harness/pi/*` | agent 能用哪些工具、有沒有 shell，全由這裡決定（NFR-SEC-02） |
+| 新增 | `*pi_launch*` | 執行器組 Pi 指令的那段（`runner/pi_launch.py`）：`--no-builtin-tools`、`-nc`、`PI_CODING_AGENT_DIR` 少一個，agent 就拿得到 shell、讀到 repo 的 `CLAUDE.md` 或使用者的 OAuth（PR #11 審查必修 1） |
+| 新增 | `harness/skills/*/scripts/*` | `run_script` 用閘道的權限執行這些腳本 |
 | 新增 | `*ledger*` | 帳本只增不改、只有閘道寫（NFR-KEEP-02） |
 | 新增 | `*secret*` | 帳號授權與金鑰的讀取（NFR-SEC-01） |
 | 保留 | `*budget*`、`*cost*`、`*url_guard*`、`*ssrf*`、`*publish*`、`*site_draft*`、`compose.yaml`、`docker-compose*.yml` | 預算、SSRF、對外發布仍在；Ollama 用 Docker 跑，compose 檔仍是部署設定 |
@@ -64,16 +66,16 @@ S0 要回答的只有一件事：**「Pi＋本機 Qwen＋skill」能不能把一
 | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
 | S0.1 | **spike**（#10）：Pi 1.1.0 的 `--api-key` 透傳、自訂服務商、ef-tools 註冊、上層 CLAUDE.md 隔離、JSON 事件、Ollama＋Qwen 實測 | ADR-0009、0011；v0.3 §12 | T1 | 系統架構本人 | AFK | — |
 | S0.2 | **資料夾契約**：`EF_DATA` 路徑解析；`job.md` frontmatter、配方 frontmatter、`item.json`、`events.jsonl`、`decision.vN.json`、帳本一筆的 Pydantic 模型；只增不改的寫檔工具（已存在就拒絕）；`CONTEXT.md` 補新詞 | NFR-RUN-02、NFR-KEEP-01、02；ADR-0010、0014 | T2 | 2 | AFK | — |
-| S0.3 | **曳光彈**：`ef serve` 常駐程序（執行器＋閘道最薄一層）；`ef new --text` 開單；一份只有一段的測試配方；執行器開 Pi → 閘道轉送到 Ollama → ef-tools 的 `read_file`／`write_file`（限工作單資料夾）→ 進待審；錄下回應供重播 | FR-RC-01、NFR-SEC-02；ADR-0009、0010 | T3 | 2 | AFK | S0.1、S0.2 |
-| S0.4 | **閘道加厚：錢**：Anthropic 後端（串流）、別名對照 `models.yaml`、價目表、預算預留與結算、帳本 `ledger.jsonl`、`blobs/` 請求快取與重播模式、GPU 旗號與 `queue_ms`、429 退避 | FR-MD-01、FR-LG-01、NFR-COST-01、02、06、NFR-PAR-02、03、NFR-OBS-01 | T3 | 2 | AFK | S0.3 |
+| S0.3 | **曳光彈**：`ef serve` 常駐程序（執行器＋閘道最薄一層）；`ef new --text` 開單；一份只有一段的測試配方；執行器開 Pi（組指令的程式獨立成 `runner/pi_launch.py`；照 #10 結論：閘道接受 `/v1/messages?beta=true` 的 query string、Pi 的 stdin 接 `/dev/null`、`max_tokens` 與 thinking 明確設定）→ 閘道轉送到 Ollama → ef-tools 的 `read_file`／`write_file`（限工作單資料夾）→ 進待審；錄下回應供重播 | FR-RC-01、NFR-SEC-02；ADR-0009、0010 | T3 | 2 | AFK | S0.1、S0.2 |
+| S0.4 | **閘道加厚：錢**：Anthropic 後端（串流）、別名對照 `models.yaml`、價目表、預算預留與結算、帳本 `ledger.jsonl`、`blobs/` 請求快取與重播模式、GPU 旗號與 `queue_ms`、429 退避；**閘道提供每張單目前的等待狀態**（等 GPU、等限流，附開始時間），給 S0.6 用 | FR-MD-01、FR-LG-01、NFR-COST-01、02、06、NFR-PAR-02、03、NFR-OBS-01 | T3 | 2 | AFK | S0.3 |
 | S0.5 | **工具與手動投入**：`fetch_url`（擋內網、尊重 robots 與付費牆、快取）、`run_script`（只准 skill 自己的腳本）；手動投入網址／文字／檔案（MD、純文字、PDF）寫進 `inbox/manual/` 並開單 | FR-IN-01、NFR-SEC-03、NFR-RUN-08、NFR-COST-03 | T3 | 2 | AFK | S0.3 |
-| S0.6 | **執行器加厚：跑得動**：schema 驗證、重試與升級、基礎設施故障不升級、`auto_fix` 回二創段、重啟後從所在段重跑、同時張數上限、開跑前檢查、版本鎖在產出上、Pi 事件 → `job.md` 進度欄位 | NFR-RUN-01～06、NFR-PAR-01、NFR-OBS-02 | T2 | 2 | AFK | S0.3 |
+| S0.6 | **執行器加厚：跑得動**：schema 驗證、重試與升級、基礎設施故障不升級、`auto_fix` 回二創段、重啟後從所在段重跑、同時張數上限、開跑前檢查、版本鎖在產出上、Pi 事件與閘道的等待狀態合併後寫進 `job.md` 進度欄位（同一個 `ef serve` 程序內查記憶體；`job.md` 仍只有執行器寫） | NFR-RUN-01～06、NFR-PAR-01、NFR-OBS-02 | T2 | 2 | AFK | S0.3 |
 | S0.7 | **自動檢查 C1～C5**（程式判斷）＋ C6、C7 的呼叫介面（結果只提醒、不擋） | FR-VF-01；PRD §7 | T3 | 2 | AFK | S0.2 |
 | S0.8 | **skill 與配方**：`digest`（先判文類，依 `harness/genres/` 抽取；逐字引句）、`compose`（文類骨架＋作家聲音＋文類風格；未校準標示）、`verify`（呼叫 S0.7）、配方 `restructure`（S0 先三段）；執行器開段時把文類定義與作家設定複製進 `input/` | FR-DG-01、02、FR-CP-01～03；ADR-0015 | T2 | 2 | AFK | S0.4、S0.5、S0.6、S0.7 |
-| S0.9 | **審稿迴圈**：執行器套用 `review/decision.vN.json`：通過、退件（意見＋重跑段，上游沿用）、丟棄、失敗重試、通過後再改；稿子永遠是新版本 | FR-RV-01、02、NFR-COST-04 | T2 | 1 | AFK | S0.6 |
+| S0.9 | **審稿迴圈**：執行器套用 `review/decision.vN.json`：通過、退件（意見＋重跑段，上游沿用）、丟棄、失敗重試、通過後再改；稿子永遠是新版本；決定檔用只增不改的寫檔工具建立（撞號就換下一號），帶 `draft_version`；執行器只套用「審的版本＝目前版本」的第一份，其餘標已失效 | FR-RV-01、02、NFR-COST-04 | T2 | 1 | AFK | S0.6 |
 | S0.10 | **帳單**：每張單的 `bill.md`（每段花費、模型、升級、退件多花的、時間）；每月總表；每篇通過文章的平均成本 | FR-LG-02 | T3（`*cost*`） | 1 | AFK | S0.4 |
 | S0.11 | **UI 第一批**：FastAPI＋Jinja2＋HTMX 骨架、ADR-0007 token、看板（五欄、進度、在等什麼、花費、自動更新）、工作單詳情（六個分頁） | FR-UI-01、NFR-OBS-02 | T2 | 1 | **HITL**（設計站） | S0.2、設計稿確認 |
-| S0.12 | **UI 第二批**：審稿動作（寫 `decision.vN.json`）、新增工作單表單（寫 `inbox/manual/`）、帳單頁 | FR-UI-01、FR-RV-01、FR-IN-01 | T2 | 1 | **HITL**（設計站） | S0.11、S0.9、S0.10、S0.5 |
+| S0.12 | **UI 第二批**：審稿動作（寫 `decision.vN.json`，規則同 S0.9）、新增工作單表單（寫 `inbox/manual/`；內容跟既有素材重複時顯示「已有工作單」並附連結）、帳單頁 | FR-UI-01、FR-RV-01、FR-IN-01 | T2 | 1 | **HITL**（設計站） | S0.11、S0.9、S0.10、S0.5 |
 | S0.13 | **CI 重播整條流程**：固定小案例＋錄好的回應，從投入跑到待審；CI 加這一步 | NFR-RUN-07、NFR-COST-06 | **T4**（改 CI） | 2 | AFK | S0.8、S0.9 |
 | S0.14 | **Exit Gate 實跑**：5 篇真實電子報跑出稿子；退件 → 重跑 → v2；中途殺掉程序再重跑不重付；C1 捏造引句為 0；實測成本寫回 `brief.md` §5.1 | `roadmap.md` S0 Exit Gate | T1 | — | **HITL** | S0.12、S0.13 |
 
@@ -136,7 +138,7 @@ flowchart LR
 | :--- | :--- | :--- | :--- |
 | `human-only-paths.conf` 換新路徑（§3.1） | 第 1 波之前 | 你按合併（跟這份計畫同一顆 PR） | 這顆 PR 裡 |
 | Ollama＋`qwen3.5:9b` 起來 | 第 2 波之前 | 系統架構（#10） | 進行中 |
-| 作家設定：`voice.md`＋至少 1 份文類風格（`$EF_DATA/authors/<你>/`，範本在 `harness/templates/`） | 第 5 波（S0.8）之前 | 你 | 還沒有 |
+| 作家設定：`voice.md`＋解說文與筆記摘要兩類的文類風格（`roadmap.md` S0）（`$EF_DATA/authors/<你>/`，範本在 `harness/templates/`） | 第 5 波（S0.8）之前 | 你 | 還沒有 |
 | Anthropic API 金鑰（`~/.config/evidence-forge/secrets/anthropic`） | 第 3 波（S0.4）的手動驗證；S0.14 一定要 | 你 | 還沒存。S0.4 之前可以先用本機 Qwen 加假模型 |
 | 5 篇真實電子報 | 第 8 波 | 你 | 還沒挑 |
 | GitHub milestone「S0 實驗」 | 開票時 | Product | 待這份計畫確認後建 |
