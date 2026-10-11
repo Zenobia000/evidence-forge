@@ -147,7 +147,7 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
   3. **沒有 periodic。** 預設把昂貴的端到端放在排程跑；這個專案昂貴的就是真的模型呼叫，而 NFR-COST-06 規定自動化一律不打付費 API。真的呼叫只在 S0.14 手動跑。
   4. **沒有 merge queue。** 一個人的 repo，PR 量用不到；分支保護要求同一組 checks。
   5. **驗收時段叫 exit-gate，不叫發佈前。** S0 沒有對外發佈；階段的 Exit Gate 就是發佈前的那道門。
-  6. **本機最多 2 條跑測試的線（主 session 算一條）。** repo 在慢的 `/mnt/d` 掛載上（S0 開發排程計畫 §3、§6）。測試資料一律放 pytest 的 `tmp_path`（WSL 原生的 `/tmp`），不准寫到 repo 底下的 `data/`；預設不開 `pytest-xdist`。
+  6. **本機最多 2 條跑測試的線（主 session 算一條）。** repo 現在在 WSL 原生磁碟上（`~/evidence-forge`），2026-10-11 量過：32 核、約 42 GB 可用、I/O 壓力 0，機器不是瓶頸；沿用 2 條是因為批次上限本來就是 2（S0 開發排程計畫 §3、§6），瓶頸在審查者審得動幾顆 PR（`PIPELINE.md`〈派工前的資源盤點〉第 5 點）。repo 若又放到 `/mnt/*` 這類慢掛載，改照〈慢檔案系統的 I/O 上限〉：1 條。測試資料一律放 pytest 的 `tmp_path`（WSL 原生的 `/tmp`），不准寫到 repo 底下的 `data/`；預設不開 `pytest-xdist`。
 
 ### 交給 S0.13（#30）
 
