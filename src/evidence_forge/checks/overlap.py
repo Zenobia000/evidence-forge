@@ -141,7 +141,9 @@ def check_overlap(
     entries = [
         CheckEntry(check="C3", status="fail", reason=f"跟原文逐字重疊太多：{summary}")
     ]
-    for span in _copied_spans(lengths, n):
+    # 列片段的最短長度：n-gram 的長度，或剛好超過最長共同片段上限的長度，取短的。
+    # 只用 n 的話，上限設得比 n 短時會 fail 卻一個位置都列不出來。
+    for span in _copied_spans(lengths, min(n, thresholds.max_common_tokens + 1)):
         start = draft_tokens[span.first].start
         end = draft_tokens[span.last].end
         line, column = line_column(draft, start)

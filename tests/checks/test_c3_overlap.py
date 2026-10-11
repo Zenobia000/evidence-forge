@@ -108,3 +108,18 @@ def test_result_says_the_thresholds_are_provisional() -> None:
         "完全不同的一段話，跟原文沒有關係。\n", SOURCE_ZH, STRICT, file=FILE
     )
     assert "暫定" in entries[0].reason
+
+
+def test_long_copy_shorter_than_one_ngram_still_shows_where() -> None:
+    # 最長共同片段的上限比 n-gram 還短時，fail 的那段也要列出位置，不能只有一條總結
+    thresholds = OverlapThresholds(
+        ngram_size=8, max_ngram_overlap=1.0, max_common_tokens=3
+    )
+    draft = "Honestly, the real cost of running agents surprised me.\n"
+
+    entries = check_overlap(draft, SOURCE_EN, thresholds, file=FILE)
+
+    located = [entry for entry in entries if entry.location is not None]
+    assert [entry.status for entry in entries] == ["fail"] * len(entries)
+    assert [entry.excerpt for entry in located] == ["the real cost of running agents"]
+    assert located[0].location == Location(file=FILE, line=1, column=11)

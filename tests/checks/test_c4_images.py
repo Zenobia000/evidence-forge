@@ -158,3 +158,33 @@ def test_every_candidate_in_a_srcset_must_be_listed() -> None:
     assert [(entry.status, entry.excerpt) for entry in entries] == [
         ("fail", "https://x.example/2x.png")
     ]
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        # 網址裡有兩層括號：CommonMark 照樣顯示成圖，但這裡解析不出網址
+        "![x](https://e.test/a(b(c)d).png)",
+        # 參照定義寫在清單裡：CommonMark 認得，這裡找不到定義
+        "- [logo]: https://e.test/logo.png\n\n![logo]",
+        # 找不到定義的參照圖
+        "![x][nowhere]",
+    ],
+)
+def test_image_syntax_that_cannot_be_parsed_fails_with_its_location(
+    draft: str,
+) -> None:
+    # 認不出網址就擋：放行一張沒查過的圖，比多擋一次貴
+    listed = {"https://e.test/a(b(c)d).png", "https://e.test/logo.png"}
+    entries = check_images(draft, listed, file=FILE)
+
+    assert [entry.status for entry in entries] == ["fail"]
+    offset = draft.index("![")
+    line = draft.count("\n", 0, offset) + 1
+    assert entries[0].location == Location(file=FILE, line=line, column=1)
+    assert entries[0].excerpt.startswith("![")
+
+
+def test_a_bare_exclamation_before_a_link_is_not_an_image() -> None:
+    entries = check_images("真的！[來源](https://e.test/a)", set(), file=FILE)
+    assert [entry.status for entry in entries] == ["pass"]

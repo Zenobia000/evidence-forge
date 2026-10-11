@@ -7,7 +7,7 @@ S0 還沒有素材下載，`assets.json` 是空的（或不存在），等於 S0
 
 認得的嵌圖寫法：`![alt](網址)`、`![alt][參照]`／`![參照]` 配 `[參照]: 網址`（定義寫在引言區塊裡也算）、
 HTML 的 `<img>`、`<image>`（含 SVG 裡的）、`<source>`、`<input>` 上的 `src`、`srcset`、`href`。
-程式碼區塊與行內程式碼裡的不算。HTML 這邊寧可多抓：S0 的素材清單是空的，多抓只是多擋一張圖。
+程式碼區塊與行內程式碼裡的不算。以 `![` 開頭卻認不出網址的，一律 fail（認不出就擋）。HTML 這邊寧可多抓：S0 的素材清單是空的，多抓只是多擋一張圖。
 """
 
 import json
@@ -52,8 +52,17 @@ def _label_key(label: str) -> str:
     return " ".join(label.split()).casefold()
 
 
+# 每個 ![ 都可能是一張圖的開頭
+_IMAGE_OPENER = re.compile(r"!\[")
+
+
 def find_images(draft: str) -> list[tuple[int, str]]:
     """稿子裡所有嵌入的圖：（在原文的字元位移, 網址），照出現順序。"""
+    return _scan(draft)[0]
+
+
+def _scan(draft: str) -> tuple[list[tuple[int, str]], list[int]]:
+    """（認得出網址的圖, 以 `![` 開頭卻解析不出網址的位移）。程式碼裡的都不算。"""
     text = mask_code(draft)
     images: list[tuple[int, str]] = []
     for match in _INLINE_IMAGE.finditer(text):
@@ -65,9 +74,17 @@ def find_images(draft: str) -> list[tuple[int, str]]:
     for match in _REFERENCE_IMAGE.finditer(text):
         label = match.group(2) or match.group(1)
         url = definitions.get(_label_key(label))
-        # 對不到定義的 ![x][y] 在 Markdown 裡只是普通文字，不是圖。
+        # 對不到定義的不放進 images；它的 ![ 會落到下面「認不出」那一份
         if url is not None:
             images.append((match.start(), url))
+    # 認不出就擋：CommonMark 的寫法比這裡的規則多（例如網址裡兩層括號、清單裡的參照定義），
+    # 解析不出網址的 ![ 不能當成「沒有圖」而放行。
+    parsed = {offset for offset, _ in images}
+    unparsed = [
+        match.start()
+        for match in _IMAGE_OPENER.finditer(text)
+        if match.start() not in parsed
+    ]
     for tag in _HTML_IMAGE_TAG.finditer(text):
         for attribute in _HTML_IMAGE_ATTRIBUTE.finditer(tag.group(0)):
             value = next(g for g in attribute.groups()[1:] if g is not None)
@@ -77,15 +94,27 @@ def find_images(draft: str) -> list[tuple[int, str]]:
             else:
                 urls = [value]
             images.extend((tag.start(), url) for url in urls)
-    return sorted(images)
+    return sorted(images), unparsed
 
 
 def check_images(
     draft: str, asset_urls: Collection[str], *, file: str
 ) -> list[CheckEntry]:
-    """每張網址不在素材清單裡的圖一條 fail；都在（或沒有圖）就一條 pass。"""
+    """每張網址不在素材清單裡、或解析不出網址的圖一條 fail；都在（或沒有圖）就一條 pass。"""
     failures: list[CheckEntry] = []
-    images = find_images(draft)
+    images, unparsed = _scan(draft)
+    for offset in unparsed:
+        line, column = line_column(draft, offset)
+        end = draft.find("\n", offset)
+        failures.append(
+            CheckEntry(
+                check="C4",
+                status="fail",
+                reason="這裡以 ![ 開頭像是嵌圖，但解析不出網址，沒辦法對素材清單；改成 ![說明](網址) 的寫法",
+                location=Location(file=file, line=line, column=column),
+                excerpt=draft[offset : end if end != -1 else len(draft)][:120],
+            )
+        )
     for offset, url in images:
         if url in asset_urls:
             continue
