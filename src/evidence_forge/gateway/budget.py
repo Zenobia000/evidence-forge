@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -122,6 +122,16 @@ class Reservation:
     micros: int
 
 
+@dataclass(frozen=True)
+class _Unbooked:
+    """實際花掉、帳本卻沒寫進去的一筆錢（見 `BudgetGuard.release`）。"""
+
+    job_id: str
+    # 花在台北的哪個月：寫得進帳本的話，那一行的 ts 會落在這個月
+    month: str
+    micros: int
+
+
 class BudgetExceeded(Exception):
     """預算不夠；`limit` 說是哪一道上限擋下的。"""
 
@@ -146,18 +156,18 @@ class BudgetGuard:
         self._ids = itertools.count(1)
         self._outstanding: dict[int, Reservation] = {}
         # 實際花掉、帳本卻沒寫進去的金額（見 release）；程序重開之前一直算進上限
-        self._unbooked: list[Reservation] = []
-
-    def _held(self) -> list[Reservation]:
-        """還沒進帳本、但要算進上限的金額：預留中的，加上帳本寫不進去的花費。"""
-        return [*self._outstanding.values(), *self._unbooked]
+        self._unbooked: list[_Unbooked] = []
 
     def reserve(
         self, job_id: str, *, job_budget_micros: int, micros: int
     ) -> Reservation:
         """預留 `micros`；任一道上限不夠就丟 `BudgetExceeded`，什麼都不預留。"""
         with self._lock:
-            held_by_job = sum(r.micros for r in self._held() if r.job_id == job_id)
+            # 還沒進帳本、但要算進上限的：預留中的，加上帳本寫不進去的花費。
+            # 工單預算不分月份；月額度只算這個月的那幾筆（預留中的都是這一刻還在跑的呼叫）
+            held_by_job = sum(
+                r.micros for r in self._outstanding.values() if r.job_id == job_id
+            ) + sum(u.micros for u in self._unbooked if u.job_id == job_id)
             job_left = job_budget_micros - self._tally.job_micros(job_id) - held_by_job
             if micros > job_left:
                 raise BudgetExceeded(
@@ -166,7 +176,9 @@ class BudgetGuard:
                     f"剩 US${max(job_left, 0) / 1e6:.6f}",
                 )
             month = taipei_month(self._clock())
-            held = sum(r.micros for r in self._held())
+            held = sum(r.micros for r in self._outstanding.values()) + sum(
+                u.micros for u in self._unbooked if u.month == month
+            )
             month_left = self._cap - self._tally.month_micros(month) - held
             if micros > month_left:
                 raise BudgetExceeded(
@@ -182,10 +194,14 @@ class BudgetGuard:
         """放掉預留。結算時先把實際金額寫進帳本，再呼叫這個。重複呼叫無害。
 
         帳本寫不進去（例如磁碟滿）時，`unbooked_micros` 是這次實際花掉、帳本裡卻沒有的金額：
-        預留照樣放掉，這個金額另外留著、照樣算進工單預算與本月額度，寫不進帳本的這段期間
-        上限才擋得住。程序重開之後就沒了，那時帳本也還是缺這一筆。
+        預留照樣放掉，這個金額另外留著，照樣算進工單預算，以及花掉那個月（Asia/Taipei）的
+        額度——跟它寫進帳本時會算進的地方一樣。寫不進帳本的這段期間上限才擋得住，
+        到了下個月也不會一直佔著額度。程序重開之後就沒了，那時帳本也還是缺這一筆。
         """
         with self._lock:
             released = self._outstanding.pop(reservation.id, None)
             if released is not None and unbooked_micros > 0:
-                self._unbooked.append(replace(reservation, micros=unbooked_micros))
+                month = taipei_month(self._clock())
+                self._unbooked.append(
+                    _Unbooked(reservation.job_id, month, unbooked_micros)
+                )

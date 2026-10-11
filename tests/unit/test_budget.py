@@ -194,3 +194,24 @@ def test_預留中的金額先算進去_退回之後才放出來(data: DataDir) 
     _job_ledger(data, "a", _line(OCT, 0.2))
     guard.release(first)
     guard.reserve("b", job_budget_micros=1_000_000, micros=600_000)
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_帳本寫不進去的花費只算進那個月的額度_工單預算一直算(data: DataDir) -> None:
+    # 10 月有一筆 US$0.80 寫不進帳本；閘道一路跑到 11 月，11 月還一毛都沒花
+    now = [OCT]
+    guard = BudgetGuard(
+        data, monthly_cap_micros=usd_to_micros(1.0), clock=lambda: now[0]
+    )
+    spent = guard.reserve("a", job_budget_micros=5_000_000, micros=900_000)
+    guard.release(spent, unbooked_micros=800_000)
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("b", job_budget_micros=5_000_000, micros=300_000)
+    assert refused.value.limit == "month"
+    # UTC 10/31 17:00 是台北 11/1 01:00
+    now[0] = datetime(2026, 10, 31, 17, 0, tzinfo=UTC)
+    guard.reserve("b", job_budget_micros=5_000_000, micros=300_000)
+    # 工單的預算不分月份：那 0.80 還是這張單花掉的
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("a", job_budget_micros=1_000_000, micros=300_000)
+    assert refused.value.limit == "job"
