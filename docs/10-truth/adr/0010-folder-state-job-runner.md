@@ -1,4 +1,4 @@
-# ADR-0010：狀態放在資料夾，工作單就是佇列
+# ADR-0010：狀態放在資料夾，工單就是佇列
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者（與架構 session 討論後拍板）
 > **後續修正：** 由 ADR-0014 修正——資料目錄改放專案根目錄的 `data/`（`.gitignore` 排除）。
@@ -21,8 +21,8 @@
 
 ## 3. 決策
 
-1. **一張工作單一個資料夾**（`$EF_DATA/jobs/<id>/`），狀態寫在 `job.md` 的 frontmatter，只有五種：`queued`、`running`、`review`、`approved`、`discarded`。做完、預算用完、出錯都進 `review`，用 `result`（`complete`／`incomplete`／`failed`）與原因區分。
-2. **工作單就是佇列。** 執行器定時掃描，有空位就拿最舊的 `queued`。同時跑幾張是設定值。不用 Celery、Redis、PostgreSQL。
+1. **一張工單一個資料夾**（`$EF_DATA/jobs/<id>/`），狀態寫在 `job.md` 的 frontmatter，只有五種：`queued`、`running`、`review`、`approved`、`discarded`。做完、預算用完、出錯都進 `review`，用 `result`（`complete`／`incomplete`／`failed`）與原因區分。
+2. **工單就是佇列。** 執行器定時掃描，有空位就拿最舊的 `queued`。同時跑幾張是設定值。不用 Celery、Redis、PostgreSQL。
 3. **一個檔案只有一個寫入者：**
    - `job.md` 的狀態、`events.jsonl`：執行器
    - `ledger.jsonl`：閘道
@@ -32,17 +32,17 @@
 5. **資料夾不搬家**；看板是讀 frontmatter 畫的。
 6. **當機恢復：** `running` 的單從所在那段重跑；閘道的請求快取讓重跑的前段重播、不重付（ADR-0011）。不需要 checkpoint。
 7. **資料不進 repo**：位置由 `EF_DATA` 指定；每天 rsync 到第二顆本機硬碟，MVP 期間全部保留，只有創作者下指令才刪。
-8. ADR-0003 的 ID 規則保留：訂閱源、素材項目、工作單、來源、素材各有穩定 ID，產出檔之間用 ID 互相引用。
+8. ADR-0003 的 ID 規則保留：訂閱源、素材項目、工單、來源、素材各有穩定 ID，產出檔之間用 ID 互相引用。
 
 ## 4. 後果
 
 - **正面：** 少三個服務；狀態看得懂、備份簡單；UI 與評估都直接讀檔。
 - **負面：**
-  - 跨工作單的統計（每月帳單）要掃檔；量大時加一個可以從資料夾重建的 SQLite 索引。
+  - 跨工單的統計（每月帳單）要掃檔；量大時加一個可以從資料夾重建的 SQLite 索引。
   - 單機。要擴到多台機器時，佇列與鎖要重新設計（重新評估觸發）。
   - 檔案系統在 `/mnt/d` 這類慢的掛載上會拖慢掃描；`EF_DATA` 建議放在 WSL 的 Linux 檔案系統內。
 - **影響範圍：** `src/evidence_forge/runner/`、`gateway/`、`ui/`；PRD 的狀態與非功能需求；ADR-0006 的 Docker Compose 不再需要。
-- **重新評估觸發：** 要用第二台機器跑；或工作單數量讓掃描明顯變慢。
+- **重新評估觸發：** 要用第二台機器跑；或工單數量讓掃描明顯變慢。
 
 ## 5. 參考
 

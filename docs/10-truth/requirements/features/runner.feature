@@ -4,7 +4,7 @@ Feature: 執行器：照配方跑、跑得動、可恢復
   @happy-path @smoke
   Scenario: 新增配方不用改程式
     Given harness/recipes 底下新增一份配方，列出三段與各自的 skill、等級、產出
-    When 創作者用這份配方開一張工作單
+    When 創作者用這份配方開一張工單
     Then 執行器照這份配方逐段執行
 
   Scenario: 每段只載入這段的 skill，沒有內建工具
@@ -13,10 +13,10 @@ Feature: 執行器：照配方跑、跑得動、可恢復
     And Pi 的內建讀寫檔與 shell 工具都是關閉的
 
   @security
-  Scenario: 工具只能碰這張工作單的資料夾
+  Scenario: 工具只能碰這張工單的資料夾
     Given 某段的 agent 要讀 ../another-job/draft.v1.md
     When 工具解析路徑
-    Then 拒絕，因為路徑不在這張工作單的資料夾內
+    Then 拒絕，因為路徑不在這張工單的資料夾內
 
   Scenario: 寫檔只增不改
     Given 這段的輸出目錄已經有 digest.md
@@ -26,7 +26,7 @@ Feature: 執行器：照配方跑、跑得動、可恢復
   @smoke
   Scenario: 開跑前檢查擋下
     Given Ollama 沒有在跑
-    When 執行器要開始一張工作單
+    When 執行器要開始一張工單
     Then 不開始，並說明是「Ollama 沒回應」這一項
 
   @sad-path
@@ -35,18 +35,18 @@ Feature: 執行器：照配方跑、跑得動、可恢復
     And Ollama 在這段途中停止回應
     When 執行器處理這次失敗
     Then 不改用 strong
-    And 工作單進待審，結果是「失敗：Ollama 沒回應」
+    And 工單進待審，結果是「失敗：Ollama 沒回應」
 
   @happy-path
   Scenario: 中途當機，重跑不重付
     Given 二創段已經完成 3 次模型呼叫，第 4 次進行中時程序被殺掉
     When 程序重啟
-    Then 這張工作單從二創段重跑
+    Then 這張工單從二創段重跑
     And 前 3 次呼叫直接回放存好的回應，帳本記 cache_hit，不收費
     And 從第 4 次開始才真的呼叫模型
 
   Scenario: 本機 GPU 一次只服務一個請求
-    Given 兩張工作單同時在跑，都要呼叫 local 模型
+    Given 兩張工單同時在跑，都要呼叫 local 模型
     When 兩個請求同時到閘道
     Then 一次只送一個到 Ollama，另一個排隊
     And 排隊的時間記在帳本的 queue_ms
@@ -65,7 +65,7 @@ Feature: 執行器：照配方跑、跑得動、可恢復
     Given 閘道在重播模式，固定的小案例有錄好的回應
     When CI 從投入跑到待審
     Then 全程沒有任何付費呼叫
-    And 工作單進待審，結果是「完成」
+    And 工單進待審，結果是「完成」
 
   Scenario: 重播模式沒錄過的請求直接報錯
     Given 閘道在重播模式

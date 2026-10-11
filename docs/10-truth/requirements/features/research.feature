@@ -16,15 +16,15 @@ Feature: 補料研究
 
   @sad-path
   Scenario: 搜尋額度用完就停
-    Given 這張工作單的 Tavily 額度剩 1 credit
+    Given 這張工單的 Tavily 額度剩 1 credit
     When 補料段要做一次需要 2 credits 的搜尋
     Then 閘道拒絕這次搜尋
     And 補料段用已經找到的資料結束
     And 帳本記下 budget_exceeded
 
-  Scenario: 搜尋與抓取結果跨工作單共用
-    Given 另一張工作單在快取有效期內搜尋過同一個查詢
-    When 這張工作單送出同一個查詢
+  Scenario: 搜尋與抓取結果跨工單共用
+    Given 另一張工單在快取有效期內搜尋過同一個查詢
+    When 這張工單送出同一個查詢
     Then 直接回傳快取結果，不扣 credits
     And 帳本記下 cache_hit
 

@@ -3,7 +3,7 @@ Feature: 二創
 
   @happy-path @smoke
   Scenario: 照目標、用我的聲音和該文類的風格寫新文章
-    Given 一張工作單的目標是「給台灣 PM 看的 1,500 字觀點文」，目標文類是 opinion
+    Given 一張工單的目標是「給台灣 PM 看的 1,500 字觀點文」，目標文類是 opinion
     And 整理與補料都已完成
     When 二創段完成
     Then 產出一份標準 Markdown 稿子，版本號是 v1
@@ -23,14 +23,14 @@ Feature: 二創
     Given 配方設定自動修最多 1 次
     And 修過一次後 C2 仍不通過
     When 執行器處理檢查結果
-    Then 工作單進待審，結果是「未完成」
+    Then 工單進待審，結果是「未完成」
     And 待審畫面列出沒過的檢查與位置
 
   Scenario: 軟檢查只提醒不擋
     Given C6 判斷某個引用的來源只部分支持那句話
-    When 工作單進待審
+    When 工單進待審
     Then 待審畫面把它列為提醒，附判斷理由
-    And 工作單結果仍是「完成」
+    And 工單結果仍是「完成」
 
   @sad-path
   Scenario: 不捏造來源
@@ -39,7 +39,7 @@ Feature: 二創
     Then C2 不通過，因為引用編號對不到任何來源
 
   Scenario: 沒指定目標文類時用預設
-    Given 工作單與訂閱源都沒指定目標文類
+    Given 工單與訂閱源都沒指定目標文類
     And 作家設定的預設文類是 explainer
     When 二創段開始
     Then 目標文類是 explainer，並記在 job.md
