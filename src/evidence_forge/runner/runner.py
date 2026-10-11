@@ -8,6 +8,7 @@
   二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
 - 每一次（重試、升級、自動修）編號往上加，產出各自一個目錄；狀態寫在 `job.md` 的 `stage`，
   重開 `ef serve` 時從所在那段、同一次重跑，前面的請求命中閘道快取（NFR-RUN-04）。
+  鑰匙跟當機前一樣，所以登記之前先殺掉前一個 `ef serve` 留下的 Pi（SEAM-12）。
 
 沒預料到的例外一律接住，工單帶著原因進待審，不卡在 `running`，迴圈也不停。
 同時跑幾張是 `max_parallel`；開跑前檢查沒過就不認領（`preflight.py`）。
@@ -633,6 +634,16 @@ class Runner:
             ),
             base_env=self._base_env(),
         )
+        # 重開 `ef serve` 重跑同一次時鑰匙跟當機前一模一樣：前一個 `ef serve` 被硬殺時
+        # 留下、還活著的 Pi 要在登記之前殺掉，不然它的請求與寫檔會被接受（SEAM-12）
+        leftover = pi_launch.kill_leftover(self.data, key)
+        if leftover is not None:
+            self._stage_event(
+                job_dir,
+                stage.id,
+                attempt,
+                f"前一次留下的 Pi 還在跑（程序群組 {leftover}），已停止",
+            )
         self._stage_event(job_dir, stage.id, attempt, f"開 Pi（{tier}）")
         # 鑰匙只在 Pi 活著的這段時間有效；run_pi 回來時 Pi 一定已經結束（或被殺掉）
         self.stages.activate(
@@ -646,6 +657,7 @@ class Runner:
                 doc,
                 command,
                 self.data.run / "pi-logs" / f"{key.job_id}-{stage.id}-{attempt}.jsonl",
+                pi_launch.pid_file(self.data, key),
             )
         finally:
             self.stages.deactivate(key)
@@ -723,6 +735,7 @@ class Runner:
         doc: JobDocument,
         command: pi_launch.PiCommand,
         log_path: Path,
+        pid_path: Path,
     ) -> pi_launch.PiRun:
         """跑 Pi；它跑的時候每隔一下看 Pi 的事件與閘道的告示板，把「在等什麼」寫進 job.md。"""
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -731,6 +744,7 @@ class Runner:
                 command,
                 log_path=log_path,
                 timeout_s=self.pi_timeout_s,
+                pid_path=pid_path,
             )
             current = doc
             while True:

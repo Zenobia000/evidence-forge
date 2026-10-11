@@ -3,6 +3,9 @@
 
 真的開兩次 `ef serve` 程序；Pi 是假的（問一次模型、寫產出，第一次寫完就停著等被殺），
 Ollama 是本機 stub，所以不需要 Ollama，也不打付費 API。
+
+另外一條（SEAM-12）：`kill -9` 掉 `ef serve` 時 Pi 在自己的程序群組裡活下來；重開後重跑
+同一段同一次，鑰匙跟當機前一模一樣，所以舊的 Pi 要在鑰匙重新登記之前被殺掉。
 """
 
 import json
@@ -69,7 +72,7 @@ def ollama(serve: Callable[[Any], AbstractContextManager[str]]) -> Iterator[Any]
         yield url, calls
 
 
-def _harness(tmp_path: Path, marks: Path) -> Path:
+def _harness(tmp_path: Path, marks: Path, pi: str = PI) -> Path:
     repo = default_harness()
     root = tmp_path / "harness"
     shutil.copytree(repo.recipes, root / "recipes")
@@ -77,7 +80,7 @@ def _harness(tmp_path: Path, marks: Path) -> Path:
     shutil.copytree(repo.pi.agent_template, root / "pi" / "agent")
     bin_dir = root / "pi" / "node_modules" / ".bin"
     bin_dir.mkdir(parents=True)
-    fake_pi(bin_dir, PI, "pi")
+    fake_pi(bin_dir, pi, "pi")
     marks.mkdir()
     return root
 
@@ -174,3 +177,99 @@ def test_跑到一半殺掉_ef_serve_重開後從同一段同一次重跑_前面
     # 當掉那次寫了一半的產出搬到工單資料夾外，沒有丟掉
     parked = data.run / "interrupted" / job_id / "echo-1-1" / "summary.json"
     assert parked.is_file()
+
+
+# 第一次：問模型、寫產出、留下自己的 pid，然後一直拿同一把鑰匙打閘道寫檔。測試殺掉第一個
+# `ef serve` 之後放一個 restarted 記號，從那之後收到的狀態碼記進 late-statuses，
+# 所以記到的全是打重開後那個閘道的結果。之後（重開後的新 Pi）：照常寫完
+PI_KEEPS_KNOCKING = (
+    FAKE_PI_LIB
+    + """
+MARKS = os.environ["PATH"].split(":")[0]
+MARK = MARKS + "/asked"
+status, _ = ask()
+assert status == 200, status
+assert write("summary.json", {"summary": "重跑也一樣"}) == 200
+if not os.path.exists(MARK):
+    with open(MARK + ".tmp", "w") as handle:
+        handle.write(str(os.getpid()))
+    os.replace(MARK + ".tmp", MARK)
+    while True:
+        time.sleep(0.05)
+        if not os.path.exists(MARKS + "/restarted"):
+            continue
+        try:
+            status = write("late.txt", "舊的 Pi 在重開之後寫的")
+        except OSError:
+            continue  # 新的閘道還沒起來
+        with open(MARKS + "/late-statuses", "a") as handle:
+            handle.write(str(status) + "\\n")
+event(type="agent_end")
+"""
+)
+
+
+def _running(pid: int) -> bool:
+    """這個程序還在跑；已經死了、只是還沒被收屍（殭屍）的不算。"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+@pytest.mark.promise("NFR-SEC-02", "NFR-KEEP-02", "NFR-RUN-04")
+def test_重開時舊的_Pi_還活著_重跑之前先被殺掉_它拿舊鑰匙來的請求全部被拒(
+    tmp_path: Path, ollama: tuple[str, list[dict[str, Any]]], port: int
+) -> None:
+    ollama_url, calls = ollama
+    marks = tmp_path / "marks"
+    harness = _harness(tmp_path, marks, PI_KEEPS_KNOCKING)
+    data = DataDir(tmp_path / "data")
+    data.ensure()
+    recipes = load_recipes(default_harness(), tiers=("local", "strong", "max"))
+    job_id = open_job(
+        data,
+        recipes["echo"],
+        PastedText(ARTICLE.read_text(encoding="utf-8")),
+        goal=GOAL,
+        now=NOW,
+    ).job.id
+    job_md = data.job_dir(job_id) / "job.md"
+
+    first = _serve(harness, data.root, ollama_url, port, marks)
+    old_pi: int | None = None
+    try:
+        try:
+            _wait_for(marks / "asked", first, timeout_s=60)
+            old_pi = int((marks / "asked").read_text())
+        finally:
+            # kill -9：執行器沒有機會收尾，舊的 Pi 在自己的程序群組裡活下來
+            first.kill()
+            first.communicate()
+        assert _running(old_pi)
+        (marks / "restarted").touch()
+
+        second = _serve(harness, data.root, ollama_url, port, marks, "--once")
+        try:
+            _, err = second.communicate(timeout=60)
+        finally:
+            if second.poll() is None:
+                second.kill()
+                second.communicate()
+        assert second.returncode == 0, err.decode()
+
+        # 重跑之前舊的 Pi 已經被殺掉；它拿舊鑰匙打新閘道的請求一個都沒被接受
+        assert not _running(old_pi)
+        late = marks / "late-statuses"
+        statuses = late.read_text().split() if late.exists() else []
+        assert "200" not in statuses, statuses
+        stage_dir = data.job_dir(job_id) / "stages" / "echo" / "1"
+        assert [p.name for p in stage_dir.iterdir()] == ["summary.json"]
+        job = read_job(job_md).job
+        assert job.result is not None and job.result.outcome == "complete", job.result
+        assert len(calls) == 1
+    finally:
+        # 修壞的時候舊的 Pi 會一直活著：只殺這個測試自己開的那一個
+        if old_pi is not None and _running(old_pi):
+            os.kill(old_pi, signal.SIGKILL)

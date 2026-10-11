@@ -43,7 +43,8 @@ class DataDir:
 
     @property
     def run(self) -> Path:
-        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄。不是工單資料。"""
+        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄、
+        正在跑的 Pi 的程序群組編號（`run/pi-pids/`）。不是工單資料。"""
         return self.root / "run"
 
     @property
