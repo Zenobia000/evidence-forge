@@ -184,19 +184,29 @@ def test_加總月額度時壞掉的那一行跳過並記下是哪一行_其餘�
     assert f"{path}:2" in caplog.records[0].getMessage()
 
 
-# 兩種寫法各自就要認得：只有 `event: error` 那一行，或只有 data 裡的 "type": "error"
-ERROR_EVENTS = {
-    "event 行": 'event: error\ndata: {"error": {"type": "overloaded_error"}}\n\n',
-    "data 的 type": 'data: {"type": "error", "error": {"type": "overloaded_error"}}\n\n',
+START = (
+    'data: {"type": "message_start", "message": {"usage": {"input_tokens": 10}}}\n\n'
+)
+DELTA = 'data: {"type": "message_delta", "usage": {"output_tokens": 5}}\n\n'
+STOP = 'data: {"type": "message_stop"}\n\n'
+
+
+def test_有開頭_有結尾_中間沒有_error_才是一則完整的訊息() -> None:
+    reply = read_reply((START + DELTA + STOP).encode())
+    assert reply.whole
+    assert (reply.usage.input_tokens, reply.usage.output_tokens) == (10, 5)
+
+
+# 每一種各自就要讓它不完整；error 的兩種寫法（只有 event 行、只有 data 的 type）都要認得，
+# 而且就算結尾照樣送到了也一樣
+NOT_WHOLE = {
+    "沒有開頭": DELTA + STOP,
+    "沒有結尾": START + DELTA,
+    "event 行": START + 'event: error\ndata: {"error": {}}\n\n' + DELTA + STOP,
+    "data 的 type": START + 'data: {"type": "error", "error": {}}\n\n' + DELTA + STOP,
 }
 
 
-@pytest.mark.parametrize("error", ERROR_EVENTS.values(), ids=ERROR_EVENTS.keys())
-def test_串流裡有_error_事件就不是一則完整的訊息_就算開頭與結尾的用量都讀到了(
-    error: str,
-) -> None:
-    start = {"type": "message_start", "message": {"usage": {"input_tokens": 10}}}
-    delta = {"type": "message_delta", "usage": {"output_tokens": 5}}
-    whole = f"data: {json.dumps(start)}\n\ndata: {json.dumps(delta)}\n\n"
-    assert read_reply(whole.encode()).whole
-    assert not read_reply((whole + error).encode()).whole
+@pytest.mark.parametrize("stream", NOT_WHOLE.values(), ids=NOT_WHOLE.keys())
+def test_缺開頭_缺結尾_或串流裡有_error_事件就不是一則完整的訊息(stream: str) -> None:
+    assert not read_reply(stream.encode()).whole

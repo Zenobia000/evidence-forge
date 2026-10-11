@@ -125,9 +125,9 @@ class Reply:
 
     # 讀到的用量；讀不到的欄位是 0
     usage: Usage
-    # 是不是一則完整的訊息：開頭與結尾的用量都讀到了、中間沒有 error 事件
-    # （不是串流的回應：是一則帶 usage 的 message）。不是的話，結算不知道後端實際算了多少錢，
-    # 也不能把它當成功的回應回放
+    # 是不是一則完整的訊息：讀到開頭（message_start 與它的用量）、收到結尾（message_stop）、
+    # 中間沒有 error 事件（不是串流的回應：是一則帶 usage 的 message）。不是的話，
+    # 結算不知道後端實際算了多少錢，也不能把它當成功的回應回放
     whole: bool
 
 
@@ -150,15 +150,15 @@ def read_reply(body: bytes) -> Reply:
 
     串流：`message_start` 帶輸入與快取的 token；`message_delta` 帶累計的輸出 token，
     有時也帶更新過的輸入與快取數字，有帶就以它為準。中途斷掉的串流讀到哪算到哪。
-    HTTP 200 的串流也可能在中途送 `event: error`（後端過載時常見做法），
-    那就不是一則完整的訊息，只看狀態碼會把它當成功。
+    HTTP 200 的串流也可能在中途送 `event: error`（後端過載時常見做法），或沒送到
+    `message_stop` 就結束；那都不是一則完整的訊息，只看狀態碼會把它當成功。
     """
     text = body.decode("utf-8", errors="replace")
     lines = text.splitlines()
     if not any(line.startswith(("data:", "event:")) for line in lines):
         return _read_json_message(text)
     usage = Usage()
-    started = ended = failed = False
+    started = stopped = failed = False
     for line in lines:
         if line.startswith("event:"):
             failed |= line[len("event:") :].strip() == "error"
@@ -175,6 +175,9 @@ def read_reply(body: bytes) -> Reply:
         if kind == "error":
             failed = True
             continue
+        if kind == "message_stop":
+            stopped = True
+            continue
         if kind == "message_start":
             message = event.get("message")
             fields = message.get("usage") if isinstance(message, dict) else None
@@ -186,8 +189,7 @@ def read_reply(body: bytes) -> Reply:
             continue
         usage = _merge(usage, fields)
         started |= kind == "message_start"
-        ended |= kind == "message_delta"
-    return Reply(usage, whole=started and ended and not failed)
+    return Reply(usage, whole=started and stopped and not failed)
 
 
 CallKey = tuple[str, int, str]
