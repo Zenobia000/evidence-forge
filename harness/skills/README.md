@@ -1,7 +1,7 @@
 # skill 作者須知
 
 一個 skill 是一個資料夾：`SKILL.md`（給 agent 的做法）加上 `schema.json`（給執行器驗產出），需要時再加 `scripts/`。
-寫之前先知道這四條，每一條都有測試擋著（`tests/unit/test_skills.py`）。
+寫之前先知道這四條。第 1～3 條有測試擋著（`tests/unit/test_skills.py`；第 3 條的 `scripts:` 名單由 `run_script` 執行時擋），第 4 條靠審查。
 
 ## 1. 要放進配方的 skill，`schema.json` 是必要的
 

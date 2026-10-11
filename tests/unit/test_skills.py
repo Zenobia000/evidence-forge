@@ -65,6 +65,12 @@ def test_digest_的_schema_文類只收_harness_genres_裡的_12_種() -> None:
     assert len(allowed) == 12
 
 
+def test_compose_的_schema_目標文類跟_harness_genres_一致() -> None:
+    # 新增文類只改了 genres/ 與 digest，compose 的清單沒跟上，C5 會每次都擋
+    allowed = set(_schema("compose")["properties"]["target_genre"]["enum"])
+    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
+
+
 @pytest.mark.promise("NFR-RUN-03")
 @pytest.mark.parametrize("skill", SKILLS)
 def test_每個_skill_都有_schema_json(skill: str) -> None:

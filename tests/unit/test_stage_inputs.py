@@ -112,6 +112,35 @@ def test_再開一次段不覆寫_工單記得當時用的版本(tmp_path: Path)
     ) == VOICE
 
 
+def test_放過一次之後才新增的風格檔_重跑不補進來_請求不變(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    job_dir = _job_dir(tmp_path)
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+
+    # 當機重開前作家補寫了風格檔；這張單仍是開段當時的樣子，閘道快取才對得上
+    (data.authors / "me" / "genres" / "opinion.md").write_text(
+        "新風格", encoding="utf-8"
+    )
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+
+    assert not (job_dir / "input" / "author" / "genre-style.md").exists()
+
+
+def test_上次當機留下半截暫存檔_重開放的是完整的檔(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    job_dir = _job_dir(tmp_path)
+    # 模擬寫 genres.md 寫到一半被砍：只留下半截的暫存檔，正式檔名還沒出現
+    (job_dir / "input" / ".genres.md.partial").write_text("半截", encoding="utf-8")
+
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+
+    expected = "\n\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(HARNESS.genres.glob("*.md"))
+    )
+    assert (job_dir / "input" / "genres.md").read_text(encoding="utf-8") == expected
+    assert list(job_dir.rglob("*.partial")) == []
+
+
 def test_目標文類不在_harness_genres_裡_丟_InputError_點名文類(tmp_path: Path) -> None:
     data = _data(tmp_path)
     job_dir = _job_dir(tmp_path)
@@ -134,7 +163,10 @@ def test_harness_沒有文類資料夾也不出錯(tmp_path: Path) -> None:
     harness = Harness(root=tmp_path / "harness", pi=HARNESS.pi)
     job_dir = _job_dir(tmp_path)
     prepare_inputs(harness, DataDir(tmp_path / "data"), job_dir, _job(None))
-    assert sorted(p.name for p in (job_dir / "input").iterdir()) == ["content.md"]
+    assert sorted(p.name for p in (job_dir / "input").iterdir()) == [
+        ".prepared.json",
+        "content.md",
+    ]
 
 
 @pytest.mark.promise("FR-CP-03")
