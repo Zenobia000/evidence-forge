@@ -13,8 +13,8 @@ from evidence_forge.gateway.ledger import (
     append,
     append_intake,
     read,
+    read_reply,
     responses_by_call,
-    usage_from_sse,
 )
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry
 from evidence_forge.paths import DataDir
@@ -85,7 +85,7 @@ def test_串流用量含快取讀寫_message_delta_有帶就以它為準() -> No
         "usage": {"output_tokens": 77, "input_tokens": 12},
     }
     stream = f"data: {json.dumps(start)}\n\ndata: {json.dumps(delta)}\n\n".encode()
-    usage = usage_from_sse(stream)
+    usage = read_reply(stream).usage
     assert (usage.input_tokens, usage.output_tokens) == (12, 77)
     assert (usage.cache_read_tokens, usage.cache_write_tokens) == (300, 40)
 
@@ -182,3 +182,21 @@ def test_加總月額度時壞掉的那一行跳過並記下是哪一行_其餘�
         assert SpendTally(data).month_micros("2026-10") == 1_000_000
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
     assert f"{path}:2" in caplog.records[0].getMessage()
+
+
+# 兩種寫法各自就要認得：只有 `event: error` 那一行，或只有 data 裡的 "type": "error"
+ERROR_EVENTS = {
+    "event 行": 'event: error\ndata: {"error": {"type": "overloaded_error"}}\n\n',
+    "data 的 type": 'data: {"type": "error", "error": {"type": "overloaded_error"}}\n\n',
+}
+
+
+@pytest.mark.parametrize("error", ERROR_EVENTS.values(), ids=ERROR_EVENTS.keys())
+def test_串流裡有_error_事件就不是一則完整的訊息_就算開頭與結尾的用量都讀到了(
+    error: str,
+) -> None:
+    start = {"type": "message_start", "message": {"usage": {"input_tokens": 10}}}
+    delta = {"type": "message_delta", "usage": {"output_tokens": 5}}
+    whole = f"data: {json.dumps(start)}\n\ndata: {json.dumps(delta)}\n\n"
+    assert read_reply(whole.encode()).whole
+    assert not read_reply((whole + error).encode()).whole

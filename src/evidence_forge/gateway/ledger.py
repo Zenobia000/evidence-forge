@@ -1,7 +1,7 @@
 """帳本的讀寫：每次呼叫一行，只有閘道寫，只增不改（v0.3 §4.4、FR-LG-01）。
 
 格式在 `ledger_models.py`（中立模組，帳單與 UI 也讀）；這裡負責寫進檔案、
-從串流讀用量、做重播索引。重播模式也從 `ledger.jsonl` 讀錄音。
+從回應讀用量、做重播索引。重播模式也從 `ledger.jsonl` 讀錄音。
 """
 
 import json
@@ -21,12 +21,13 @@ __all__ = [
     "IntakeEntry",
     "LedgerEntry",
     "LedgerStatus",
+    "Reply",
     "Usage",
     "append",
     "append_intake",
     "read",
+    "read_reply",
     "responses_by_call",
-    "usage_from_sse",
 ]
 
 _lock = threading.Lock()
@@ -104,14 +105,64 @@ def _count(usage: dict[str, object], name: str, default: int) -> int:
     return value if isinstance(value, int) and value >= 0 else default
 
 
-def usage_from_sse(stream: bytes) -> Usage:
-    """從 Anthropic 格式的串流讀出用量；讀不到的欄位是 0。
+def _merge(current: Usage, fields: dict[str, object]) -> Usage:
+    """Anthropic 的 usage 欄位蓋過目前的數字；沒帶的欄位留著原值。"""
+    return Usage(
+        input_tokens=_count(fields, "input_tokens", current.input_tokens),
+        output_tokens=_count(fields, "output_tokens", current.output_tokens),
+        cache_read_tokens=_count(
+            fields, "cache_read_input_tokens", current.cache_read_tokens
+        ),
+        cache_write_tokens=_count(
+            fields, "cache_creation_input_tokens", current.cache_write_tokens
+        ),
+    )
 
-    `message_start` 帶輸入與快取的 token；`message_delta` 帶累計的輸出 token，
+
+@dataclass(frozen=True)
+class Reply:
+    """一份回應裡結算要知道的事。"""
+
+    # 讀到的用量；讀不到的欄位是 0
+    usage: Usage
+    # 是不是一則完整的訊息：開頭與結尾的用量都讀到了、中間沒有 error 事件
+    # （不是串流的回應：是一則帶 usage 的 message）。不是的話，結算不知道後端實際算了多少錢，
+    # 也不能把它當成功的回應回放
+    whole: bool
+
+
+def _read_json_message(text: str) -> Reply:
+    """不是串流的回應：整則訊息一次回來，用量在最上層的 `usage`。"""
+    try:
+        message = json.loads(text)
+    except json.JSONDecodeError:
+        return Reply(Usage(), whole=False)
+    if not isinstance(message, dict) or message.get("type") != "message":
+        return Reply(Usage(), whole=False)
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return Reply(Usage(), whole=False)
+    return Reply(_merge(Usage(), usage), whole=True)
+
+
+def read_reply(body: bytes) -> Reply:
+    """讀後端的回應：Anthropic 格式的串流（SSE），或不是串流的一整則 JSON 訊息。
+
+    串流：`message_start` 帶輸入與快取的 token；`message_delta` 帶累計的輸出 token，
     有時也帶更新過的輸入與快取數字，有帶就以它為準。中途斷掉的串流讀到哪算到哪。
+    HTTP 200 的串流也可能在中途送 `event: error`（後端過載時常見做法），
+    那就不是一則完整的訊息，只看狀態碼會把它當成功。
     """
-    counts = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-    for line in stream.decode("utf-8", errors="replace").splitlines():
+    text = body.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if not any(line.startswith(("data:", "event:")) for line in lines):
+        return _read_json_message(text)
+    usage = Usage()
+    started = ended = failed = False
+    for line in lines:
+        if line.startswith("event:"):
+            failed |= line[len("event:") :].strip() == "error"
+            continue
         if not line.startswith("data:"):
             continue
         try:
@@ -120,29 +171,23 @@ def usage_from_sse(stream: bytes) -> Usage:
             continue
         if not isinstance(event, dict):
             continue
-        if event.get("type") == "message_start":
+        kind = event.get("type")
+        if kind == "error":
+            failed = True
+            continue
+        if kind == "message_start":
             message = event.get("message")
-            usage = message.get("usage") if isinstance(message, dict) else None
-        elif event.get("type") == "message_delta":
-            usage = event.get("usage")
+            fields = message.get("usage") if isinstance(message, dict) else None
+        elif kind == "message_delta":
+            fields = event.get("usage")
         else:
             continue
-        if not isinstance(usage, dict):
+        if not isinstance(fields, dict):
             continue
-        counts["input"] = _count(usage, "input_tokens", counts["input"])
-        counts["output"] = _count(usage, "output_tokens", counts["output"])
-        counts["cache_read"] = _count(
-            usage, "cache_read_input_tokens", counts["cache_read"]
-        )
-        counts["cache_write"] = _count(
-            usage, "cache_creation_input_tokens", counts["cache_write"]
-        )
-    return Usage(
-        input_tokens=counts["input"],
-        output_tokens=counts["output"],
-        cache_read_tokens=counts["cache_read"],
-        cache_write_tokens=counts["cache_write"],
-    )
+        usage = _merge(usage, fields)
+        started |= kind == "message_start"
+        ended |= kind == "message_delta"
+    return Reply(usage, whole=started and ended and not failed)
 
 
 CallKey = tuple[str, int, str]

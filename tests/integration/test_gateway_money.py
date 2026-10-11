@@ -603,6 +603,104 @@ def test_關後端連線時出錯_帳本照樣有這一行(
     assert entry.cost_usd > 0
 
 
+# --- HTTP 200 但不是一則完整的訊息 ------------------------------------------------
+
+# 一次 strong 呼叫至少預留 16000 個輸出 token × $10／百萬 ＝ US$0.16（models.yaml 的 max_tokens）
+STRONG_RESERVATION_FLOOR_USD = 0.16
+
+
+def _overloaded_midstream(with_event_line: bool) -> Callable[[], Response]:
+    """後端過載時常見的樣子：狀態碼 200 已經送出，串流開頭之後送一個 error 事件。"""
+    start = {
+        "type": "message_start",
+        "message": {"id": "msg_1", "usage": {"input_tokens": 1000, "output_tokens": 1}},
+    }
+    error = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+    event_line = "event: error\n" if with_event_line else ""
+    body = (
+        f"event: message_start\ndata: {json.dumps(start)}\n\n"
+        f"{event_line}data: {json.dumps(error)}\n\n"
+    ).encode()
+    return lambda: Response(body, media_type="text/event-stream")
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+@pytest.mark.parametrize("with_event_line", [True, False])
+def test_200_的串流裡有_error_事件_記成_error_照預留入帳_重開後同樣的請求重新轉送(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    with_event_line: bool,
+) -> None:
+    # 記成 ok 的話，同段同次的相同請求會一直回放這份錯誤（NFR-COST-02），金額也少算
+    anthropic.replies = [_overloaded_midstream(with_event_line)]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    with gateway(_active(key)) as gw:
+        again = _post(gw.url, key, _body("strong"))
+    assert again.content == SSE
+    assert len(anthropic.received) == 2
+    entries = _ledger(data, job_id)
+    assert [entry.status for entry in entries] == ["error", "ok"]
+    # 輸出到哪裡才報錯不知道：照預留的金額入帳（寧可多算）
+    assert entries[0].cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
+def _json_message() -> Response:
+    """不是串流的回應：整則訊息一次回來，用量在最上層的 usage。"""
+    message = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "好"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    return Response(json.dumps(message).encode(), media_type="application/json")
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-OBS-01")
+def test_200_的非串流_JSON_回應照_usage_入帳(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    anthropic.replies = [_json_message]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "ok"
+    assert (entry.input_tokens, entry.output_tokens) == (1000, 200)
+    # 1000×$2 + 200×$10（每百萬 token）＝ 4000 微美元
+    assert entry.cost_usd == 0.004
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+def test_200_但讀不到用量的回應照預留入帳_不當成可以回放的回應(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # 例如中間的代理回了一頁 HTML：不知道後端算了多少錢，也不是 Pi 看得懂的回應
+    anthropic.replies = [
+        lambda: Response(b"<html>bad gateway</html>", media_type="text/html")
+    ]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "error"
+    assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
 # --- 重播 -------------------------------------------------------------------
 
 
