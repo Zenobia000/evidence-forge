@@ -54,7 +54,9 @@ def normalize_for_match(text: str) -> str:
 # CommonMark 的程式碼圍欄：行首最多 3 個空白，接 3 個以上的 ` 或 ~。
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 # 行內程式碼：同樣長度的反引號包起來的一段（不跨行，夠用）。
-_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)")
+# 開頭的反引號前面不能是反斜線：\` 是字面上的反引號，不開行內程式碼（CommonMark）。
+# 寧可少遮（多檢查），不要把真的圖或引用編號當成程式碼藏起來。
+_CODE_SPAN = re.compile(r"(?<![`\\])(`+)(?!`)[^\n]*?(?<!`)\1(?!`)")
 
 
 @dataclass(frozen=True)

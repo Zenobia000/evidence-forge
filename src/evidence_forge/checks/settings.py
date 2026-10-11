@@ -5,7 +5,6 @@
 """
 
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -13,8 +12,6 @@ from pydantic import BaseModel, ConfigDict
 
 from evidence_forge.checks.overlap import OverlapThresholds
 from evidence_forge.paths import DataDir
-
-OVERRIDE_FILENAME = "checks.yaml"
 
 
 class CheckSettings(BaseModel):
@@ -50,7 +47,7 @@ def load_check_settings(data_dir: DataDir) -> CheckSettings:
         files("evidence_forge.checks").joinpath("defaults.yaml").read_text("utf-8"),
         "defaults.yaml",
     )
-    override_path: Path = data_dir.root / OVERRIDE_FILENAME
+    override_path = data_dir.check_settings
     if override_path.exists():
         override = _read_mapping(
             override_path.read_text(encoding="utf-8-sig"), str(override_path)

@@ -5,8 +5,9 @@ S0 還沒有素材下載，`assets.json` 是空的（或不存在），等於 S0
 避免二創把原文的圖直接抄進稿子。完整的 C4（授權、`quote` 的出處與附近段落、
 `reference` 不能出現）在 S3。
 
-認得的嵌圖寫法：`![alt](網址)`、`![alt][參照]`／`![參照]` 配 `[參照]: 網址`、HTML 的
-`<img src=…>`。程式碼區塊與行內程式碼裡的不算。
+認得的嵌圖寫法：`![alt](網址)`、`![alt][參照]`／`![參照]` 配 `[參照]: 網址`（定義寫在引言區塊裡也算）、
+HTML 的 `<img>`、`<image>`（含 SVG 裡的）、`<source>`、`<input>` 上的 `src`、`srcset`、`href`。
+程式碼區塊與行內程式碼裡的不算。HTML 這邊寧可多抓：S0 的素材清單是空的，多抓只是多擋一張圖。
 """
 
 import json
@@ -17,8 +18,8 @@ from pathlib import Path
 from evidence_forge.checks.report import CheckEntry, Location
 from evidence_forge.checks.text import line_column, mask_code
 
-# 說明文字（alt）可以換行，也可以有一層成對的中括號：![圖 [1] 示意](…)
-_ALT = r"(?:[^\[\]]|\[[^\[\]]*\])*"
+# 說明文字（alt）可以換行，也可以有兩層成對的中括號：![圖 [1 [a]] 示意](…)
+_ALT = r"(?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*"
 # 網址可以用 <> 包起來，也可以有一層成對的括號：…/Foo_(bar).png
 _DESTINATION = r"(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)"
 # 網址後面可以接 "標題"、'標題' 或 (標題)。
@@ -26,12 +27,16 @@ _TITLE = r"""(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?"""
 _INLINE_IMAGE = re.compile(rf"!\[{_ALT}\]\(\s*{_DESTINATION}{_TITLE}\s*\)")
 # ![alt][label]、![label][]、![label]（後面不能緊接 [ 或 (，那是另外兩種寫法）
 _REFERENCE_IMAGE = re.compile(rf"!\[({_ALT})\](?:\[([^\]\n]*)\]|(?![\[(]))")
+# 定義前面可以有引言區塊的 >（一層或多層）
 _REFERENCE_DEFINITION = re.compile(
-    r"^ {0,3}\[([^\]\n]+)\]:\s*(<[^>\n]*>|\S+)", re.MULTILINE
+    r"^(?: {0,3}> ?)* {0,3}\[([^\]\n]+)\]:\s*(<[^>\n]*>|\S+)", re.MULTILINE
 )
-# src 前面不能是字母或 -：data-src、srcset 之類的屬性不是真的顯示的圖。
-_HTML_IMAGE = re.compile(
-    r"""<img\b[^>]*?(?<![\w-])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""",
+# 會把圖顯示出來的 HTML 標籤（<image> 瀏覽器當成 <img>；SVG 的 <image> 用 href）
+_HTML_IMAGE_TAG = re.compile(r"<(?:img|image|source|input)\b[^>]*>", re.IGNORECASE)
+# 屬性名稱前面不能是字母或 -：data-src 之類的屬性瀏覽器不拿來顯示圖。
+# xlink:href 的 href 前面是冒號，照樣抓得到。
+_HTML_IMAGE_ATTRIBUTE = re.compile(
+    r"""(?<![\w-])(src|srcset|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""",
     re.IGNORECASE,
 )
 
@@ -63,9 +68,15 @@ def find_images(draft: str) -> list[tuple[int, str]]:
         # 對不到定義的 ![x][y] 在 Markdown 裡只是普通文字，不是圖。
         if url is not None:
             images.append((match.start(), url))
-    for match in _HTML_IMAGE.finditer(text):
-        url = next(group for group in match.groups() if group is not None)
-        images.append((match.start(), url))
+    for tag in _HTML_IMAGE_TAG.finditer(text):
+        for attribute in _HTML_IMAGE_ATTRIBUTE.finditer(tag.group(0)):
+            value = next(g for g in attribute.groups()[1:] if g is not None)
+            if attribute.group(1).lower() == "srcset":
+                # srcset 是「網址 描述」用逗號隔開的一串候選，每一張都可能被顯示
+                urls = [c.split()[0] for c in value.split(",") if c.strip()]
+            else:
+                urls = [value]
+            images.extend((tag.start(), url) for url in urls)
     return sorted(images)
 
 

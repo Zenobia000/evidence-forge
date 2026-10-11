@@ -185,12 +185,9 @@ def test_compose_output_that_is_not_json_fails_c2_and_c5(tmp_path: Path) -> None
     job, schema = _job(tmp_path, draft=CLEAN_DRAFT, output=CLEAN_OUTPUT)
     (job / "stages" / "compose" / "1" / "facts.json").write_text("not json", "utf-8")
 
-    entries = _compose(job, schema)
+    failed = {entry.check for entry in _compose(job, schema) if entry.status == "fail"}
 
-    assert {(entry.check, entry.status) for entry in entries} == {
-        ("C2", "fail"),
-        ("C5", "fail"),
-    }
+    assert failed == {"C2", "C5"}
 
 
 @pytest.mark.parametrize("path", ["../other-job/drafts/draft.v1.md", "/etc/passwd"])
@@ -216,3 +213,60 @@ def test_broken_skill_schema_is_a_setup_error_not_a_failed_output(
 
     with pytest.raises(SchemaError):
         _compose(job, schema)
+
+
+@pytest.mark.parametrize("contents", [None, "", "  \n\n"])
+def test_compose_without_any_source_text_is_a_setup_error(
+    tmp_path: Path, contents: str | None
+) -> None:
+    # 沒有原文可比，C3 不能因此判 pass：那是執行器沒把來源放好
+    job, schema = _job(tmp_path, draft=CLEAN_DRAFT, output=CLEAN_OUTPUT)
+    sources = {"S1": Path("input/content.md")}
+    if contents is None:
+        sources = {}
+    else:
+        (job / "input" / "content.md").write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="來源"):
+        run_compose_checks(
+            job,
+            draft=Path("drafts/draft.v1.md"),
+            output=Path("stages/compose/1/facts.json"),
+            schema=schema,
+            sources=sources,
+            thresholds=THRESHOLDS,
+        )
+
+
+def test_digest_with_an_empty_source_is_a_setup_error(tmp_path: Path) -> None:
+    job, schema = _job(tmp_path, draft=CLEAN_DRAFT, output=CLEAN_OUTPUT)
+    (job / "input" / "content.md").write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="原文"):
+        run_digest_checks(
+            job,
+            output=Path("stages/compose/1/facts.json"),
+            schema=schema,
+            source=Path("input/content.md"),
+        )
+
+
+def test_unreadable_compose_output_still_reports_what_is_wrong_with_the_draft(
+    tmp_path: Path,
+) -> None:
+    # JSON 壞了也要把稿子的問題（這裡是原文的圖）一起交回去，省一輪修正
+    draft = CLEAN_DRAFT + "\n![原文的圖](https://example.com/a.png)\n"
+    job, schema = _job(tmp_path, draft=draft, output=CLEAN_OUTPUT)
+    (job / "stages" / "compose" / "1" / "facts.json").write_text("oops", "utf-8")
+
+    statuses = {(entry.check, entry.status) for entry in _compose(job, schema)}
+
+    assert {("C2", "fail"), ("C4", "fail"), ("C5", "fail")} <= statuses
+
+
+def test_output_json_with_a_byte_order_mark_is_still_read(tmp_path: Path) -> None:
+    job, schema = _job(tmp_path, draft=CLEAN_DRAFT, output=CLEAN_OUTPUT)
+    output = job / "stages" / "compose" / "1" / "facts.json"
+    output.write_text(json.dumps(CLEAN_OUTPUT), encoding="utf-8-sig")
+
+    assert all(entry.status == "pass" for entry in _compose(job, schema))

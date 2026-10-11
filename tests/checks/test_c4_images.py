@@ -125,3 +125,36 @@ def test_malformed_assets_file_is_an_error_not_an_empty_list(tmp_path: Path) -> 
 def test_tricky_image_syntax_is_still_caught(draft: str, url: str) -> None:
     entries = check_images(draft, {"https://ok.example/1.png"}, file=FILE)
     assert [(entry.status, entry.excerpt) for entry in entries] == [("fail", url)]
+
+
+@pytest.mark.parametrize(
+    ("draft", "url"),
+    [
+        # 反斜線跳脫的反引號不是行內程式碼的開頭，後面的圖會顯示出來
+        ("前文 \\` ![x](https://x.example/e.png) ` 後文", "https://x.example/e.png"),
+        # 只有 srcset、沒有 src 的 <img>，瀏覽器照樣顯示
+        ('<img srcset="https://x.example/f.png 1x">', "https://x.example/f.png"),
+        # 參照定義寫在引言區塊裡也算數（CommonMark）
+        ("![x][r]\n\n> [r]: https://x.example/g.png", "https://x.example/g.png"),
+        # 說明文字裡有兩層中括號
+        ("![a [b [c]] d](https://x.example/h.png)", "https://x.example/h.png"),
+        # <image> 會被瀏覽器當成 <img>
+        ('<image src="https://x.example/i.png">', "https://x.example/i.png"),
+        # SVG 裡的 <image href>
+        (
+            '<svg><image href="https://x.example/j.png"/></svg>',
+            "https://x.example/j.png",
+        ),
+    ],
+)
+def test_image_forms_found_in_review_are_caught(draft: str, url: str) -> None:
+    entries = check_images(draft, {"https://ok.example/1.png"}, file=FILE)
+    assert url in [entry.excerpt for entry in entries if entry.status == "fail"]
+
+
+def test_every_candidate_in_a_srcset_must_be_listed() -> None:
+    draft = '<img src="https://ok.example/1.png" srcset="https://ok.example/1.png 1x, https://x.example/2x.png 2x">'
+    entries = check_images(draft, {"https://ok.example/1.png"}, file=FILE)
+    assert [(entry.status, entry.excerpt) for entry in entries] == [
+        ("fail", "https://x.example/2x.png")
+    ]

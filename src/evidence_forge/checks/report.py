@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from evidence_forge.paths import JobDir
 from evidence_forge.write_once import VersionedFile, write_next_version
 
 HardCheckId = Literal["C1", "C2", "C3", "C4", "C5"]
@@ -164,7 +165,7 @@ def write_checks_report(job_dir: Path, report: ChecksReport) -> VersionedFile:
     這是本套件唯一寫檔的地方，由執行器呼叫；其他函式都只判斷、不寫檔。
     """
     payload = report.model_dump_json(indent=2) + "\n"
-    return write_next_version(job_dir / "checks", "checks", ".json", payload)
+    return write_next_version(JobDir(job_dir).checks, "checks", ".json", payload)
 
 
 def checks_report_schema() -> dict[str, Any]:

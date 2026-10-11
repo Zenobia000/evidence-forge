@@ -10,7 +10,7 @@
 from evidence_forge.checks.assets import check_images, load_asset_urls
 from evidence_forge.checks.citations import check_citations
 from evidence_forge.checks.format import SchemaError, check_markdown, check_schema
-from evidence_forge.checks.job import ASSETS_FILE, run_compose_checks, run_digest_checks
+from evidence_forge.checks.job import run_compose_checks, run_digest_checks
 from evidence_forge.checks.overlap import OverlapThresholds, check_overlap
 from evidence_forge.checks.quotes import check_quotes
 from evidence_forge.checks.report import (
@@ -31,7 +31,6 @@ from evidence_forge.checks.settings import CheckSettings, load_check_settings
 from evidence_forge.checks.stages import compose_checks, digest_checks
 
 __all__ = [
-    "ASSETS_FILE",
     "CheckEntry",
     "CheckId",
     "CheckSettings",

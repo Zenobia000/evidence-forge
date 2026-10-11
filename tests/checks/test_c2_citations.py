@@ -95,3 +95,9 @@ def test_fact_citing_a_different_source_than_the_draft_fails() -> None:
     facts = [_fact("成本降了九成[^S1]", 0)]
     entries = check_citations(draft, {"S1", "S12"}, facts, file="drafts/draft.v1.md")
     assert [entry.status for entry in entries] == ["fail"]
+
+
+def test_citation_after_an_escaped_backtick_is_still_checked() -> None:
+    # \` 是字面上的反引號，不開行內程式碼；[^S9] 照樣是引用編號
+    entries = check_citations("事實\\` [^S9] `。", {"S1"}, [], file="draft.md")
+    assert [entry.status for entry in entries] == ["fail"]

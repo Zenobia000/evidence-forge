@@ -30,6 +30,10 @@ FORBIDDEN = frozenset(
         "aiohttp",
         "anthropic",
         "openai",
+        "ollama",
+        "litellm",
+        "urllib3",
+        "websockets",
     }
 )
 

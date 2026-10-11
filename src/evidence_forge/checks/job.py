@@ -5,7 +5,7 @@
 
 - 產出路徑（稿子、段的 JSON 產出、原文）一律寫成相對於工單資料夾的路徑，
   條目裡的位置（`Location.file`）就用這個相對路徑；
-- 素材清單固定在 `<工單>/assets/assets.json`（架構草案 v0.3 §2.1），不存在等於沒有素材；
+- 素材清單在 `JobDir.assets_file`（`<工單>/assets/assets.json`，架構草案 v0.3 §2.1），不存在等於沒有素材；
 - skill 的 `schema.json` 在 repo 裡，不在工單資料夾，所以給完整路徑。
 
 模型交出來的檔案（稿子、JSON 產出）不存在、或不是合法的 JSON，算這次產出不合格（fail），不丟例外：
@@ -18,14 +18,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from evidence_forge.checks.assets import load_asset_urls
-from evidence_forge.checks.format import SchemaError
-from evidence_forge.checks.overlap import OverlapThresholds
+from evidence_forge.checks.assets import check_images, load_asset_urls
+from evidence_forge.checks.format import SchemaError, check_markdown
+from evidence_forge.checks.overlap import OverlapThresholds, check_overlap
 from evidence_forge.checks.report import CheckEntry, CheckId, Location
 from evidence_forge.checks.stages import compose_checks, digest_checks
-
-# 素材清單在工單資料夾裡的位置（架構草案 v0.3 §2.1）
-ASSETS_FILE = Path("assets") / "assets.json"
+from evidence_forge.paths import JobDir
 
 
 class _Unreadable(Exception):
@@ -44,7 +42,8 @@ def _inside(job_dir: Path, relative: Path) -> Path:
 
 def _read_text(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        # utf-8-sig：開頭多一個 BOM 也照樣讀，跟素材清單、設定檔的讀法一致
+        return path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         raise _Unreadable(f"讀不到：{exc}") from exc
 
@@ -66,6 +65,14 @@ def _load_schema(path: Path) -> Mapping[str, Any]:
     if not isinstance(schema, dict):
         raise SchemaError(f"skill 的 schema {path} 要是 JSON 物件")
     return schema
+
+
+def _source_text(job_dir: Path, path: Path) -> str:
+    """讀一份來源正文。是空的就丟例外：沒有原文可比，C1、C3 會變成空轉。"""
+    text = _inside(job_dir, path).read_text(encoding="utf-8-sig")
+    if not text.strip():
+        raise ValueError(f"來源（原文）{path} 是空的，沒辦法檢查")
+    return text
 
 
 def _unreadable(
@@ -90,7 +97,7 @@ def run_digest_checks(
 
     `output` 是整理段的 JSON 產出、`source` 是原文，都相對於 `job_dir`。
     """
-    source_text = _inside(job_dir, source).read_text(encoding="utf-8")
+    source_text = _source_text(job_dir, source)
     schema_doc = _load_schema(schema)
     output_file = output.as_posix()
     try:
@@ -119,10 +126,10 @@ def run_compose_checks(
     `draft` 是稿子、`output` 是二創段的 JSON 產出（列出事實句），`sources` 是來源清單：
     引用編號 → 來源正文的路徑。都相對於 `job_dir`。C3 拿稿子跟所有來源比。
     """
-    source_text = "\n\n".join(
-        _inside(job_dir, path).read_text(encoding="utf-8") for path in sources.values()
-    )
-    asset_urls = load_asset_urls(job_dir / ASSETS_FILE)
+    if not sources:
+        raise ValueError("來源清單是空的：C2 對不到任何編號、C3 沒有原文可比")
+    source_text = "\n\n".join(_source_text(job_dir, path) for path in sources.values())
+    asset_urls = load_asset_urls(JobDir(job_dir).assets_file)
     schema_doc = _load_schema(schema)
     draft_file = draft.as_posix()
     output_file = output.as_posix()
@@ -133,7 +140,13 @@ def run_compose_checks(
     try:
         payload = _read_json(_inside(job_dir, output))
     except _Unreadable as exc:
-        return _unreadable(("C2", "C5"), output_file, str(exc))
+        # JSON 壞了，稿子本身的問題（照抄、圖、格式）照樣查出來一起交回去，省一輪修正
+        return [
+            *_unreadable(("C2", "C5"), output_file, str(exc)),
+            *check_overlap(draft_text, source_text, thresholds, file=draft_file),
+            *check_images(draft_text, asset_urls, file=draft_file),
+            *check_markdown(draft_text, file=draft_file),
+        ]
     return compose_checks(
         draft=draft_text,
         draft_file=draft_file,
