@@ -1,0 +1,15 @@
+# 雲端模型的價目表（ADR-0011、v0.3 §4.1）：每百萬 token 幾美元，依實際模型名稱查。
+# 帳本的 cost_usd 與預留金額都由這裡算。本機模型不在這裡（金額是 0，只記 GPU 秒數）。
+# 來源：Claude API 參考資料的模型表（2026-10-06 版）；正式數字以定價頁為準：
+#   https://platform.claude.com/docs/en/about-claude/pricing（S0.14 用真的金鑰前要核對一次）。
+# cache_write 是 5 分鐘快取的寫入價，照慣例算成輸入價的 1.25 倍。用字串寫，避免浮點數誤差。
+claude-sonnet-5-5:
+  input: "2.00"
+  output: "10.00"
+  cache_write: "2.50"
+  cache_read: "0.20"
+claude-opus-5-5:
+  input: "4.00"
+  output: "20.00"
+  cache_write: "5.00"
+  cache_read: "0.20"

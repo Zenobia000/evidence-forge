@@ -20,7 +20,7 @@ from fastapi.responses import Response
 
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
 from evidence_forge.jobkey import JobKey
-from evidence_forge.models import LedgerEntry
+from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.paths import DataDir
 
 JOB = "20261011-120000-aaaa1111"
@@ -164,7 +164,12 @@ def test_請求與回應依_hash_存進_blobs_帳本記下是哪一段哪一次(
 @pytest.mark.promise("NFR-SEC-02")
 @pytest.mark.parametrize(
     "key",
-    [str(JobKey(JOB, "echo", 2)), str(JobKey("other-job", "echo", 1)), "", "sk-ant-x"],
+    [
+        str(JobKey(JOB, "echo", 2)),
+        str(JobKey("other-job", "echo", 1)),
+        "",
+        "sk-fake-xxxx",
+    ],
 )
 def test_不是正在跑的鑰匙不轉送(
     serve: Callable[[Any], AbstractContextManager[str]],

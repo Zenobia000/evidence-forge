@@ -17,6 +17,8 @@ import jsonschema
 
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.gateway.active import ActiveStages
+from evidence_forge.gateway.board import JobBoard
+from evidence_forge.gateway.budget import LIMIT_REASONS
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import (
@@ -99,8 +101,11 @@ class Runner:
     clock: Callable[[], datetime] = taipei_now
     base_env: Mapping[str, str] | None = None
     pi_timeout_s: float = 900.0
-    # S0.3 一律關掉思考；S0.4 改由閘道依 models.yaml 決定（#10 第 2、6 題）
+    # 思考由閘道依 models.yaml 改寫（S0.4），Pi 送什麼都不採用；這裡固定送 off，
+    # 只是讓同樣的輸入送出逐位元組相同的請求，快取與重播才對得上
     thinking: str = "off"
+    # 跟閘道共用的告示板：Pi 被預算擋下而結束時，從這裡知道是哪一道上限（`ef serve` 接上）
+    board: JobBoard | None = None
 
     # --- 狀態只在這裡改 ---------------------------------------------------
 
@@ -190,6 +195,22 @@ class Runner:
                 job_dir, doc, "running", f"開始 {stage.id} 段", stage=progress
             )
             problems = self._run_stage(job_dir, recipe, stage, attempt, doc.job.goal)
+            limit = (
+                self.board.budget_stop(JobKey(job_id, stage.id, attempt))
+                if self.board is not None
+                else None
+            )
+            if limit is not None:
+                # 預算或本月額度用完：不是失敗，是沒做完（NFR-COST-01）
+                reason = LIMIT_REASONS[limit]
+                self._set(
+                    job_dir,
+                    doc,
+                    "review",
+                    f"{stage.id} 段第 {attempt} 次：{reason}",
+                    result=JobResult(outcome="incomplete", reason=reason),
+                )
+                return job_id
             if problems:
                 reason = f"{stage.id} 段第 {attempt} 次失敗：" + "；".join(problems)
                 self._set(

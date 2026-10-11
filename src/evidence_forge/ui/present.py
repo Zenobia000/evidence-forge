@@ -12,11 +12,11 @@ from evidence_forge.models import (
     Job,
     JobResult,
     JobStatus,
-    LedgerEntry,
     Recipe,
     Tier,
     Waiting,
 )
+from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.paths import DataDir
 from evidence_forge.ui import reading
 from evidence_forge.ui.reading import JobBrief

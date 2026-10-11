@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from evidence_forge.models import Decision, Event, Item, Job, LedgerEntry
+from evidence_forge.ledger_models import LedgerEntry
+from evidence_forge.models import Decision, Event, Item, Job
 
 
 def _job(**changes: Any) -> dict[str, Any]:

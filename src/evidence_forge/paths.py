@@ -42,6 +42,11 @@ class DataDir:
         return self.root / "run"
 
     @property
+    def intake_ledger(self) -> Path:
+        """投入時的抓取記在這裡（還沒有工單）；只有閘道寫，月上限的加總包含它（FR-LG-01）。"""
+        return self.root / "ledger" / "intake.jsonl"
+
+    @property
     def check_settings(self) -> Path:
         """自動檢查的設定（只寫要蓋掉預設值的那幾項）；不存在就全用預設值。"""
         return self.root / "checks.yaml"

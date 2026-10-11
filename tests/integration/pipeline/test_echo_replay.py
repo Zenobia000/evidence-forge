@@ -25,7 +25,7 @@ import pytest
 from evidence_forge.cli import main
 from evidence_forge.documents import read_job
 from evidence_forge.harness import default_harness
-from evidence_forge.models import LedgerEntry
+from evidence_forge.ledger_models import LedgerEntry
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 ARTICLE = FIXTURES / "articles" / "tracer.md"
