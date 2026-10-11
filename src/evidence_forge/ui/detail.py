@@ -17,12 +17,13 @@ from evidence_forge.ui.present import Badge, BillRow, EventRow, StageCell
 EVENT_LIMIT = 50
 
 # 稿子是 LLM 根據別人的文章寫的，不可信：raw HTML 不放行（html=False 會把標籤轉成文字），
-# markdown-it 也會擋掉 javascript: 之類的連結。
-_MARKDOWN = MarkdownIt("commonmark", {"html": False})
+# markdown-it 也會擋掉 javascript: 之類的連結。圖片整個關掉：`![](https://…)` 會讓瀏覽器
+# 一打開稿子就連到外面去（洩漏 IP、讓對方知道有人在看）；S0 沒有圖，圖在 S3 才進來。
+_MARKDOWN = MarkdownIt("commonmark", {"html": False}).disable("image")
 
 
 def render_markdown(text: str) -> Markup:
-    return Markup(_MARKDOWN.render(text))  # noqa: S704 — html=False，輸出已跳脫
+    return Markup(_MARKDOWN.render(text))
 
 
 @dataclass(frozen=True)

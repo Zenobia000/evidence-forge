@@ -225,7 +225,7 @@ def read_draft(job_dir: Path, version: int) -> str | None:
     path = job_dir / "drafts" / f"draft.v{version}.md"
     try:
         return path.read_text(encoding="utf-8-sig")
-    except (FileNotFoundError, UnicodeDecodeError, OSError):
+    except (UnicodeDecodeError, OSError):
         return None
 
 
@@ -235,8 +235,10 @@ def read_item(data_dir: DataDir, job_dir: Path, job: Job) -> Item | None:
         job_dir / "input" / "item.json",
         data_dir.root / job.feed.item / "item.json",
     ]
+    root = data_dir.root.resolve()
     for path in candidates:
-        if not path.is_file():
+        # feed.item 是 job.md 裡的字串：絕對路徑或 `../` 會跳出資料目錄，那種不讀。
+        if not path.resolve().is_relative_to(root) or not path.is_file():
             continue
         try:
             return Item.model_validate_json(path.read_text(encoding="utf-8"))

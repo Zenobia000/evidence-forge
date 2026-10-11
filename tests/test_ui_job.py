@@ -1,6 +1,8 @@
 """工單詳情 `/jobs/<id>`：六個分頁、資訊欄、各種空與錯誤狀態（S0 UI IA §4、§7、SEAM-08）。"""
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -160,6 +162,66 @@ def test_draft_html_from_the_model_is_never_executed(folder: Folder) -> None:
 
     assert "<script>" not in body
     assert 'href="javascript:' not in body
+
+
+def test_draft_images_are_not_rendered_so_opening_a_draft_never_phones_home(
+    folder: Folder,
+) -> None:
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE, draft_version=1)
+    folder.draft("j", 1, "正文\n\n![追蹤](https://tracker.example/p.png)")
+
+    body = panel(client_for(folder).get("/jobs/j?tab=draft").text)
+
+    assert "<img" not in body
+
+
+def test_item_path_in_job_md_cannot_point_outside_the_data_dir(
+    folder: Folder, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "item.json").write_text(
+        json.dumps(
+            {
+                "id": "x",
+                "feed": "manual",
+                "title": "資料目錄外面的標題",
+                "fetched_at": folder.at(1).isoformat(),
+                "content_hash": "a" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    folder.job("j", status="queued")  # 沒有 title：不會蓋出 inbox 項目
+    md = folder.data.job_dir("j") / "job.md"
+    md.write_text(
+        md.read_text(encoding="utf-8").replace(
+            "item: inbox/manual/j", f"item: {outside}"
+        ),
+        encoding="utf-8",
+    )
+
+    html = client_for(folder).get("/jobs/j").text
+
+    assert "資料目錄外面的標題" not in html
+
+
+def test_polling_a_running_job_keeps_the_draft_version_being_looked_at(
+    folder: Folder,
+) -> None:
+    folder.job(
+        "j",
+        status="running",
+        title="t",
+        stage=folder.stage(3, 3, "compose", 5),
+        draft_version=2,
+    )
+    folder.draft("j", 1, "舊")
+    folder.draft("j", 2, "新")
+
+    html = client_for(folder).get("/jobs/j?tab=draft&v=1").text
+
+    assert 'hx-get="/jobs/j?tab=draft&amp;v=1"' in html
 
 
 def test_digest_tab_lists_genre_claims_with_quotes_and_directions(
