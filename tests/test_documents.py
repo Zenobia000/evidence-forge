@@ -98,7 +98,7 @@ def test_read_and_write_go_through_the_file(tmp_path: Path) -> None:
 
 
 def test_job_md_saved_by_a_windows_editor_is_still_read(tmp_path: Path) -> None:
-    # 資料目錄在 /mnt/d，創作者可能用 Windows 的編輯器存檔：開頭帶 BOM、換行是 CRLF。
+    # 創作者可能用 Windows 的編輯器透過 \\wsl.localhost 存檔：開頭帶 BOM、換行是 CRLF。
     path = tmp_path / "job.md"
     windows_text = "﻿" + HAND_WRITTEN_JOB.replace("\n", "\r\n")
     path.write_bytes(windows_text.encode("utf-8"))
