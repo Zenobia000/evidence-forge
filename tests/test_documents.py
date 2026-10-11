@@ -97,6 +97,14 @@ def test_read_and_write_go_through_the_file(tmp_path: Path) -> None:
     assert read_job(path) == doc
 
 
+def test_job_md_saved_by_a_windows_editor_is_still_read(tmp_path: Path) -> None:
+    # 資料目錄在 /mnt/d，創作者可能用 Windows 的編輯器存檔：開頭帶 BOM、換行是 CRLF。
+    path = tmp_path / "job.md"
+    windows_text = "﻿" + HAND_WRITTEN_JOB.replace("\n", "\r\n")
+    path.write_bytes(windows_text.encode("utf-8"))
+    assert read_job(path) == parse_job(HAND_WRITTEN_JOB)
+
+
 def test_write_job_replaces_the_previous_state(tmp_path: Path) -> None:
     # job.md 是資料夾裡唯一會被改寫的檔：狀態欄由執行器更新（v0.3 §2.2）。
     doc = parse_job(HAND_WRITTEN_JOB)

@@ -16,7 +16,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    NonNegativeFloat,
     NonNegativeInt,
     PositiveInt,
     StringConstraints,
@@ -40,6 +39,10 @@ WaitingKind = Literal["gpu", "rate_limit", "model", "tool"]
 # 內容 hash：SHA-256 的 64 個小寫十六進位字元，不加 "sha256:" 前綴
 # （`blobs/<hash>` 直接拿它當檔名，冒號在 Windows 磁碟上不能當檔名）。
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+# 金額與用量：不能是負的，也不能是無限大或 NaN（YAML 的 .inf 會被讀成無限大，
+# 無限大的預算等於沒有上限）。
+Amount = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 def _tier_rank(tier: Tier) -> int:
@@ -69,7 +72,7 @@ class FeedRef(_Contract):
 class Budget(_Contract):
     """這張工單的上限。金額是美元；Tavily 用 credits 計。"""
 
-    usd: float = Field(ge=0)
+    usd: Amount
     tavily_credits: NonNegativeInt = 0
 
 
@@ -315,8 +318,8 @@ class LedgerEntry(_Contract):
     cache_write_tokens: NonNegativeInt = 0
     # 花費：Tavily credits、美元、本機 GPU 秒數（本機金額是 0）
     credits: NonNegativeInt = 0
-    cost_usd: NonNegativeFloat = 0.0
-    gpu_seconds: NonNegativeFloat = 0.0
+    cost_usd: Amount = 0.0
+    gpu_seconds: Amount = 0.0
     # 時間：第一個字、總延遲、排隊等 GPU／等限流；不是串流的呼叫沒有第一個字的時間
     ttft_ms: NonNegativeInt | None = None
     latency_ms: NonNegativeInt

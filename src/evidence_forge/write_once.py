@@ -61,6 +61,9 @@ def write_next_version(
     撞號（別的程序剛好先建了同一號）就往下一號試，所以多個程序同時寫，
     每一號只會有一個程序拿到，號碼也不會跳。
     """
+    # 目錄先在迴圈外建好：這裡的 FileExistsError（位置被檔案佔住）是設定錯誤，
+    # 要直接丟出去；迴圈裡的 FileExistsError 才是「這一號被搶走了」。
+    directory.mkdir(parents=True, exist_ok=True)
     version = latest_version(directory, stem, suffix) + 1
     while True:
         path = directory / f"{stem}.v{version}{suffix}"

@@ -7,7 +7,9 @@
     ---
     <內文，原封不動>
 
-frontmatter 用模型驗證；內文是結尾分隔線之後的所有字元，一個位元組都不改。
+frontmatter 用模型驗證；內文是結尾分隔線之後的所有字元，`parse_*`／`render_job` 一個字元都不改。
+從檔案讀時（`read_job`、`read_recipe`）會去掉開頭的 UTF-8 BOM、把 CRLF 換成 LF，
+所以 Windows 編輯器存的檔也讀得進來；寫回去一律是 LF、沒有 BOM。
 手寫的 YAML 註解與排版不會保留——讀進來再寫出去，保證的是欄位值與內文不變。
 """
 
@@ -25,6 +27,11 @@ _FENCE = "---\n"
 
 class FrontmatterError(ValueError):
     """檔案沒有可以讀的 frontmatter（缺分隔線，或內容不是 YAML 對應表）。"""
+
+
+def _read_text(path: Path) -> str:
+    # utf-8-sig 去掉 BOM；read_text 預設把 CRLF 換成 LF。
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _split(text: str) -> tuple[dict[str, Any], str]:
@@ -85,7 +92,7 @@ def render_job(doc: JobDocument) -> str:
 
 
 def read_job(path: Path) -> JobDocument:
-    return parse_job(path.read_text(encoding="utf-8"))
+    return parse_job(_read_text(path))
 
 
 def parse_recipe(text: str) -> Recipe:
@@ -95,7 +102,7 @@ def parse_recipe(text: str) -> Recipe:
 
 
 def read_recipe(path: Path) -> Recipe:
-    return parse_recipe(path.read_text(encoding="utf-8"))
+    return parse_recipe(_read_text(path))
 
 
 def write_job(path: Path, doc: JobDocument) -> None:

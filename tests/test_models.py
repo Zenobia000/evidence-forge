@@ -113,6 +113,13 @@ def test_unknown_fields_are_refused_not_ignored() -> None:
         Job.model_validate(_job(statsu="approved"))
 
 
+@pytest.mark.parametrize("amount", [float("inf"), float("nan")])
+def test_budget_must_be_a_finite_amount(amount: float) -> None:
+    # YAML 的 .inf 會被讀成無限大；無限大的預算等於沒有上限。
+    with pytest.raises(ValidationError):
+        Job.model_validate(_job(budget={"usd": amount}))
+
+
 HASH_A = "a" * 64
 HASH_B = "0123456789abcdef" * 4
 
@@ -356,3 +363,9 @@ def test_a_failed_call_may_have_no_response() -> None:
 def test_usage_and_spend_cannot_be_negative(field: str) -> None:
     with pytest.raises(ValidationError):
         LedgerEntry.model_validate(_llm_call(**{field: -1}))
+
+
+@pytest.mark.parametrize("field", ["cost_usd", "gpu_seconds"])
+def test_spend_must_be_finite(field: str) -> None:
+    with pytest.raises(ValidationError):
+        LedgerEntry.model_validate(_llm_call(**{field: float("inf")}))

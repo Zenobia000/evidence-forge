@@ -2,6 +2,8 @@
 
 import multiprocessing
 import multiprocessing.synchronize
+import signal
+from collections.abc import Callable
 from multiprocessing.queues import Queue
 from pathlib import Path
 
@@ -76,6 +78,31 @@ def test_next_version_follows_the_highest_existing_one(tmp_path: Path) -> None:
     assert written.version == 3
     assert (tmp_path / "draft.v1.md").read_text(encoding="utf-8") == "一"
     assert (tmp_path / "draft.v2.md").read_text(encoding="utf-8") == "二"
+
+
+def _with_deadline(action: Callable[[], object], seconds: int = 3) -> None:
+    """跑 `action`；超過時間就當失敗，不讓一個無窮迴圈卡住整套測試。"""
+
+    def _expired(signum: int, frame: object) -> None:
+        raise AssertionError(f"{seconds} 秒內沒有結束，看起來卡在迴圈裡")
+
+    previous = signal.signal(signal.SIGALRM, _expired)
+    signal.alarm(seconds)
+    try:
+        action()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_next_version_into_a_path_that_is_a_file_fails_instead_of_looping(
+    tmp_path: Path,
+) -> None:
+    # 目錄的位置被一個檔案佔住時要直接報錯，不能當成「撞號」一直換下一號。
+    occupied = tmp_path / "review"
+    occupied.write_text("不是目錄", encoding="utf-8")
+    with pytest.raises(OSError):
+        _with_deadline(lambda: write_next_version(occupied, "decision", ".json", "{}"))
 
 
 WRITERS = 6
