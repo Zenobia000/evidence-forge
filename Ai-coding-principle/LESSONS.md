@@ -354,9 +354,9 @@
 - **對策**：
   1. checkout 後一律 `git status --short | wc -l` 加 `git diff HEAD --stat | wc -l`，兩個都要是 0 才跑測試。不是 0：`git reset -q && git checkout -q -- .`（先看 `git diff --cached --stat` 確認是舊版內容、不是別人的工作）。
   2. 同一個 worktree 連續兩個會寫索引的 git 指令之間隔 1～2 秒；同一回合的平行工具呼叫，一個 worktree 只給一個會碰索引的 git 指令。
-  3. **I/O 上限**：同一時刻在這個掛載上跑測試／安裝／重 git 的線壓到 1～2 條——**主 session 自己跑也算一條**；e2e 的 worker 設低（例：`--workers=2`）；能離線安裝就離線（`pnpm install --offline`）。規則在 `.claude/skills/PIPELINE.md`〈慢檔案系統的 I/O 上限〉。
+  3. **I/O 上限**：(a) **不論 repo 在哪**，都不在 `/mnt/*` 上做大量循序讀取（雜湊校驗、整包複製、對大目錄跑 `du`）；大檔的搬移和驗證**都從 Windows 那一側做，不經過 WSL 的 `/mnt`**——搬用檔案總管或 `robocopy`，驗用 PowerShell 的 `Get-FileHash`；不要拿 `nohup … & disown` 當保險（整個 WSL 重開時背景程序一樣會死），檔名加大小只能當快速核對、不能證明內容一樣。(b) repo 放在這種掛載上時，同一時刻在這個掛載上跑測試／安裝／重 git 的線只有 **1 條**——**主 session 自己跑也算一條**，全部 session 與子代理合計；e2e 的 worker 設低（例：`--workers=2`）；能離線安裝就離線（`pnpm install --offline`）。規則在 `.claude/skills/PIPELINE.md`〈慢檔案系統的 I/O 上限〉。
   4. 派給子代理的提示裡寫明 1～3。
-  5. 再出事就建議把 repo 搬到原生檔案系統（例：WSL 自己的 `~/`）——那是唯一根治的做法，但搬不搬是使用者的決定。
+  5. **出一次事就搬**到原生檔案系統（例：WSL 自己的 `~/`），不要等第二次、不要先壓上限——那是唯一根治的做法；搬家由使用者點頭，但提的時候是「要搬」。
 
 ## L-020 子代理用 `pkill -f` 清自己的測試程序，會殺到整台機器上別的 worktree
 
