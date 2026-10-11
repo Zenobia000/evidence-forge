@@ -36,6 +36,11 @@ class DataDir:
     def blobs(self) -> Path:
         return self.root / "blobs"
 
+    @property
+    def check_settings(self) -> Path:
+        """自動檢查的設定（只寫要蓋掉預設值的那幾項）；不存在就全用預設值。"""
+        return self.root / "checks.yaml"
+
     def job_dir(self, job_id: str) -> Path:
         return self.jobs / job_id
 
@@ -43,6 +48,26 @@ class DataDir:
         """建出 `inbox/`、`jobs/`、`cache/`、`blobs/`；已存在就略過，可重複呼叫。"""
         for directory in (self.inbox, self.jobs, self.cache, self.blobs):
             directory.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass(frozen=True)
+class JobDir:
+    """一張工單的資料夾（`jobs/<id>/`）裡的固定位置。只算路徑，不建資料夾。
+
+    目前只放自動檢查用得到的兩個；其他位置等用到的模組出現再加。
+    """
+
+    root: Path
+
+    @property
+    def assets_file(self) -> Path:
+        """素材清單：素材與授權狀態。"""
+        return self.root / "assets" / "assets.json"
+
+    @property
+    def checks(self) -> Path:
+        """檢查結果 `checks.vN.json` 所在的資料夾。"""
+        return self.root / "checks"
 
 
 def resolve_data_dir(env: Mapping[str, str] | None = None) -> DataDir:
