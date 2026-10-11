@@ -1,5 +1,5 @@
 Feature: 素材授權
-  # 需求：FR-AS-01、FR-AS-02、FR-RV-01、NFR-KEEP-03｜檢查：C4｜決策：ADR-0016
+  # 需求：FR-AS-01、FR-AS-02、NFR-KEEP-03｜檢查：C4｜決策：ADR-0016
 
   @happy-path
   Scenario: 授權可用的圖可以直接使用
