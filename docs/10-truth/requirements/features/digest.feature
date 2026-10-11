@@ -15,6 +15,7 @@ Feature: 整理別人的文章
     When 執行器檢查這段的產出
     Then C1 不通過
     And 這段重試，不會帶著這份產出進二創段
+    And 重試次數用完仍沒過時，工單以 failed 進待審
 
   @sad-path
   Scenario: 格式不合就重試，到上限才依配方升級

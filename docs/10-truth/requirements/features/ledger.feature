@@ -23,6 +23,14 @@ Feature: 帳本、預算與帳單
     And 工單進待審，結果是「未完成：預算用完」
     And 沒有任何超出預算的實際花費
 
+  @sad-path
+  Scenario: 每月額度用完就拒絕
+    Given 每月上限是 US$10，依 Asia/Taipei 的日曆月計算，本月已花 US$9.98
+    And 這張工單自己的預算還很充足
+    When 二創段送出一個估計最高花費 US$0.05 的請求
+    Then 閘道拒絕，回傳 budget_exceeded，原因寫明是本月額度
+    And 工單進待審，結果是「未完成：本月額度用完」
+
   Scenario: 結算時退回多預留的部分
     Given 一個請求預留了 US$0.05
     When 實際花費是 US$0.03
