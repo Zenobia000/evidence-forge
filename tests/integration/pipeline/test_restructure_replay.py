@@ -126,7 +126,7 @@ def test_沒指定目標文類_用作家的預設_沒有風格檔的文類標未
         AUTHORS / "me" / "voice.md"
     ).read_bytes()
     assert (inputs / "target-genre.md").read_bytes() == (
-        default_harness().root / "genres" / "opinion.md"
+        default_harness().genres / "opinion.md"
     ).read_bytes()
     assert not (inputs / "author" / "genre-style.md").exists()
 

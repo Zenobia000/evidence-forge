@@ -261,7 +261,7 @@ def read_item(data_dir: DataDir, job_dir: Path, job: Job) -> Item | None:
 
 def genre_is_calibrated(data_dir: DataDir, genre: str) -> bool:
     """任何一位作家有這個文類的風格檔，就算校準過（ADR-0015）。`_` 開頭是範本，不算。"""
-    authors = data_dir.root / "authors"
+    authors = data_dir.authors
     if not authors.is_dir() or genre.startswith("_"):
         return False
     return any(

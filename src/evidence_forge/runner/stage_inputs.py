@@ -42,7 +42,7 @@ class InputError(ValueError):
 
 
 def author_dir(data: DataDir, author: str = AUTHOR) -> Path:
-    return data.root / "authors" / author
+    return data.authors / author
 
 
 def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
@@ -67,19 +67,19 @@ def _put(job_dir: Path, relative: str, data: str | bytes) -> None:
 
 def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> None:
     """把這張單用得到的參考資料放進 `input/`；已經有的不動。"""
-    definitions = sorted((harness.root / "genres").glob("*.md"))
+    definitions = sorted(harness.genres.glob("*.md"))
     if definitions:
         _put(
             job_dir,
             GENRES,
             "\n\n".join(path.read_text(encoding="utf-8") for path in definitions),
         )
-    for conversion in sorted((harness.root / "conversions").glob("*.md")):
+    for conversion in sorted(harness.conversions.glob("*.md")):
         _put(job_dir, CONVERSIONS + conversion.name, conversion.read_bytes())
 
     target = job.target_genre
     if target is not None:
-        definition = harness.root / "genres" / f"{target}.md"
+        definition = harness.genres / f"{target}.md"
         if not definition.is_file():
             raise InputError(f"目標文類 {target} 不在 harness/genres/ 裡")
         _put(job_dir, TARGET_GENRE, definition.read_bytes())

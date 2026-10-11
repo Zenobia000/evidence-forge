@@ -37,6 +37,11 @@ class DataDir:
         return self.root / "blobs"
 
     @property
+    def authors(self) -> Path:
+        """作家設定：`authors/<作家>/voice.md` 與 `authors/<作家>/genres/<文類>.md`。"""
+        return self.root / "authors"
+
+    @property
     def fetch_cache(self) -> Path:
         """抓網頁的快取：`cache/fetch/<網址 hash>/<抓取時間>.json`，跨工單共用、只增不改。"""
         return self.cache / "fetch"

@@ -61,7 +61,7 @@ def test_compose_的_schema_每句事實句都要有_C2_認得的_fact_欄位() 
 @pytest.mark.promise("FR-DG-02")
 def test_digest_的_schema_文類只收_harness_genres_裡的_12_種() -> None:
     allowed = set(_schema("digest")["$defs"]["genre_id"]["enum"])
-    assert allowed == {path.stem for path in (HARNESS.root / "genres").glob("*.md")}
+    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
     assert len(allowed) == 12
 
 
@@ -110,7 +110,9 @@ _WRITES = re.compile(
     r"|\.write_text\(|\.write_bytes\("
     r"|shutil\.(?:copy\w*|move)\("
     r"|os\.(?:rename|replace|remove|unlink)\("
-    r"|\.(?:rename|replace|unlink|touch|mkdir)\("
+    r"|\.(?:rename|unlink|touch|mkdir)\("
+    # `.replace(` 太常見（`str.replace`）：只抓 `Path(...)` 直接接的那種
+    r"|Path\([^)]*\)\.replace\("
 )
 
 
@@ -130,6 +132,7 @@ def writes(source: str) -> list[str]:
         "shutil.move(a, b)",
         "os.replace(a, b)",
         "Path(a).rename(b)",
+        "Path(a).replace(b)",
     ],
 )
 def test_腳本掃描_抓得到常見的寫檔寫法(source: str) -> None:
@@ -138,6 +141,7 @@ def test_腳本掃描_抓得到常見的寫檔寫法(source: str) -> None:
 
 def test_腳本掃描_讀檔與印到_stdout_不算寫檔() -> None:
     assert writes("print(json.dumps(open(p).read()))\nsys.stdin.read()") == []
+    assert writes('text.replace("\\r\\n", "\\n")\nwhen.replace(tzinfo=None)') == []
 
 
 SCRIPTS = sorted((HARNESS.root / "skills").glob("*/scripts/*.py"))

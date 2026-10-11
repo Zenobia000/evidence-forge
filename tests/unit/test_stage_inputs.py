@@ -43,7 +43,7 @@ def _job(genre: str | None) -> Job:
 
 def _data(tmp_path: Path, *, styles: dict[str, str] | None = None) -> DataDir:
     data = DataDir(tmp_path / "data")
-    author = data.root / "authors" / "me"
+    author = data.authors / "me"
     (author / "genres").mkdir(parents=True)
     (author / "voice.md").write_text(VOICE, encoding="utf-8")
     for genre, text in (styles or {}).items():
@@ -70,10 +70,10 @@ def test_文類定義_作家聲音_文類風格_轉換說明都複製進_input(t
 
     inputs = job_dir / "input"
     genres = (inputs / "genres.md").read_text(encoding="utf-8")
-    for definition in (HARNESS.root / "genres").glob("*.md"):
+    for definition in HARNESS.genres.glob("*.md"):
         assert definition.read_text(encoding="utf-8") in genres
     assert (inputs / "target-genre.md").read_bytes() == (
-        HARNESS.root / "genres" / "opinion.md"
+        HARNESS.genres / "opinion.md"
     ).read_bytes()
     assert (inputs / "author" / "voice.md").read_text(encoding="utf-8") == VOICE
     assert (
@@ -81,7 +81,7 @@ def test_文類定義_作家聲音_文類風格_轉換說明都複製進_input(t
         .read_text(encoding="utf-8")
         .endswith("觀點文風格")
     )
-    for conversion in (HARNESS.root / "conversions").glob("*.md"):
+    for conversion in HARNESS.conversions.glob("*.md"):
         assert (inputs / "conversions" / conversion.name).read_bytes() == (
             conversion.read_bytes()
         )
@@ -104,7 +104,7 @@ def test_再開一次段不覆寫_工單記得當時用的版本(tmp_path: Path)
     prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
 
     # 作家改了聲音；重跑同一張單仍用開段當時那一份（只增不改）
-    (data.root / "authors" / "me" / "voice.md").write_text("改過", encoding="utf-8")
+    (data.authors / "me" / "voice.md").write_text("改過", encoding="utf-8")
     prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
 
     assert (job_dir / "input" / "author" / "voice.md").read_text(

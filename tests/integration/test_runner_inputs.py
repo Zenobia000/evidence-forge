@@ -36,7 +36,7 @@ def world_for(
 
 
 def _author(world: World) -> None:
-    author = world.data.root / "authors" / "me"
+    author = world.data.authors / "me"
     author.mkdir(parents=True)
     (author / "voice.md").write_text(
         "---\nid: me\ndefault_genre: opinion\n---\n聲音\n", encoding="utf-8"

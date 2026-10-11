@@ -211,7 +211,7 @@ def test_review_card_flags_low_genre_confidence_and_uncalibrated_target(
 def test_calibrated_target_genre_and_confident_digest_raise_no_reminder(
     folder: Folder,
 ) -> None:
-    style = folder.data.root / "authors" / "me" / "genres"
+    style = folder.data.authors / "me" / "genres"
     style.mkdir(parents=True)
     (style / "explainer.md").write_text("風格", encoding="utf-8")
     folder.job(

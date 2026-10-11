@@ -389,7 +389,7 @@ def test_文類與預算寫進_job_md(data: DataDir) -> None:
 
 
 def _author(data: DataDir, default_genre: str) -> None:
-    author = data.root / "authors" / "me"
+    author = data.authors / "me"
     author.mkdir(parents=True)
     (author / "voice.md").write_text(
         f"---\nid: me\ndefault_genre: {default_genre}\n---\n聲音\n", encoding="utf-8"
