@@ -18,7 +18,7 @@ claims:
   - id: c1
     text: 用你自己的話，一句寫出這條主張
     quote: 從原文逐字複製一段（大約 20～80 字），證明作者真的這樣說
-    kind: fact              # fact 事實 | data 數據 | opinion 觀點 | prediction 預測 | recommendation 建議
+    kind: fact              # fact 事實（可查證的陳述）| data 數據（數字、統計、實驗結果）| opinion 觀點（作者的判斷，含預測與建議）
     weight: core            # core：拿掉它文章就站不住 | supporting：用來撐住 core 的
     checkable: true         # 能不能用外部資料查證
     evidence_hint: 要查證它需要什麼資料（可省略）
