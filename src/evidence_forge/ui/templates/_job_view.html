@@ -2,7 +2,7 @@
 {# 詳情頁整塊。排隊、執行中的單每 5 秒重抓；其他狀態不會自己變，不輪詢（之後審稿區、
    成品區的輸入框和複製按鈕也才不會被換掉）。分頁切換也是換掉這一整塊。 #}
 <div id="job-view" class="s0-loadwrap"
- {%- if view.polling %} hx-get="/jobs/{{ view.job_id }}?tab={{ view.tab }}" hx-trigger="every 5s" hx-swap="outerHTML" hx-indicator="this"{% endif %}>
+ {%- if view.polling %} hx-get="/jobs/{{ view.job_id }}?tab={{ view.tab }}{% if view.tab == "draft" and view.draft_version %}&amp;v={{ view.draft_version }}{% endif %}" hx-trigger="every 5s" hx-swap="outerHTML" hx-indicator="this"{% endif %}>
 <div class="s0-pagehead">
 <div>
 <h1 class="s0-h1">{{ view.title }}</h1>
