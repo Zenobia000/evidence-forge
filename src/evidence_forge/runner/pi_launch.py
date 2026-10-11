@@ -158,7 +158,8 @@ def run_pi(command: PiCommand, *, log_path: Path, timeout_s: float) -> PiRun:
     """執行 Pi，等它結束（或逾時殺掉整個程序群組），回傳結束碼與事件。
 
     事件原樣存到 `log_path`（在 `$EF_DATA/run/` 底下，不在工單的 `stages/`：
-    `stages/` 只有 agent 經閘道寫）。函式回傳時 Pi 一定已經結束，
+    `stages/` 只有 agent 經閘道寫，ADR-0010 §3 第 3 點；執行器自己的紀錄放在
+    `events.jsonl` 與 `provenance/`）。函式回傳時 Pi 一定已經結束，
     呼叫端這時才撤銷鑰匙，前一次的 Pi 不會在撤銷後還拿著鑰匙。
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)

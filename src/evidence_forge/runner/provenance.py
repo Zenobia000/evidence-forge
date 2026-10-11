@@ -1,8 +1,9 @@
 """版本鎖在產出上（NFR-RUN-06、TC-RUNNER-06）：每一段每一次開 Pi 之前，執行器在
-`stages/<段>/<第幾次>/provenance.json` 記下當時用的模型對照、skill 的 git sha、配方版本。
+`jobs/<id>/provenance/<段>.<第幾次>.json` 記下當時用的模型對照、skill 的 git sha、配方版本。
 
-開 Pi 之前寫：輸出目錄只增不改，agent 寫不掉也蓋不掉這一份。內容不放時間：重開時同一次
-重寫的內容一樣，agent 看到的東西跟上次相同，快取才對得上。
+放在 `stages/` 外面：`stages/` 只有 agent 經閘道寫（ADR-0010 §3 第 3 點），agent 的
+`write_file` 也只准寫 `stages/<段>/<次>/`，碰不到這一份。開 Pi 之前寫、只增不改；重開
+`ef serve` 重跑同一次時已經有了就不再寫，agent 列檔案看到的東西跟上次相同，快取才對得上。
 git 查不到（不是 git repo、檔案還沒 commit）時 sha 是 null，另外記內容的 SHA-256，
 有沒有改過一樣查得出來。
 """
@@ -17,8 +18,12 @@ import yaml
 
 from evidence_forge.harness import Harness
 from evidence_forge.models import Recipe, RecipeStage, Tier
+from evidence_forge.paths import JobDir
 
-PROVENANCE_FILE = "provenance.json"
+
+def record_path(job_dir: Path, stage: str, attempt: int) -> Path:
+    """這一段這一次的版本紀錄放在哪裡。"""
+    return JobDir(job_dir).provenance / f"{stage}.{attempt}.json"
 
 
 def _git(directory: Path, *args: str) -> str | None:

@@ -374,8 +374,14 @@ def test_每份段產出記著模型對照_skill_的_git_sha_與配方版本(
     job_id = world.job()
     world.runner.run_once()
 
-    path = world.data.job_dir(job_id) / "stages" / "echo" / "1" / "provenance.json"
-    record = json.loads(path.read_text(encoding="utf-8"))
+    job_dir = world.data.job_dir(job_id)
+    # 版本紀錄是執行器寫的，放在 provenance/；stages/ 只有 agent 經閘道寫（ADR-0010 §3 第 3 點）
+    record = json.loads(
+        (job_dir / "provenance" / "echo.1.json").read_text(encoding="utf-8")
+    )
+    assert [p.name for p in (job_dir / "stages" / "echo" / "1").iterdir()] == [
+        "summary.json"
+    ]
     repo = default_harness().root.parent
     skill_sha = subprocess.run(
         [

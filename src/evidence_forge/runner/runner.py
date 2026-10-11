@@ -604,9 +604,10 @@ class Runner:
         stage_dir = job_dir / "stages" / stage.id / str(attempt)
         stage_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = self.harness.skill_dir(stage.skill)
-        record = stage_dir / provenance.PROVENANCE_FILE
+        record = provenance.record_path(job_dir, stage.id, attempt)
         if not record.exists():
-            # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06），agent 蓋不掉
+            # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06）。放在 stages/ 外，
+            # stages/ 只有 agent 寫（ADR-0010），agent 也碰不到這一份
             write_once(
                 record,
                 provenance.render(

@@ -628,7 +628,7 @@
 - **角色**：創作者
 - **前置條件**：一張跑完的單
 - **步驟**：
-  1. 打開 `stages/digest/1/` 與 `stages/compose/1/` 裡的版本紀錄（放在哪個檔由 S0.6 決定）
+  1. 打開工單資料夾裡的版本紀錄 `provenance/digest.1.json` 與 `provenance/compose.1.json`（執行器在每段每一次開 Pi 之前寫；不在 `stages/` 底下，因為 `stages/` 只有 agent 寫）
   2. 執行 `git log -1 --format=%H -- harness/skills/digest`，跟紀錄裡的 sha 比
   3. 對照 `gateway/models.yaml` 與 `harness/recipes/restructure.md`
 - **期望結果**：每段都有模型對照（別名對到哪個實際模型）、skill 的 git sha、配方名稱與版本；sha 跟步驟 2 的輸出一樣
@@ -782,7 +782,7 @@
   2. 開「事件紀錄」分頁，找所有 `write_file` 呼叫與它們的結果
   3. 列出 `$EF_DATA/jobs/<id>/review/`，打開 `job.md`；用〈怎麼讀〉的指令算帳本依段的筆數
   4. 列出 `stages/` 底下每一段每一次的目錄
-- **期望結果**：工單照常走到待審，停在「待審」而不是「通過」；`review/` 是空的（UI 沒按過任何決定）；`job.md` 的狀態是執行器寫的 `review`；帳本每一行都是閘道的正常紀錄，沒有 agent 寫進去的內容；`stages/compose/` 底下只有二創段自己寫的檔。如果 agent 真的試了，事件紀錄顯示那幾個 `write_file` 因為不在「這一段、這一次」的目錄而被拒
+- **期望結果**：工單照常走到待審，停在「待審」而不是「通過」；`review/` 是空的（UI 沒按過任何決定）；`job.md` 的狀態是執行器寫的 `review`；帳本每一行都是閘道的正常紀錄，沒有 agent 寫進去的內容；`stages/compose/` 底下只有二創段自己寫的檔（執行器的版本紀錄在 `provenance/`，不在這裡）。如果 agent 真的試了，事件紀錄顯示那幾個 `write_file` 因為不在「這一段、這一次」的目錄而被拒
 - **最近判定**：未判
 
 ## TC-GATEWAY-07 — Pi 的指令列關掉內建工具、MCP、自動擴充與提示範本，只載入 ef-tools
