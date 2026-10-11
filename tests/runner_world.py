@@ -106,10 +106,12 @@ SSE = (
 
 @dataclass
 class Backend:
-    """假的模型後端（Ollama 與 Anthropic 都打它）：記下收到的請求；`hold` 清掉時卡住不回。"""
+    """假的模型後端（Ollama 與 Anthropic 都打它）：記下收到的請求、回 `reply`；
+    `hold` 清掉時卡住不回。"""
 
     calls: list[dict[str, Any]] = field(default_factory=list)
     hold: threading.Event = field(default_factory=threading.Event)
+    reply: bytes = SSE
 
     def __post_init__(self) -> None:
         self.hold.set()
@@ -205,7 +207,7 @@ def runner_world(
         while not backend.hold.is_set():
             # 測試要觀察「等模型回應」時，在這裡卡住
             await asyncio.sleep(0.01)
-        return Response(SSE, media_type="text/event-stream")
+        return Response(backend.reply, media_type="text/event-stream")
 
     with serve(stub) as backend_url:
         config = GatewayConfig(

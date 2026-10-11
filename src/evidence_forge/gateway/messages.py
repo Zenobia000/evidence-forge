@@ -20,6 +20,7 @@
    完整收到的回應存進 `blobs/`（跟狀態碼無關）；中途斷掉的不存。
    狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、沒送到結尾、讀不到用量）記 `error`、
    照預留的金額入帳：不知道後端實際算了多少，而 `error` 的回應不會被回放。
+   串流裡有 error 事件（後端過載時常見）跟 5xx 一樣算後端故障，告訴執行器（告示板）。
 """
 
 import asyncio
@@ -354,6 +355,10 @@ def add_message_routes(
         # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件、沒送到結尾就結束，
         # 也可能根本讀不到用量。那種回應記 error，重播索引只收成功的，所以不會被回放
         succeeded = call.complete and call.status_code == 200 and reply.whole
+        if call.status_code == 200 and reply.error is not None:
+            # 200 加串流裡的 error 事件（overloaded_error、api_error）：後端自己說它出錯了，
+            # 跟 5xx 一樣是故障。不告訴執行器的話，它會當成產出不合格而升級（ADR-0011 §3.3）
+            down(call, f"模型後端在串流裡回報錯誤：{reply.error}")
         if succeeded:
             status: LedgerStatus = success
             # Pi 自己重試成功：先前的 5xx 或斷線是暫時的，執行器不該當成故障
