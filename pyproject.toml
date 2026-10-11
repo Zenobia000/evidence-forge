@@ -5,8 +5,10 @@ description = ""
 # 版本由 .python-version 釘住（uv 讀它）；這裡只寫允許的範圍。
 requires-python = ">=3.12,<3.14"
 # 執行期相依等第一個真的模組需要時才加，不先佔位。
-# pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter。
+# pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter；
+# jsonschema：C5 用 skill 的 schema.json 驗證產出（S0.7）。
 dependencies = [
+    "jsonschema>=4.23",
     "pydantic>=2.14.0",
     "pyyaml>=6.0.3",
 ]
@@ -18,6 +20,7 @@ dev = [
     "mypy>=1.13",
     "ruff>=0.8",
     "types-pyyaml>=6.0.12.20260906",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 # uv_build 預設找 src/<套件名>/，也就是 src/evidence_forge/。
