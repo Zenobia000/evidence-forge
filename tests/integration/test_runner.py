@@ -23,7 +23,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from evidence_forge.documents import read_job
-from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
+from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
+from evidence_forge.gateway.ledger import append_intake
+from evidence_forge.ledger_models import IntakeEntry
 from evidence_forge.harness import Harness, default_harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import Event
@@ -105,6 +107,19 @@ sys.exit(3)
 """
 )
 
+# 打 strong（雲端）；被拒就把錯誤印到 stderr、非零結束，跟 Pi 收到錯誤時一樣
+CLOUD_CALL = (
+    FAKE_PI_HEAD.split("status, _ = call(")[0]
+    + """
+status, body = call("/v1/messages?beta=true", {"model": "strong", "stream": True,
+    "messages": [{"role": "user", "content": sys.argv[-1]}]})
+if status != 200:
+    print(body.decode(), file=sys.stderr)
+    sys.exit(1)
+event(type="agent_end")
+"""
+)
+
 SSE = (
     b'event: message_start\ndata: {"type":"message_start","message":{"usage":'
     b'{"input_tokens":1,"output_tokens":0}}}\n\n'
@@ -120,7 +135,7 @@ class World:
     stages: ActiveStages
     backend_calls: list[dict[str, Any]]
 
-    def job(self) -> str:
+    def job(self, budget_usd: float = 0.5) -> str:
         recipe = self.runner.recipes["echo"]
         return open_job(
             self.data,
@@ -128,6 +143,7 @@ class World:
             text=ARTICLE.read_text(encoding="utf-8"),
             goal="用一段話說明這篇在講什麼",
             now=NOW,
+            budget_usd=budget_usd,
         ).id
 
 
@@ -146,6 +162,10 @@ def world_for(
     data.ensure()
     stages = ActiveStages()
     backend_calls: list[dict[str, Any]] = []
+    # 假的雲端金鑰（帶 xxxx，guard-secrets 認得是假的）
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    (secrets / "anthropic").write_text("sk-fake-xxxx-runner", encoding="utf-8")
 
     stub = FastAPI()
 
@@ -155,8 +175,17 @@ def world_for(
         return Response(SSE, media_type="text/event-stream")
 
     with serve(stub) as ollama_url:
-        config = GatewayConfig(data=data, mode="live", ollama_url=ollama_url)
-        with serve(create_app(config, stages)) as gateway_url:
+        config = GatewayConfig(
+            data=data,
+            mode="live",
+            ollama_url=ollama_url,
+            # strong 也打同一個 stub：被預算擋下的測試斷言它一個請求都沒收到
+            anthropic_url=ollama_url,
+            secrets_dir=secrets,
+            clock=lambda: NOW,
+        )
+        board = JobBoard(config.clock)
+        with serve(create_app(config, stages, board)) as gateway_url:
 
             def build(script: str) -> World:
                 repo = default_harness()
@@ -172,6 +201,7 @@ def world_for(
                     gateway_url=gateway_url,
                     clock=lambda: NOW,
                     base_env={"PATH": "/usr/bin:/bin"},
+                    board=board,
                 )
                 return World(data, runner, gateway_url, stages, backend_calls)
 
@@ -329,3 +359,45 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
         (data.job_dir(job_id) / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
     )
     assert [json.loads(line)["status"] for line in lines] == ["cache_hit"]
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_工單預算不夠_Pi_被擋下_工單以未完成進待審_原因是預算用完(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(CLOUD_CALL)
+    # 一次 strong 呼叫要預留約 US$0.16
+    job_id = world.job(budget_usd=0.05)
+    world.runner.run_once()
+
+    job = read_job(world.data.job_dir(job_id) / "job.md").job
+    assert job.status == "review"
+    assert job.result is not None
+    assert (job.result.outcome, job.result.reason) == ("incomplete", "預算用完")
+    assert world.backend_calls == []
+
+
+@pytest.mark.promise("NFR-COST-01", "FR-LG-01")
+def test_本月額度用完_工單以未完成進待審_原因是本月額度用完(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(CLOUD_CALL)
+    # 投入帳本裡的抓取已經花掉 US$9.95，月上限預設 US$10
+    append_intake(
+        world.data,
+        IntakeEntry(
+            ts=NOW,
+            kind="fetch",
+            url="https://example.com/a",
+            cost_usd=9.95,
+            latency_ms=5,
+            status="ok",
+        ),
+    )
+    job_id = world.job(budget_usd=1.0)
+    world.runner.run_once()
+
+    job = read_job(world.data.job_dir(job_id) / "job.md").job
+    assert job.result is not None
+    assert (job.result.outcome, job.result.reason) == ("incomplete", "本月額度用完")
+    assert world.backend_calls == []

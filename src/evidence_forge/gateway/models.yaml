@@ -1,3 +1,23 @@
 # 等級別名 → 實際模型（ADR-0011）。換模型只改這裡，配方與 skill 不動。
-# S0.3 只有本機；strong、max（Anthropic）在 S0.4 加進來。
-local: { backend: ollama, model: "qwen3.5:9b", concurrency: 1 }
+# 閘道轉送前用這裡的 max_tokens 與 thinking 蓋掉 Pi 送來的值（aliases.py）。
+#
+# local：本機 GPU 一次一個；Qwen 的思考在這裡明確關掉，不看 Pi 送來什麼（S0.3 打通時就是關的）。
+# strong、max：Claude Sonnet 5.5 與 Opus 5.5 不收 {type: disabled} 也不收 budget_tokens，
+#   這裡用 adaptive（讓模型自己決定想多少）。max_tokens 含思考的 token；預留金額依它估，
+#   調高會讓每次呼叫預留得更多。
+local:
+  backend: ollama
+  model: "qwen3.5:9b"
+  max_tokens: 16384
+  thinking: { type: disabled }
+  concurrency: 1
+strong:
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000
+  thinking: { type: adaptive }
+max:
+  backend: anthropic
+  model: claude-opus-5-5
+  max_tokens: 16000
+  thinking: { type: adaptive }

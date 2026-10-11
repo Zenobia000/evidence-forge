@@ -28,9 +28,9 @@ from evidence_forge.models import (
     Item,
     Job,
     JobStatus,
-    LedgerEntry,
     Recipe,
 )
+from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.paths import DataDir
 from evidence_forge.write_once import latest_version
 

@@ -87,13 +87,13 @@ def test_子程序拿不到雲端金鑰_只有白名單與_Pi_需要的變數(tm
         tmp_path,
         {
             "PATH": "/usr/bin:/bin",
-            "ANTHROPIC_API_KEY": "sk-ant-canary",
+            "ANTHROPIC_API_KEY": "sk-fake-xxxx-canary",
             "HOME": "/root",
         },
     )
     env = report["env"]
     assert isinstance(env, dict)
-    assert "sk-ant-canary" not in json.dumps(env)
+    assert "sk-fake-xxxx-canary" not in json.dumps(env)
     assert env["PI_CODING_AGENT_DIR"] == str(tmp_path / "data" / "run" / "pi-agent")
     assert env["HOME"] == env["PI_CODING_AGENT_DIR"]
 

@@ -202,7 +202,7 @@ def test_已經結束的工單拿舊鑰匙_讀寫全部拒絕(
 
 
 @pytest.mark.promise("NFR-SEC-02")
-@pytest.mark.parametrize("key", ["", "sk-ant-xyz", "job:../x:echo:1", "job:a:b:0"])
+@pytest.mark.parametrize("key", ["", "sk-fake-xxxx", "job:../x:echo:1", "job:a:b:0"])
 def test_格式不對的鑰匙拒絕(env: Env, key: str) -> None:
     assert env.call("read_file", key, path="job.md").status_code == 403
 

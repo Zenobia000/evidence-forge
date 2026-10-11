@@ -13,10 +13,11 @@ from fastapi.responses import JSONResponse
 
 from evidence_forge.gateway import scope
 from evidence_forge.gateway.active import ActiveStages
+from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
 from evidence_forge.gateway.messages import add_message_routes
 
-__all__ = ["ActiveStages", "GatewayConfig", "create_app"]
+__all__ = ["ActiveStages", "GatewayConfig", "JobBoard", "create_app"]
 
 
 def _string(body: dict[str, Any], name: str, default: str | None = None) -> str:
@@ -26,7 +27,10 @@ def _string(body: dict[str, Any], name: str, default: str | None = None) -> str:
     return value
 
 
-def create_app(config: GatewayConfig, stages: ActiveStages) -> FastAPI:
+def create_app(
+    config: GatewayConfig, stages: ActiveStages, board: JobBoard | None = None
+) -> FastAPI:
+    """`board` 要跟執行器共用（`ef serve`）；不傳就自己開一個，執行器讀不到。"""
     app = FastAPI(title="evidence-forge gateway")
 
     @app.exception_handler(scope.ToolRejected)
@@ -54,5 +58,5 @@ def create_app(config: GatewayConfig, stages: ActiveStages) -> FastAPI:
             return {"written": written}
         raise scope.ToolRejected(404, f"沒有這個工具：{name}")
 
-    add_message_routes(app, config, stages)
+    add_message_routes(app, config, stages, board or JobBoard(config.clock))
     return app

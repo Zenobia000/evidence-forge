@@ -7,6 +7,9 @@
 - 多出不認得的欄位一律拒絕（`extra="forbid"`），打錯字的欄位不會被默默忽略。
 - 模型不可變（`frozen=True`）；要改就 `model_copy(update=...)` 產生新的一份。
 - 時間一律帶時區（`AwareDatetime`），寫出來是 ISO 8601。
+
+帳本一行（`LedgerEntry`、`IntakeEntry`）在 `ledger_models.py`，預算（`Budget`）在 `budget.py`：
+放在檔名含 ledger、budget 的模組，改它們的 PR 會被當成 T3。
 """
 
 from typing import Annotated, Literal, Self
@@ -21,6 +24,9 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+
+# 預算的格式在檔名含 budget 的模組（改它是 T3）；Job 用到它，這裡照舊 import 得到（明確轉出）。
+from evidence_forge.budget import Budget as Budget
 
 # 工單只有這五種狀態（NFR-RUN-02、ADR-0010）。
 JobStatus = Literal["queued", "running", "review", "approved", "discarded"]
@@ -39,10 +45,6 @@ WaitingKind = Literal["gpu", "rate_limit", "model", "tool"]
 # 內容 hash：SHA-256 的 64 個小寫十六進位字元，不加 "sha256:" 前綴
 # （`blobs/<hash>` 直接拿它當檔名，冒號在 Windows 磁碟上不能當檔名）。
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-# 金額與用量：不能是負的，也不能是無限大或 NaN（YAML 的 .inf 會被讀成無限大，
-# 無限大的預算等於沒有上限）。
-Amount = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 def _tier_rank(tier: Tier) -> int:
@@ -67,13 +69,6 @@ class FeedRef(_Contract):
     name: str
     # 素材項目在資料目錄裡的相對路徑，例：inbox/some-newsletter/abc123
     item: str
-
-
-class Budget(_Contract):
-    """這張工單的上限。金額是美元；Tavily 用 credits 計。"""
-
-    usd: Amount
-    tavily_credits: NonNegativeInt = 0
 
 
 class StageProgress(_Contract):
@@ -285,57 +280,4 @@ class Decision(_Contract):
             raise ValueError("退件要寫一句意見")
         if self.rerun_stage is not None and self.action not in ("reject", "reedit"):
             raise ValueError(f"{self.action} 不選重跑的段")
-        return self
-
-
-# ---------------------------------------------------------------------------
-# jobs/<id>/ledger.jsonl 的一行（v0.3 §4.4、NFR-OBS-01）。只有閘道寫，只增不改。
-# ---------------------------------------------------------------------------
-
-LedgerKind = Literal["llm", "search", "fetch", "image", "script"]
-LedgerStatus = Literal[
-    "ok", "cache_hit", "budget_exceeded", "rate_limited", "timeout", "error"
-]
-
-
-class LedgerEntry(_Contract):
-    """一次模型或工具呼叫的用量、花費、時間與結果。"""
-
-    # 是哪一張、哪一段、第幾次
-    ts: AwareDatetime
-    job_id: str
-    stage: str
-    attempt: PositiveInt
-    kind: LedgerKind
-    # 用了哪一級、實際哪個模型、是不是升級上來的（只有 llm 有）
-    tier: Tier | None = None
-    model: str | None = None
-    escalated_from: Tier | None = None
-    # 用量
-    input_tokens: NonNegativeInt = 0
-    output_tokens: NonNegativeInt = 0
-    cache_read_tokens: NonNegativeInt = 0
-    cache_write_tokens: NonNegativeInt = 0
-    # 花費：Tavily credits、美元、本機 GPU 秒數（本機金額是 0）
-    credits: NonNegativeInt = 0
-    cost_usd: Amount = 0.0
-    gpu_seconds: Amount = 0.0
-    # 時間：第一個字、總延遲、排隊等 GPU／等限流；不是串流的呼叫沒有第一個字的時間
-    ttft_ms: NonNegativeInt | None = None
-    latency_ms: NonNegativeInt
-    queue_ms: NonNegativeInt = 0
-    status: LedgerStatus
-    # 對回 blobs/ 的原文；呼叫沒有拿到回應時 response_hash 是 None
-    request_hash: Sha256Hex
-    response_hash: Sha256Hex | None = None
-
-    @model_validator(mode="after")
-    def _model_calls_name_their_tier(self) -> Self:
-        if self.kind == "llm" and (self.tier is None or self.model is None):
-            raise ValueError("模型呼叫要寫用了哪一級（tier）與實際模型（model）")
-        if self.escalated_from is not None and (
-            self.tier is None
-            or _tier_rank(self.escalated_from) >= _tier_rank(self.tier)
-        ):
-            raise ValueError("升級只會從低一級上來")
         return self

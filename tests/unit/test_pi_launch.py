@@ -137,14 +137,14 @@ def test_環境變數只帶白名單_雲端金鑰不交給_Pi(tmp_path: Path) ->
         tmp_path,
         base_env={
             "PATH": "/usr/bin",
-            "ANTHROPIC_API_KEY": "sk-ant-canary",
+            "ANTHROPIC_API_KEY": "sk-fake-xxxx-canary",
             "OPENAI_API_KEY": "sk-canary",
             "HOME": "/home/someone",
         },
     )
     assert "ANTHROPIC_API_KEY" not in env
     assert "OPENAI_API_KEY" not in env
-    assert "sk-ant-canary" not in json.dumps(env)
+    assert "sk-fake-xxxx-canary" not in json.dumps(env)
     # HOME 也換掉，Pi 找不到使用者家目錄裡的設定與 OAuth
     assert env["HOME"] != "/home/someone"
     assert env["PATH"] == "/usr/bin"

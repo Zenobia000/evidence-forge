@@ -17,6 +17,7 @@ import uvicorn
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import create_app
+from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import config_from_env
 from evidence_forge.harness import Harness, default_harness
 from evidence_forge.models import Recipe
@@ -64,9 +65,11 @@ def _serve(args: argparse.Namespace) -> int:
     data.ensure()
     config = config_from_env(data)
     stages = ActiveStages()
+    # 閘道寫、執行器讀：等待狀態與預算擋下的原因
+    board = JobBoard(config.clock)
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(config, stages),
+            create_app(config, stages, board),
             host="127.0.0.1",
             port=args.port,
             log_level="warning",
@@ -89,6 +92,7 @@ def _serve(args: argparse.Namespace) -> int:
         recipes=recipes,
         stages=stages,
         gateway_url=f"http://127.0.0.1:{args.port}",
+        board=board,
     )
     try:
         while True:

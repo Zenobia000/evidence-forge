@@ -1,18 +1,30 @@
 """閘道的設定，以及每個請求共用的「確認工單鑰匙」。"""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast, get_args
 
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import Alias, load_aliases
+from evidence_forge.gateway.credentials import resolve_secrets_dir
+from evidence_forge.gateway.prices import Price, load_prices
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import InvalidJobKey, JobKey
 from evidence_forge.paths import DataDir
 
 GatewayMode = Literal["live", "replay"]
+
+# 測試與 UAT 用的故障注入（測試藍圖〈故障注入〉）；重播模式下也有效。正式執行時不能設（S0.6 開跑前檢查）。
+# rate_limit：每個請求第一次先當成收到 429，退避後再照常；bad_output：回一份不合格的產出；
+# backend_down：當成後端連不上；stream_cut：回應送到一半就斷掉。
+Fault = Literal["rate_limit", "bad_output", "backend_down", "stream_cut"]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -24,8 +36,20 @@ class GatewayConfig:
     # 重播模式讀的錄音：裡面有 ledger.jsonl 與 blobs/
     replay_dir: Path | None = None
     ollama_url: str = "http://127.0.0.1:11434"
+    anthropic_url: str = "https://api.anthropic.com"
+    # 雲端金鑰在 <secrets_dir>/anthropic（ADR-0014）；要用才讀
+    secrets_dir: Path = field(default_factory=resolve_secrets_dir)
+    prices: Mapping[str, Price] = field(default_factory=load_prices)
+    # 每月美元上限，依 Asia/Taipei 的日曆月（Q-30、NFR-COST-01）
+    monthly_cap_usd: float = 10.0
+    fault: Fault | None = None
     # 等後端回應的上限（秒）；本機模型冷啟動要 75 秒（#10 第 6 題）
     backend_timeout_s: float = 600.0
+    # 雲端 429 的退避：最多重試幾次；沒有 retry-after 時從 base 開始每次加倍，單次最多等 max
+    rate_limit_retries: int = 4
+    backoff_base_s: float = 1.0
+    backoff_max_s: float = 60.0
+    clock: Callable[[], datetime] = _utc_now
 
 
 def config_from_env(
@@ -39,12 +63,31 @@ def config_from_env(
     replay = environ.get("EF_GATEWAY_REPLAY_DIR", "").strip()
     if mode == "replay" and not replay:
         raise ValueError("重播模式要用 EF_GATEWAY_REPLAY_DIR 指定錄音的位置")
+    fault = environ.get("EF_GATEWAY_FAULT", "").strip()
+    if fault and fault not in get_args(Fault):
+        raise ValueError(
+            f"EF_GATEWAY_FAULT 只能是 {'、'.join(get_args(Fault))}：{fault}"
+        )
+    cap = environ.get("EF_MONTHLY_BUDGET_USD", "").strip()
     return GatewayConfig(
         data=data,
         mode="replay" if mode == "replay" else "live",
         replay_dir=Path(replay) if replay else None,
         ollama_url=environ.get("EF_OLLAMA_URL", "").strip() or "http://127.0.0.1:11434",
+        secrets_dir=resolve_secrets_dir(environ),
+        monthly_cap_usd=_monthly_cap(cap) if cap else 10.0,
+        fault=cast(Fault, fault) if fault else None,
     )
+
+
+def _monthly_cap(value: str) -> float:
+    try:
+        cap = float(value)
+    except ValueError:
+        raise ValueError(f"EF_MONTHLY_BUDGET_USD 要是美元金額：{value}") from None
+    if not 0 <= cap < float("inf"):
+        raise ValueError(f"EF_MONTHLY_BUDGET_USD 要是 0 以上的有限金額：{value}")
+    return cap
 
 
 def require_active_key(header: str | None, stages: ActiveStages) -> JobKey:
