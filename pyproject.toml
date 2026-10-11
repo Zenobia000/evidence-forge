@@ -7,10 +7,13 @@ requires-python = ">=3.12,<3.14"
 # 執行期相依等第一個真的模組需要時才加，不先佔位。
 # pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter；
 # jsonschema：C5 用 skill 的 schema.json 驗證產出（S0.7）。
+# fastapi、jinja2：簡易 UI（S0.11）；markdown-it-py：把稿子的 Markdown 轉成 HTML（不放行原始 HTML）。
 dependencies = [
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
+    "jinja2>=3.1.6",
     "jsonschema>=4.26.0",
+    "markdown-it-py>=4.2.0",
     "pydantic>=2.14.0",
     "pyyaml>=6.0.3",
     "uvicorn>=0.54.0",
@@ -28,6 +31,8 @@ dev = [
     "ruff>=0.8",
     "types-pyyaml>=6.0.12.20260906",
     "types-jsonschema>=4.26.0.20261006",
+    # FastAPI 的 TestClient 靠它（Starlette 1.x 改要 httpx2）；只在測試用。
+    "httpx2>=2.13.1",
 ]
 
 # uv_build 預設找 src/<套件名>/，也就是 src/evidence_forge/。
@@ -40,6 +45,8 @@ build-backend = "uv_build"
 testpaths = ["tests"]
 # --strict-markers：標記打錯字直接失敗，不會默默變成一個沒人認得的新標記。
 addopts = ["--import-mode=importlib", "--strict-markers"]
+# 測試共用的小工具（tests/ui_folder.py）直接用檔名 import。
+pythonpath = ["tests"]
 markers = [
     "promise(id): 這條測試證明的承諾 ID（PRD v2.0，例：NFR-KEEP-01），可以重複標多個",
     "pipeline: 真的 Pi＋ef-tools＋閘道重播的整條流程（要用 harness/pi/ 鎖定的 Pi）",

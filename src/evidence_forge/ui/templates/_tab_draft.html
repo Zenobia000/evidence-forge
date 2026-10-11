@@ -1,0 +1,12 @@
+<div class="s0-panel" data-zone="editorial" style="padding: 32px 40px 40px">
+<div class="s0-row s0-row--between" style="margin-bottom: 24px">
+<div class="s0-row" style="gap: 8px">
+<span class="s0-small" style="font-weight: 600">版本</span>
+{% for v in view.draft_versions %}
+<a class="s0-badge" href="/jobs/{{ view.job_id }}?tab=draft&amp;v={{ v }}"{% if v == view.draft_version %} aria-current="true" style="font-weight: 600"{% endif %}
+ hx-get="/jobs/{{ view.job_id }}?tab=draft&amp;v={{ v }}" hx-target="#job-view" hx-swap="outerHTML" hx-push-url="true" hx-indicator="#job-view">v{{ v }}{% if v == view.draft_versions[-1] %}（最新）{% endif %}</a>
+{% endfor %}
+</div>
+</div>
+<article class="s0-prose">{{ view.draft_html }}</article>
+</div>
