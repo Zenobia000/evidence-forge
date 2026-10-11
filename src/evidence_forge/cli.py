@@ -1,6 +1,9 @@
 """指令列 `ef`。
 
-- `ef new --text "<內容>" --goal "<目標>"`：在 `inbox/manual/` 寫一個素材項目，開一張排隊中的工單。
+- `ef new --url <網址> | --text "<內容>" | --file <md|txt|pdf>`：先抓取與抽文字，在
+  `inbox/manual/` 寫一個素材項目，開一張排隊中的工單；可帶 `--goal`、`--recipe`、
+  `--genre`、`--budget-usd`。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
+  網址讀不到（403、付費牆、robots、內網位址）不開單，結束碼 1，提示改用 `--text` 或 `--file`。
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
 
 兩個指令啟動時都先讀全部配方，有一份不能用就拒絕並點名（FR-RC-01）。
@@ -22,7 +25,14 @@ from evidence_forge.gateway.config import config_from_env
 from evidence_forge.harness import Harness, default_harness
 from evidence_forge.models import Recipe
 from evidence_forge.paths import resolve_data_dir
-from evidence_forge.runner.intake import open_job
+from evidence_forge.runner.intake import (
+    PastedText,
+    Source,
+    SourceUnreadable,
+    UploadedFile,
+    WebPage,
+    open_job,
+)
 from evidence_forge.runner.recipes import RecipeError, load_recipes
 from evidence_forge.runner.runner import Runner, taipei_now
 
@@ -33,6 +43,18 @@ def _harness(path: str | None) -> Harness:
 
 def _recipes(harness: Harness) -> dict[str, Recipe]:
     return load_recipes(harness, tiers=load_aliases().keys())
+
+
+def _source(args: argparse.Namespace) -> Source:
+    if args.url is not None:
+        return WebPage(args.url)
+    if args.file is not None:
+        path = Path(args.file)
+        try:
+            return UploadedFile(path.name, path.read_bytes())
+        except OSError as exc:
+            raise ValueError(f"讀不到檔案 {path}：{exc.strerror}") from None
+    return PastedText(args.text)
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -46,15 +68,29 @@ def _new(args: argparse.Namespace) -> int:
         return 2
     data = resolve_data_dir()
     data.ensure()
-    job = open_job(
-        data,
-        recipe,
-        text=args.text,
-        goal=args.goal,
-        now=taipei_now(),
-        budget_usd=args.budget_usd,
-    )
-    print(job.id)
+    try:
+        intake = open_job(
+            data,
+            recipe,
+            _source(args),
+            goal=args.goal,
+            now=taipei_now(),
+            budget_usd=args.budget_usd,
+            genre=args.genre,
+        )
+    except SourceUnreadable as exc:
+        print(
+            f"ef new：讀不到這個網址：{exc.reason}\n"
+            "沒有開工單。請改用 --text 貼上全文，或用 --file 上傳檔案。",
+            file=sys.stderr,
+        )
+        return 1
+    if not intake.created:
+        print(
+            f"已有工單 {intake.job.id}（同一份素材、同樣的目標），沒有另開",
+            file=sys.stderr,
+        )
+    print(intake.job.id)
     return 0
 
 
@@ -114,10 +150,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ef", description="Evidence Forge")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    new = commands.add_parser("new", help="貼一段文字開一張工單")
-    new.add_argument("--text", required=True, help="文章內容")
-    new.add_argument("--goal", required=True, help="這張工單的目標")
+    new = commands.add_parser("new", help="投入網址、文字或檔案，開一張工單")
+    source = new.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", help="文章網址（先抓回正文再開單）")
+    source.add_argument("--text", help="文章內容")
+    source.add_argument("--file", help="Markdown、純文字或 PDF 檔")
+    new.add_argument("--goal", help="這張工單的目標（沒填就用配方的預設目標）")
     new.add_argument("--recipe", default="echo", help="配方名稱（預設 echo）")
+    new.add_argument("--genre", help="目標文類（例：explainer）")
     new.add_argument(
         "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"
     )

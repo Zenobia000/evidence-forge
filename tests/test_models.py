@@ -167,6 +167,40 @@ def test_content_hash_is_64_lowercase_hex(bad_hash: str) -> None:
         Item.model_validate_json(ITEM_JSON.replace(HASH_A, bad_hash))
 
 
+UNREADABLE = {
+    "id": "url-0123456789abcdef",
+    "feed": "manual",
+    "url": "https://example.com/paid",
+    "title": "https://example.com/paid",
+    "fetched_at": "2026-10-11T12:00:00+08:00",
+    "unavailable": True,
+    "unavailable_reason": "付費牆（HTTP 402），不繞過",
+}
+
+
+@pytest.mark.promise("FR-IN-01")
+def test_讀不到的素材項目_有原因_沒有內容_hash() -> None:
+    item = Item.model_validate(UNREADABLE)
+    assert (item.unavailable, item.content_hash) == (True, None)
+    assert Item.model_validate_json(item.model_dump_json()) == item
+
+
+@pytest.mark.promise("FR-IN-01")
+def test_讀不到一定要寫原因() -> None:
+    with pytest.raises(ValidationError):
+        Item.model_validate({**UNREADABLE, "unavailable_reason": "  "})
+
+
+def test_讀得到的素材項目一定要有內容_hash_而且不寫讀不到的原因() -> None:
+    readable = {k: v for k, v in UNREADABLE.items() if not k.startswith("unavailable")}
+    with pytest.raises(ValidationError):
+        Item.model_validate(readable)
+    with pytest.raises(ValidationError):
+        Item.model_validate(
+            {**readable, "content_hash": HASH_A, "unavailable_reason": "多寫的"}
+        )
+
+
 # --- jobs/<id>/events.jsonl 的一行 -------------------------------------------
 
 

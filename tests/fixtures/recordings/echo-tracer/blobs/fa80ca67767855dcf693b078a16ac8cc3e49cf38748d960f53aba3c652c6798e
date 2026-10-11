@@ -1,0 +1,18 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_a46d66f760de8d8512298aaa","type":"message","role":"assistant","model":"qwen3.5:9b","content":[],"usage":{"input_tokens":1110,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_3yva1pz3","name":"write_file","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"stages/echo/1/summary.json\",\"content\":\"{\\\"summary\\\": \\\"這是一篇虛構短文，描述一家麵包店改採預約制後的變化：廢除每日現貨銷售、減少浪費，但也犧牲了臨時想購買的顧客便利性。\\\"}\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":231,"cache_read_input_tokens":1200,"output_tokens":88}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

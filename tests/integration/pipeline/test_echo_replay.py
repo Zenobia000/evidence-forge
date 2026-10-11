@@ -9,7 +9,7 @@
     EF_DATA=<同一個> uv run ef serve --once
     # 把那張工單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/echo-tracer/
 重播只回放模型的回應；工具呼叫（讀素材、寫產出）照樣真的經過閘道，所以這條測試
-同時證明 Pi 真的只拿到 ef-tools 的三個工具、寫的檔真的落在這一段這一次的目錄。
+同時證明 Pi 真的只拿到 ef-tools 的五個工具、寫的檔真的落在這一段這一次的目錄。
 
 要先用 nvm 的 Node 在 `harness/pi/` 跑 `npm ci`；沒裝就跳過並說原因（CI 的 pipeline job 在 S0.13）。
 不需要 Ollama，也不打任何付費 API。
@@ -84,12 +84,13 @@ def test_貼文字開單_真的_Pi_經閘道重播跑完_echo_段_工單進待�
     assert "麵包店" in summary["summary"]
     # 每一次模型呼叫都是從錄音回放的，沒有任何一次轉送到後端
     ledger = _ledger(job_dir)
-    assert len(ledger) == 3
+    recorded = (RECORDING / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(ledger) == len(recorded)
     assert {entry.status for entry in ledger} == {"cache_hit"}
 
 
 @pytest.mark.promise("NFR-SEC-02")
-def test_真的_Pi_送給模型的工具只有_ef_tools_的三個(
+def test_真的_Pi_送給模型的工具只有_ef_tools_的五個(
     ef_data: Path, capsys: pytest.CaptureFixture[str], port: int
 ) -> None:
     job_dir = _run_tracer(ef_data, capsys, port)
@@ -98,9 +99,12 @@ def test_真的_Pi_送給模型的工具只有_ef_tools_的三個(
     assert ledger, "Pi 一個模型請求都沒送"
     for entry in ledger:
         request = json.loads((ef_data / "blobs" / entry.request_hash).read_bytes())
+        # Pi 內建的 bash、edit 等都不在；只有 ef-tools 經閘道的那幾個
         assert sorted(tool["name"] for tool in request["tools"]) == [
+            "fetch_url",
             "list_files",
             "read_file",
+            "run_script",
             "write_file",
         ]
 

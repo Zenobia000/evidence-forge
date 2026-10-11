@@ -105,6 +105,12 @@ def read_recipe(path: Path) -> Recipe:
     return parse_recipe(_read_text(path))
 
 
+def read_frontmatter(path: Path) -> dict[str, Any]:
+    """只讀 frontmatter 的對應表，不套模型（例：skill 的 `SKILL.md`）。"""
+    data, _ = _split(_read_text(path))
+    return data
+
+
 def write_job(path: Path, doc: JobDocument) -> None:
     """寫入（或改寫）`job.md`。
 

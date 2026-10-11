@@ -30,7 +30,7 @@ from evidence_forge.harness import Harness, default_harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import Event
 from evidence_forge.paths import DataDir
-from evidence_forge.runner.intake import open_job
+from evidence_forge.runner.intake import PastedText, open_job
 from evidence_forge.runner.recipes import load_recipes
 from evidence_forge.runner.runner import Runner
 
@@ -140,11 +140,11 @@ class World:
         return open_job(
             self.data,
             recipe,
-            text=ARTICLE.read_text(encoding="utf-8"),
+            PastedText(ARTICLE.read_text(encoding="utf-8")),
             goal="用一段話說明這篇在講什麼",
             now=NOW,
             budget_usd=budget_usd,
-        ).id
+        ).job.id
 
 
 def _fake_pi(tmp_path: Path, script: str) -> Path:
@@ -346,10 +346,10 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
         job_id = open_job(
             data,
             runner.recipes["echo"],
-            text=ARTICLE.read_text(encoding="utf-8"),
+            PastedText(ARTICLE.read_text(encoding="utf-8")),
             goal="用一段話說明這篇在講什麼",
             now=NOW,
-        ).id
+        ).job.id
         assert runner.run_once() == job_id
 
     job = read_job(data.job_dir(job_id) / "job.md").job

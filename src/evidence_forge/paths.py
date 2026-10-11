@@ -37,6 +37,11 @@ class DataDir:
         return self.root / "blobs"
 
     @property
+    def fetch_cache(self) -> Path:
+        """抓網頁的快取：`cache/fetch/<網址 hash>/<抓取時間>.json`，跨工單共用、只增不改。"""
+        return self.cache / "fetch"
+
+    @property
     def run(self) -> Path:
         """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄。不是工單資料。"""
         return self.root / "run"

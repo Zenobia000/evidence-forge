@@ -4,6 +4,7 @@ description: 打通用的測試配方：一段，用本機模型讀素材、寫�
 stages:
   - { id: echo, skill: echo, tier: local, output: [summary.json] }
 on_feedback: echo
+default_goal: 用兩三句話說明這篇文章在講什麼
 max_attempts: 1
 auto_fix: 0
 ---
