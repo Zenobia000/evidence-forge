@@ -37,7 +37,7 @@
 | **產品需求**（誰、為何、核心體驗、MVP） | `10-truth/requirements/prd.md` | 引用章節與需求編號 |
 | **BDD 情境**（Gherkin，一個 Epic 一檔） | `10-truth/requirements/features/` | 引用檔名與 Scenario 名稱 |
 | **架構**（元件、資料模型、API） | `10-truth/architecture.md` | 引用章節 |
-| **介面不能違反什麼**、設計 token | `10-truth/design/` | 引用 token 名稱，不抄值 |
+| **介面不能違反什麼**、設計 token | `10-truth/design/`；token 的值在它指到的 `src/evidence_forge/ui/static/css/` | 引用 token 名稱，不抄值 |
 | **測試層、接縫、各層時間上限** | `10-truth/test-blueprint.md` | 引用 ID |
 | **UAT 案例** | `10-truth/uat-cases.md` | 引用案例編號 |
 | **核心價值、一條需求該不該做** | `00-intent/` | 引用 |
