@@ -45,9 +45,9 @@ def _harness(tmp_path: Path) -> PiHarness:
     )
 
 
-def _command(tmp_path: Path, base_env: dict[str, str] | None = None) -> tuple[
-    list[str], dict[str, str], DataDir
-]:
+def _command(
+    tmp_path: Path, base_env: dict[str, str] | None = None
+) -> tuple[list[str], dict[str, str], DataDir]:
     data = DataDir(tmp_path / "data")
     cmd = build_pi_command(
         harness=_harness(tmp_path),
@@ -102,6 +102,22 @@ def test_JSON_事件模式_明確的_thinking_與等級別名(tmp_path: Path) ->
     assert _value_after(argv, "--model") == "ef/local"
     assert "--print" in argv
     assert "--no-session" in argv
+
+
+@pytest.mark.promise("NFR-SEC-02")
+def test_只把這段的_SKILL_md_接在我們的系統提示後面_不用_Pi_的_skill_機制(
+    tmp_path: Path,
+) -> None:
+    # ADR-0018：Pi 1.1.0 換掉系統提示又沒有內建讀檔工具時，--skill 帶不進任何內容
+    argv, _, _ = _command(tmp_path)
+    assert "--no-skills" in argv
+    assert "--skill" not in argv
+    assert _value_after(argv, "--system-prompt") == str(
+        tmp_path / "harness" / "pi" / "system-prompt.md"
+    )
+    assert _value_after(argv, "--append-system-prompt") == str(
+        tmp_path / "skills" / "echo" / "SKILL.md"
+    )
 
 
 def test_任務說明放在最後_前面用雙橫線隔開(tmp_path: Path) -> None:
