@@ -1,7 +1,7 @@
 # UAT 案例
 
 > 由 /uat-cases 產生與維護。**編號一經發出就凍結，退役的號碼永不重發**；改內容就在原編號下改，版本史交給 git。
-> 本次發號：2026-10-11，首次發號，65 條（含同日依 #18 缺口回覆加發的 TC-INTAKE-11～14、TC-RUNNER-10～11）／來源：規格 #18（S0 實驗：核心迴路，含 2026-10-11 架構審查與缺口回覆兩次修訂）、`requirements/prd.md` v2.0、`requirements/features/` 的 `intake`、`digest`、`compose`、`review`、`runner`、`ledger`、S0 UI 資訊架構（`30-snapshot/plans/design/2026-10-11-s0-ui-ia.md`）、#18〈Decisions〉裡設計稿確認的兩條（失敗的單只有重試與丟棄、通過後的成品區）
+> 本次發號：2026-10-11，首次發號，66 條（含同日依 #18 缺口回覆與架構審查加發的 TC-INTAKE-11～14、TC-RUNNER-10～11、TC-GATEWAY-07）／來源：規格 #18（S0 實驗：核心迴路，含 2026-10-11 架構審查與缺口回覆兩次修訂）、`requirements/prd.md` v2.0、`requirements/features/` 的 `intake`、`digest`、`compose`、`review`、`runner`、`ledger`、S0 UI 資訊架構（`30-snapshot/plans/design/2026-10-11-s0-ui-ia.md`）、#18〈Decisions〉裡設計稿確認的兩條（失敗的單只有重試與丟棄、通過後的成品區）
 > 什麼時候跑：見 `test-blueprint.md`〈CI 政策〉的 exit-gate 時段——S0 Exit Gate 前，創作者把全清單跑一次（S0.14）。證據放 `docs/10-truth/uat/`。
 
 這份是創作者在 S0 結束時親手驗收的清單：每一條對到 #18 的一條以上承諾，步驟寫成在 UI 或指令列上看得到的動作，期望結果寫成判定時要對照的畫面或檔案。判定只由人做；自動化不會把任何一條標成 pass。
@@ -14,7 +14,7 @@
   - 依段數筆數：`uv run python -c "import json,sys,collections as c;print(c.Counter(json.loads(l)['stage'] for l in open(sys.argv[1])))" $EF_DATA/jobs/<id>/ledger.jsonl`
   - 加總金額：`uv run python -c "import json,sys;print(sum(json.loads(l)['cost_usd'] for l in open(sys.argv[1])))" $EF_DATA/jobs/<id>/ledger.jsonl`
 - **工單對到的 issue**：S0.14（Exit Gate 實跑）是 #31；各案例要的功能由 #19～#30 做出來，對照見 `test-blueprint.md`〈追溯表〉。
-- **故障注入**：真的模型沒辦法隨叫隨到地回 429 或回壞掉的產出，所以閘道提供只在測試與 UAT 用的環境變數 `EF_GATEWAY_FAULT`（`rate_limit`、`bad_output`、`backend_down`），只能配重播模式用（#18〈測試用的故障注入〉）。TC-GATEWAY-02、TC-RUNNER-09 用它；TC-RUNNER-10 驗證正式執行時設了它會被擋。
+- **故障注入**：真的模型沒辦法隨叫隨到地回 429 或回壞掉的產出，所以閘道提供只在測試與 UAT 用的環境變數 `EF_GATEWAY_FAULT`（`rate_limit`、`bad_output`、`backend_down`、`stream_cut`），只能配重播模式用（#18〈測試用的故障注入〉）。TC-GATEWAY-02、TC-RUNNER-09 用它；TC-RUNNER-10 驗證正式執行時設了它會被擋。
 - **段數**：S0 的 `restructure` 是 3 段（整理、二創、檢查），看板寫「1／3 整理」「2／3 二創」「3／3 檢查」。BDD 範例的「4 段」含補料段，是之後的樣子。
 
 ## S0 Exit Gate 對照
@@ -70,7 +70,7 @@
 ## TC-INTAKE-02 — 貼一個公開網址，投入時先抓回正文，再開單
 - **狀態**：active
 - **負責人**：創作者
-- **來源**：FR-IN-01、NFR-RUN-08、NFR-COST-03／US-01
+- **來源**：FR-IN-01、NFR-RUN-08、NFR-COST-03、FR-LG-01／US-01
 - **角色**：創作者
 - **前置條件**：一個公開可讀的文章網址（例如 ihower 部落格的一篇，不在評估集裡）
 - **步驟**：
@@ -665,7 +665,7 @@
 - **負責人**：創作者
 - **來源**：NFR-RUN-03、FR-MD-01／`digest.feature`〈格式不合就重試，到上限才依配方升級〉
 - **角色**：創作者
-- **前置條件**：另開一個資料目錄跑重播：把 S0.13（#30）的固定小案例與錄好的回應放進 `/tmp/ef-uat-fault`（做法照 S0.13 的說明），停掉平常的 `ef serve`；一份測試配方 `uat-escalate`：從 `restructure` 複製，整理段改成 `tier: local`、`max_attempts: 2`、`escalate_to: strong`
+- **前置條件**：另開一個資料目錄跑重播：把 `tests/fixtures/` 裡為測試寫的固定短文與它的錄音放進 `/tmp/ef-uat-fault`（做法照 S0.13（#30）的說明；不用別人的文章，錄音只錄這一篇），停掉平常的 `ef serve`；一份測試配方 `uat-escalate`：從 `restructure` 複製，整理段改成 `tier: local`、`max_attempts: 2`、`escalate_to: strong`
 - **步驟**：
   1. `EF_DATA=/tmp/ef-uat-fault EF_GATEWAY_MODE=replay EF_GATEWAY_FAULT=bad_output uv run ef serve`
   2. 用 `uat-escalate` 配方投入固定小案例（`/jobs/new` 選配方，或 `uv run ef new --text "$(cat <固定小案例>)"` 加上指定配方的方式）
@@ -720,7 +720,7 @@
 - **負責人**：創作者
 - **來源**：NFR-PAR-03、NFR-RUN-08、NFR-OBS-02／`review.feature`〈看板說明正在等什麼〉
 - **角色**：創作者
-- **前置條件**：另開一個資料目錄跑重播：把 S0.13（#30）的固定小案例與錄好的回應放進 `/tmp/ef-uat-fault`（做法照 S0.13 的說明），停掉平常的 `ef serve`
+- **前置條件**：另開一個資料目錄跑重播：把 `tests/fixtures/` 裡為測試寫的固定短文與它的錄音放進 `/tmp/ef-uat-fault`（做法照 S0.13（#30）的說明；不用別人的文章，錄音只錄這一篇），停掉平常的 `ef serve`
 - **步驟**：
   1. `EF_DATA=/tmp/ef-uat-fault EF_GATEWAY_MODE=replay EF_GATEWAY_FAULT=rate_limit uv run ef serve`
   2. 投入固定小案例，等它跑到「2／3 二創」
@@ -783,6 +783,18 @@
   3. 列出 `$EF_DATA/jobs/<id>/review/`，打開 `job.md`；用〈怎麼讀〉的指令算帳本依段的筆數
   4. 列出 `stages/` 底下每一段每一次的目錄
 - **期望結果**：工單照常走到待審，停在「待審」而不是「通過」；`review/` 是空的（UI 沒按過任何決定）；`job.md` 的狀態是執行器寫的 `review`；帳本每一行都是閘道的正常紀錄，沒有 agent 寫進去的內容；`stages/compose/` 底下只有二創段自己寫的檔。如果 agent 真的試了，事件紀錄顯示那幾個 `write_file` 因為不在「這一段、這一次」的目錄而被拒
+- **最近判定**：未判
+
+## TC-GATEWAY-07 — Pi 的指令列關掉內建工具、MCP、自動擴充與提示範本，只載入 ef-tools
+- **狀態**：active
+- **負責人**：創作者
+- **來源**：NFR-SEC-02／#18〈Decisions〉執行器組 Pi 指令的必帶參數
+- **角色**：創作者
+- **前置條件**：一張正在跑任一段的單
+- **步驟**：
+  1. 執行 `ps -eo args | grep "[p]i --print"`，把整行抄下來
+  2. 看那張單的「事件紀錄」分頁裡這一段的工具呼叫
+- **期望結果**：指令列帶著 `--no-builtin-tools`、`--no-mcp`、`-na`、`-ne`、`--no-prompt-templates`、`-nc`，並用 `-e` 指定 ef-tools；事件紀錄裡出現的工具都是 ef-tools 的（`read_file`、`list_files`、`write_file`、`fetch_url`、`run_script`），沒有 shell、內建讀寫檔或 MCP 工具
 - **最近判定**：未判
 
 ## TC-LEDGER-01 — 每次模型、抓取、腳本呼叫都在該單帳本記一筆，欄位齊全

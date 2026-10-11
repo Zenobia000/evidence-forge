@@ -14,7 +14,7 @@
 | 靜態 | 型別（`mypy --strict`）、lint（`ruff`）——`ci.yml` 已在跑。S0.13 再加：承諾標記的編號必須出現在本藍圖的追溯表、測試不准把閘道切到真的呼叫模式、repo 不准出現金鑰樣式字串、每類檔只有一個寫入者（見〈交給 S0.13（#30）〉） | `ci.yml` 現有兩步；其餘交給 S0.13（#30） | presubmit |
 | 單元 | 不碰行程、不碰網路的純 Python：資料夾契約的 Pydantic 模型與路徑解析、只增不改的寫檔工具、配方 frontmatter 解析、C1～C5 各自的判斷、預算預留與結算的算術、帳本一筆的欄位、帳單彙總、`pi_launch` 組出的指令、內網位址判斷、決定檔的挑選規則、工單狀態轉換、快取有效期限（注入時鐘） | 各實作票用 /tdd | presubmit |
 | 整合 | 縫清單上的每一條邊界：真的檔案系統（pytest 的 `tmp_path`，在 WSL 原生的 `/tmp`）、真的本機 HTTP（只准 `127.0.0.1`）、假的 Pi（一支照 Pi 的 JSON 事件格式輸出、並真的打閘道的小程式）、假的 Ollama／Anthropic（本機 stub，能回串流、429、逾時、連不上） | 各實作票用 /tdd | presubmit（全套，見〈CI 政策〉偏離 2） |
-| 整合：重播整條流程 | 真的 Pi＋`ef-tools`＋閘道重播模式，固定小案例從投入跑到待審（NFR-RUN-07）。用 `@pytest.mark.pipeline` 標，CI 拆成獨立 job，因為要裝 Node 與鎖版的 Pi | S0.13 | presubmit（獨立 job，只在 PR 上跑） |
+| 整合：重播整條流程 | 真的 Pi＋`ef-tools`＋閘道重播模式，固定小案例從投入跑到待審（NFR-RUN-07）。**固定案例必須是為測試自己寫的短文，放在 `tests/fixtures/`，錄下的請求與回應也只錄這一篇**：錄音會進公開的 repo，裡面有原文全文與大段改寫，用 ihower、ycc 或任何評估集的文章等於把別人的文章公開（ADR-0014）。用 `@pytest.mark.pipeline` 標，CI 拆成獨立 job，因為要裝 Node 與鎖版的 Pi | S0.13 | presubmit（獨立 job，只在 PR 上跑） |
 | 驗收 | `docs/10-truth/uat-cases.md` 全清單：真的模型、真的瀏覽器、創作者判定 | /uat-cases → 創作者在 S0.14 實跑（證據放 `docs/10-truth/uat/`） | exit-gate（S0 Exit Gate 前跑全清單） |
 
 ### 承諾標記：每個測試檔共用的接頭
@@ -33,7 +33,7 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 - **進報告的方式**：`tests/conftest.py` 用一個 autouse fixture 讀 `request.node.iter_markers("promise")`，對每個編號呼叫 `record_property("promise", "<ID>")`。`pytest --junitxml=...` 的報告裡每個 testcase 就帶著 `<property name="promise" value="FR-IN-01"/>`，S0.13 的現況產生器只讀這個。
 - **註冊**：`pyproject.toml` 的 `[tool.pytest.ini_options]` 加 `markers = ["promise(*ids): 這個測試證明哪幾條承諾", "pipeline: 真的 Pi＋重播的整條流程"]` 與 `--strict-markers`。由**第一張寫測試的票（S0.2）**一起加，因為它的第一個測試就要用。
 - **零付費呼叫的保證**（NFR-COST-06）：同一個 `conftest.py` 用 autouse fixture 把 `EF_GATEWAY_MODE` 設成 `replay`，並擋掉所有不是 `127.0.0.1` 的連線。第一張會發出模型請求的票（S0.3）加上這兩條。
-- **故障注入**：閘道讀環境變數 `EF_GATEWAY_FAULT`（`rate_limit`、`bad_output`、`backend_down`），只在測試與 UAT 用，重播模式下也有效；設了這個變數時開跑前檢查拒絕正式執行（#18〈測試用的故障注入〉）。整合測試優先用它，而不是在每個測試裡各自造一個故障 stub。
+- **故障注入**：閘道讀環境變數 `EF_GATEWAY_FAULT`（`rate_limit`、`bad_output`、`backend_down`、`stream_cut`），只在測試與 UAT 用，重播模式下也有效；設了這個變數時開跑前檢查拒絕正式執行（#18〈測試用的故障注入〉）。整合測試優先用它，而不是在每個測試裡各自造一個故障 stub。
 - **驗收層不用這個標記**：驗收案例的「來源」欄就是它證明的承諾，產生器讀 `uat-cases.md` 的「最近判定」。
 
 ## 縫清單
@@ -42,18 +42,18 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 
 | 縫 | 服務的承諾 | 怎麼測（測試替身） | 落地票 | 現況 |
 | --- | --- | --- | --- | --- |
-| SEAM-01 執行器 ↔ Pi 程序：`runner/pi_launch.py` 組的指令（`-nc`、`--no-builtin-tools`、`PI_CODING_AGENT_DIR`、stdin 接 `/dev/null`、明確的 thinking、`--api-key "job:…"`）、JSON 事件解析、結束碼 | NFR-SEC-02、NFR-SEC-04、NFR-OBS-02、NFR-RUN-03、NFR-RUN-04、FR-RC-01 | 單元：斷言組出的 argv 與 env（少一個旗標就紅）。整合：假 Pi 輸出事件與各種結束碼；真 Pi 只在 pipeline job | S0.3、S0.6 | 未測 |
+| SEAM-01 執行器 ↔ Pi 程序：`runner/pi_launch.py` 組的指令（`-nc`、`--no-builtin-tools`、`--no-mcp`、`-na`、`-ne`、`--no-prompt-templates`、`-e` 指定 ef-tools、`PI_CODING_AGENT_DIR`、stdin 接 `/dev/null`、明確的 thinking、`--api-key "job:…"`）、JSON 事件解析、結束碼 | NFR-SEC-02、NFR-SEC-04、NFR-OBS-02、NFR-RUN-03、NFR-RUN-04、FR-RC-01 | 單元：斷言組出的 argv 與 env，左欄每一個旗標少一個就紅（`--no-builtin-tools` 不會移除 MCP 工具，專案底下的 `.pi` 授權後也會載入，所以另外四個缺一不可）。整合：假 Pi 輸出事件與各種結束碼；真 Pi 只在 pipeline job，斷言送給模型的工具清單只有 ef-tools 的工具 | S0.3、S0.6 | 未測 |
 | SEAM-02 `ef-tools` ↔ 閘道工具端點 `/tools/<名稱>`：`read_file`、`list_files`、`fetch_url`、`run_script`（`write_file` 的寫入範圍另列 SEAM-12） | NFR-SEC-02、NFR-SEC-03、NFR-RUN-08、NFR-COST-03、FR-LG-01、NFR-KEEP-01 | 整合：直接打閘道端點；讀取時 `../another-job/`、符號連結、絕對路徑都要被擋；`run_script` 只准清單上的腳本；`fetch_url` 打本機 stub 回 403、付費牆頁、robots 禁止、429；抓取快取的有效期限是設定值（預設 7 天），用注入的時鐘斷言期限內不重抓、過期才重抓 | S0.3、S0.5 | 未測 |
 | SEAM-03 閘道 ↔ 模型後端（Ollama、Anthropic）：別名對照 `models.yaml`、`/v1/messages?beta=true`、串流、改寫 `max_tokens` 與 thinking、429 退避、GPU 旗號、連不上不轉雲端 | FR-MD-01、NFR-PAR-02、NFR-PAR-03、NFR-RUN-05、NFR-COST-07、NFR-SEC-04、NFR-RUN-08 | 整合：兩個本機 stub 扮演 Ollama 與 Anthropic；同時送兩個 `local` 請求，stub 端最多看到 1 個；`EF_GATEWAY_FAULT=rate_limit` 時退避並把等待記在帳本；`EF_GATEWAY_FAULT=backend_down` 或 stub 關掉時標失敗，斷言 Anthropic stub 收到 0 個請求 | S0.3、S0.4 | 未測 |
-| SEAM-04 閘道內：預算（每張單＋每月上限）↔ 帳本 ↔ 快取與重播（`blobs/`） | NFR-COST-01、NFR-COST-02、NFR-COST-06、FR-LG-01、NFR-OBS-01、NFR-KEEP-01、NFR-KEEP-02 | 單元：預留、結算、退回的算術；月上限跨工單加總，月份依 Asia/Taipei 的日曆月切（測 UTC 已跨月、台北還沒跨月的那幾個小時）。整合：工單預算不夠回 `budget_exceeded`、結果「未完成：預算用完」；本月累計加上這次預留超過月上限（設定值，預設 US$10）回 `budget_exceeded`、結果「未完成：本月額度用完」；兩種都斷言 stub 沒收到請求；同段同次的相同請求記 `cache_hit`、stub 沒收到；重播模式遇到沒錄過的請求報錯、不轉送 | S0.4 | 未測 |
+| SEAM-04 閘道內：預算（每張單＋每月上限）↔ 帳本 ↔ 快取與重播（`blobs/`） | NFR-COST-01、NFR-COST-02、NFR-COST-06、FR-LG-01、NFR-OBS-01、NFR-KEEP-01、NFR-KEEP-02 | 單元：預留、結算、退回的算術；月上限跨工單加總，月份依 Asia/Taipei 的日曆月切（測 UTC 已跨月、台北還沒跨月的那幾個小時）。整合：工單預算不夠回 `budget_exceeded`、結果「未完成：預算用完」；本月累計加上這次預留超過月上限（設定值，預設 US$10）回 `budget_exceeded`、結果「未完成：本月額度用完」；兩種都斷言 stub 沒收到請求；同段同次的相同請求記 `cache_hit`、stub 沒收到；**反向**：同一段第 2 次嘗試送出跟第 1 次一模一樣的請求，要真的轉送給 stub、不命中快取（否則重試永遠拿到同一份壞答案）；**反向**：後端串流中途斷掉（`EF_GATEWAY_FAULT=stream_cut`）或 `ef serve` 在回應途中被殺時，那份不完整的回應不寫進 `blobs/`，下一次同樣的請求重新轉送；月上限的本月累計要把 `ledger/intake.jsonl` 一起算進去（fixture 裡放一筆有金額的投入抓取，斷言它讓下一個請求超過上限）；重播模式遇到沒錄過的請求報錯、不轉送 | S0.4 | 未測 |
 | SEAM-05 執行器 ↔ 配方與 skill（`harness/recipes/*.md` frontmatter、`schema.json`、`max_attempts`、`escalate_to`） | FR-RC-01、NFR-RUN-03、FR-MD-01、NFR-RUN-06、NFR-COST-07 | 整合：測試用的配方放在 fixture 目錄，新增一份不改程式就能跑；配方缺欄位、skill 不存在、等級不在對照表時，`ef serve` 啟動與開單都拒絕，訊息點名哪一份、哪一欄；`EF_GATEWAY_FAULT=bad_output`（或假 Pi）連續產出不合 schema，斷言重試次數與升級後的等級 | S0.3、S0.6、S0.8 | 未測 |
-| SEAM-06 執行器 ↔ 自動檢查 C1～C5：執行器在段與段之間直接呼叫程式，整理段後跑 C1、C5，二創段後跑 C2～C5；`verify` skill 只做 C6、C7，碰不到硬檢查 | FR-VF-01、FR-DG-01、FR-CP-01 | 單元：C1～C5 各自的過與不過（捏造引句、對不到來源的引用編號、超過門檻的重疊、稿子裡有不在 `assets.json` 的圖、不合 schema）。整合：用假 Pi 產出，斷言整理段後 C1 或 C5 沒過算該段這次失敗，走重試與升級，用完仍沒過是 `failed`；二創段後 C2～C5 沒過回二創段修，到 `auto_fix` 上限是 `incomplete` 並列出沒過的檢查；斷言硬檢查的結果不是從任何 Pi 程序的產出讀來的 | S0.7、S0.6、S0.8 | 未測 |
+| SEAM-06 執行器 ↔ 自動檢查 C1～C5：執行器在段與段之間直接呼叫程式，整理段後跑 C1、C5，二創段後跑 C2～C5；`verify` skill 只做 C6、C7，碰不到硬檢查 | FR-VF-01、FR-DG-01、FR-CP-01 | 單元：C1～C5 各自的過與不過（捏造引句、對不到來源的引用編號、超過門檻的重疊、稿子裡有不在 `assets.json` 的圖、不合 schema）。整合：用假 Pi 產出，斷言整理段後 C1 或 C5 沒過算該段這次失敗，走重試與升級，用完仍沒過是 `failed`；二創段後 C2～C5 沒過回二創段修，到 `auto_fix` 上限是 `incomplete` 並列出沒過的檢查；斷言硬檢查的結果不是從任何 Pi 程序的產出讀來的——具體的攻擊案例：假 Pi 在自己的輸出目錄寫一份 `checks.json`，C1～C5 全部 `pass`，而稿子其實有捏造的引句；斷言 `checks/checks.vN.json` 是執行器自己算的、C1 是沒過 | S0.7、S0.6、S0.8 | 未測 |
 | SEAM-07 執行器 ↔ 審稿決定檔 `review/decision.vN.json` | FR-RV-01、FR-RV-02、NFR-COST-04、NFR-KEEP-02、NFR-RUN-02 | 整合：獨佔建立、撞號換下一號；`draft_version` 對不上的標「已失效」；兩份同版本的決定只套用第一份；退件後上游段的帳本沒有新的 `llm` 筆數 | S0.9、S0.12 | 未測 |
 | SEAM-08 UI ↔ 資料夾：只讀 `job.md`、`events.jsonl`、`ledger.jsonl`、`bill.md`、稿子；只寫決定檔與 `inbox/manual/` | FR-UI-01、NFR-OBS-02、NFR-KEEP-02、FR-LG-02、FR-RV-02、FR-DG-02、FR-CP-02、FR-RV-01 | 整合：FastAPI `TestClient` 對著 fixture 資料夾渲染四頁；送出審稿與新增後，比對資料夾前後只多了這兩類檔；成品區的 Windows 路徑用 `wslpath -w` 的規則換算（CI 上沒有 `wslpath`，測換算規則本身） | S0.11、S0.12 | 未測 |
-| SEAM-09 投入 ↔ inbox：網頁表單、`ef new --text`、上傳 MD／純文字／PDF → 先抓取與抽文字 → `inbox/manual/<項目>/item.json`、內容 hash → 開單 | FR-IN-01、NFR-RUN-08、NFR-SEC-03、NFR-COST-03、FR-CP-03 | 整合：三種投入各開一張排隊中的單；同一個內容 hash 只建一份素材項目，重複投入沿用；同素材＋同目標已有未丟棄的工單時回傳那張、不開新單（比的是實際生效的目標：空白就換成配方預設目標，去掉前後空白後逐字比；只差中間一個字就算不同）；目標不同開新單；那張已丟棄就開新單；網址 403、付費牆、robots、內網位址時不開單，素材項目標讀不到並寫原因；投入時的每一次抓取（讀得到與讀不到都算）由閘道記在 `$EF_DATA/ledger/intake.jsonl`，不寫進任何工單的帳本 | S0.5、S0.12 | 未測 |
+| SEAM-09 投入 ↔ inbox：網頁表單、`ef new --text`、上傳 MD／純文字／PDF → 先抓取與抽文字 → `inbox/manual/<項目>/item.json`、內容 hash → 開單 | FR-IN-01、FR-LG-01、NFR-RUN-08、NFR-SEC-03、NFR-COST-03、FR-CP-03 | 整合：三種投入各開一張排隊中的單；同一個內容 hash 只建一份素材項目，重複投入沿用；同素材＋同目標已有未丟棄的工單時回傳那張、不開新單（比的是實際生效的目標：空白就換成配方預設目標，去掉前後空白後逐字比；只差中間一個字就算不同）；目標不同開新單；那張已丟棄就開新單；網址 403、付費牆、robots、內網位址時不開單，素材項目標讀不到並寫原因；投入時的每一次抓取（讀得到與讀不到都算）由閘道記在 `$EF_DATA/ledger/intake.jsonl`，不寫進任何工單的帳本——斷言讀得到與讀不到的網址各多一筆、欄位照 NFR-OBS-01 | S0.5、S0.12 | 未測 |
 | SEAM-10 執行器 ↔ 環境與閘道狀態：開跑前檢查（Ollama 與模型、閘道、Anthropic 金鑰、硬碟、`EF_DATA` 可寫、正式執行時 `EF_GATEWAY_FAULT` 沒設）、閘道的等待狀態（等 GPU、等限流、等模型回應、執行工具；閘道在呼叫進行中就知道，帳本是呼叫結束才寫）合進 `job.md` 進度欄位、同時張數上限、重啟恢復 | NFR-RUN-01、NFR-RUN-04、NFR-RUN-05、NFR-PAR-01、NFR-OBS-02、NFR-COST-02 | 整合：每一項檢查各自弄壞一次，斷言不開跑且訊息點名那一項；跑到一半殺掉 `ef serve` 再起，斷言從同一段、同一個嘗試編號重跑 | S0.6 | 未測 |
 | SEAM-11 帳本 ↔ 帳單：各單的 `ledger.jsonl` 與 `ledger/intake.jsonl`（閘道寫）→ `bill.md` 與每月總表（帳單產生器讀） | FR-LG-02、NFR-OBS-01 | 單元：固定的帳本 fixture 算出固定的數字（含退件重跑的花費、本機金額 0、跨月依 Asia/Taipei）；每篇通過文章的平均成本＝本月全部花費（通過、丟棄、失敗、待審中的單，加上 `intake.jsonl`）÷ 本月通過篇數，fixture 裡要有丟棄與失敗的單與投入抓取，斷言它們都進了分子；本月沒有通過的單時不除以零；帳本有一行壞掉時報行號、其餘照算 | S0.10 | 未測 |
-| SEAM-12 agent 的 `write_file` ↔ 工單資料夾的寫入範圍：只准寫 `stages/<目前的段>/<目前的嘗試>/`，已存在就拒寫 | NFR-SEC-02、NFR-KEEP-01、NFR-KEEP-02 | 整合：用 `job:<id>:<段>:<次>` 的鑰匙直接打 `/tools/write_file`，寫 `review/decision.v1.json`、`job.md`、`events.jsonl`、`ledger.jsonl`、別段的目錄、同段較早那次嘗試的目錄、`../another-job/`、符號連結，全部被拒且檔案不出現；寫本段本次目錄成功；同名第二次寫被拒 | S0.3 | 未測 |
+| SEAM-12 agent 的工具鑰匙與寫入範圍：閘道只接受正在跑的那一段、那一次的鑰匙；`write_file` 只准寫 `stages/<目前的段>/<目前的嘗試>/`，已存在就拒寫 | NFR-SEC-02、NFR-KEEP-01、NFR-KEEP-02 | 整合：用 `job:<id>:<段>:<次>` 的鑰匙直接打 `/tools/write_file`，寫 `review/decision.v1.json`、`job.md`、`events.jsonl`、`ledger.jsonl`、別段的目錄、同段較早那次嘗試的目錄、`../another-job/`、符號連結，全部被拒且檔案不出現；寫本段本次目錄成功；同名第二次寫被拒；**鑰匙不是正在跑的那一段**時，`read_file`、`list_files`、`write_file` 全部被拒：第 2 次嘗試已經開始、第 1 次的 Pi 還沒死透時拿第 1 次的鑰匙；別張工單的鑰匙；已經結束（待審、通過、丟棄）的工單的鑰匙 | S0.3 | 未測 |
 
 ## 追溯表
 
@@ -73,7 +73,7 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 | NFR-COST-04 | 退件從選定段重跑，上游沿用不重付 | 整合（SEAM-07）＋驗收 | presubmit／exit-gate | S0.9 | 未寫／TC-REVIEW-02、04 |
 | FR-RC-01 | 新增一份配方就能用，執行器不改程式；配方格式不合時啟動與開單都拒絕並點名 | 整合（SEAM-01、05）＋驗收 | presubmit／exit-gate | S0.3、S0.8 | 未寫／TC-RUNNER-07、11 |
 | FR-MD-01 | `local`／`strong`／`max` 別名在閘道；連續不合格才升級；基礎設施故障不升級 | 單元＋整合（SEAM-03、05）＋驗收 | presubmit／exit-gate | S0.4、S0.6 | 未寫／TC-RUNNER-04、09、TC-GATEWAY-04 |
-| FR-LG-01 | 每次模型、抓取、腳本呼叫在該單 `ledger.jsonl` 記一筆；還沒有工單的投入抓取記在 `$EF_DATA/ledger/intake.jsonl`；都只有閘道寫 | 單元＋整合（SEAM-02、04）＋驗收 | presubmit／exit-gate | S0.4、S0.5 | 未寫／TC-LEDGER-01、02 |
+| FR-LG-01 | 每次模型、抓取、腳本呼叫在該單 `ledger.jsonl` 記一筆；還沒有工單的投入抓取記在 `$EF_DATA/ledger/intake.jsonl`；都只有閘道寫 | 單元＋整合（SEAM-02、04、09）＋驗收 | presubmit／exit-gate | S0.4、S0.5 | 未寫／TC-INTAKE-02、TC-LEDGER-01、02 |
 | FR-LG-02 | 單張 `bill.md`、每月總表（含訂閱源分項，S0 只有「手動」）、每篇通過文章的平均成本＝本月全部花費（含丟棄、失敗的單與投入抓取）÷ 本月通過篇數，全由帳本算 | 單元（SEAM-11）＋整合（SEAM-08、11）＋驗收 | presubmit／exit-gate | S0.10、S0.12 | 未寫／TC-BILL-01、02、03 |
 | NFR-COST-01 | 雲端呼叫先預留；工單預算或本月額度（預設 US$10，Asia/Taipei 日曆月）不夠就拒絕，「未完成：預算用完／本月額度用完」 | 單元＋整合（SEAM-04）＋驗收 | presubmit／exit-gate | S0.4 | 未寫／TC-LEDGER-02、03 |
 | NFR-COST-02 | 同段同次相同請求回放，當機重跑不重付 | 整合（SEAM-04、10）＋驗收 | presubmit／exit-gate | S0.4、S0.6 | 未寫／TC-RUNNER-03 |
@@ -94,7 +94,7 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 | NFR-PAR-01 | 多張同時跑，張數是設定值（預設 2） | 整合（SEAM-10）＋驗收 | presubmit／exit-gate | S0.6 | 未寫／TC-RUNNER-05 |
 | NFR-PAR-02 | 本機 GPU 一次一個請求，排隊時間入帳 | 整合（SEAM-03）＋驗收 | presubmit／exit-gate | S0.4 | 未寫／TC-GATEWAY-01 |
 | NFR-PAR-03 | 雲端依速率上限退避，等待時間入帳 | 整合（SEAM-03）＋驗收 | presubmit／exit-gate | S0.4 | 未寫／TC-GATEWAY-02 |
-| NFR-SEC-02 | agent 沒有 shell 與內建讀寫檔；工具只能碰該單資料夾，寫只能寫這一段這一次的目錄 | 單元（SEAM-01 argv）＋整合（SEAM-01、02、12、pipeline）＋驗收 | presubmit／exit-gate | S0.3 | 未寫／TC-DIGEST-05、TC-GATEWAY-06 |
+| NFR-SEC-02 | agent 沒有 shell 與內建讀寫檔；工具只能碰該單資料夾，寫只能寫這一段這一次的目錄 | 單元（SEAM-01 argv）＋整合（SEAM-01、02、12、pipeline）＋驗收 | presubmit／exit-gate | S0.3 | 未寫／TC-DIGEST-05、TC-GATEWAY-06、07 |
 | NFR-SEC-03 | 抓網頁擋內網（SSRF）；外來內容只當資料 | 單元（位址判斷）＋整合（SEAM-02、09）＋驗收 | presubmit／exit-gate | S0.5 | 未寫／TC-INTAKE-08、TC-DIGEST-05 |
 | NFR-SEC-04 | 雲端金鑰只在閘道，不進 repo、不進日誌 | 單元（SEAM-01 env）＋整合（SEAM-01、03、金絲雀金鑰掃描）＋靜態（S0.13）＋驗收 | presubmit／exit-gate | S0.3、S0.4 | 未寫／TC-GATEWAY-03 |
 | NFR-OBS-01 | 帳本每筆欄位齊全 | 單元（帳本一筆的模型）＋整合（SEAM-04、11）＋驗收 | presubmit／exit-gate | S0.2、S0.4 | 未寫／TC-LEDGER-01 |
@@ -156,5 +156,5 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 | 產物 | 內容 | 依據 |
 | --- | --- | --- |
 | CI workflow | `ci.yml` 加 `pipeline` job（裝 Node＋鎖版 Pi、`uv run pytest -m pipeline`、只在 PR 上跑）；`check` job 的 pytest 加 `--junitxml` 並上傳報告；`check` job 排除 `-m "not pipeline"` | 層佈局、偏離 1～3 |
-| 靜態檢查腳本 | ① 每個 `promise` 標記的編號都在本藍圖追溯表裡；② 測試碼不准把 `EF_GATEWAY_MODE` 設成重播以外的值；③ repo 追蹤的檔裡不准出現 `sk-ant-` 樣式；④ 單一寫入者：只有 `gateway/` 寫 `ledger.jsonl` 與 `ledger/intake.jsonl`、只有 `runner/` 寫 `job.md` 與 `events.jsonl`、只有 `ui/` 寫 `review/`；⑤ `.gitignore` 排除 `data/`。全部硬擋，沒有只提醒的模式 | NFR-COST-06、NFR-SEC-04、NFR-KEEP-02、NFR-KEEP-04、G-09 |
+| 靜態檢查腳本 | ① 每個 `promise` 標記的編號都在本藍圖追溯表裡；② 測試碼不准把 `EF_GATEWAY_MODE` 設成重播以外的值；③ repo 追蹤的檔裡不准出現 `sk-ant-` 樣式；④ 單一寫入者：只有 `gateway/` 寫 `ledger.jsonl` 與 `ledger/intake.jsonl`、只有 `runner/` 寫 `job.md` 與 `events.jsonl`、只有 `ui/` 寫 `review/`；⑤ `.gitignore` 排除 `data/`；⑥ `tests/fixtures/` 只放為測試寫的內容，錄音只能錄這些（清單比對，新增 fixture 要列進清單）。全部硬擋，沒有只提醒的模式 | NFR-COST-06、NFR-SEC-04、NFR-KEEP-02、NFR-KEEP-04、G-09、ADR-0014 |
 | 現況產生器 | merge 後讀 junit 報告的 `promise` 屬性、`uat-cases.md` 的最近判定、本藍圖的追溯表與落地票欄，產生 `docs/test-status.md`（格式照 `.claude/skills/test-blueprint/STATUS.md`），提交到 `dev`。「排程中」的判定要讀落地票有沒有合併 | 未實作豁免清單 1～3 |
