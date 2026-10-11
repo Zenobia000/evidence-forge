@@ -1,0 +1,135 @@
+/* Loomy 設計系統的 token：顏色、間距、圓角、字級、版面、疊層。
+   來源：S0 設計稿（https://claude.ai/artifact/GqAyiKFvYZNd948RTmsAyT）裡裝的 Loomy，
+   版本 1791631747-b15c（https://claude.ai/artifact/NxwdZTmM2cgFPgFVZVKP3z）。
+   值原樣搬過來，不在這裡改；要改值先改 Loomy，再重新搬一次。
+   深色與「跟隨系統」兩組值 S0 用不到，留給 S4（ADR-0008）。
+   檔尾的字型清單以 Noto 開頭，s0.css 會整組蓋掉（ADR-0017 §3.3），所以要先載這個檔、再載 s0.css。 */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --color-bg-page: #ffffff;
+  --color-bg-surface: #f5f5f2;
+  --color-bg-raised: #ffffff;
+  --color-bg-selection: #fff1b3;
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #58585d;
+  --color-text-tertiary: #6e6e73;
+  --color-accent-author: #1d1d1f;
+  --color-accent-action: #ffcc00;
+  --color-accent-action-line: #a87c00;
+  --color-on-action: #1d1d1f;
+  --color-accent-mark: #5856d6;
+  --color-accent-mark-text: #4745b8;
+  --color-danger: #c0392b;
+  --color-border-subtle: #e5e5e0;
+  --color-border-strong: #aeaeb2;
+  --shadow-paper: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.05);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg-page: #1c1c1e;
+  --color-bg-surface: #252527;
+  --color-bg-raised: #2c2c2e;
+  --color-bg-selection: #4a4020;
+  --color-text-primary: #f2f2f7;
+  --color-text-secondary: #c7c7cc;
+  --color-text-tertiary: #98989d;
+  --color-accent-author: #f2f2f7;
+  --color-accent-action: #ffd60a;
+  --color-accent-action-line: #ffd60a;
+  --color-on-action: #1d1d1f;
+  --color-accent-mark: #8e8cff;
+  --color-accent-mark-text: #a9a7ff;
+  --color-danger: #ff6b61;
+  --color-border-subtle: #38383a;
+  --color-border-strong: #636366;
+  --shadow-paper: none;
+  --shadow-float: none;
+}
+
+/* 跟隨系統：data-theme="system" 時照作業系統的深淺設定（值與上面的深色相同） */
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    color-scheme: dark;
+    --color-bg-page: #1c1c1e;
+    --color-bg-surface: #252527;
+    --color-bg-raised: #2c2c2e;
+    --color-bg-selection: #4a4020;
+    --color-text-primary: #f2f2f7;
+    --color-text-secondary: #c7c7cc;
+    --color-text-tertiary: #98989d;
+    --color-accent-author: #f2f2f7;
+    --color-accent-action: #ffd60a;
+    --color-accent-action-line: #ffd60a;
+    --color-on-action: #1d1d1f;
+    --color-accent-mark: #8e8cff;
+    --color-accent-mark-text: #a9a7ff;
+    --color-danger: #ff6b61;
+    --color-border-subtle: #38383a;
+    --color-border-strong: #636366;
+    --shadow-paper: none;
+    --shadow-float: none;
+  }
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --text-title-size: 28px;
+  --text-title-leading: 1.4;
+  --text-title-weight: 600;
+  --text-heading-size: 22px;
+  --text-heading-leading: 1.5;
+  --text-heading-weight: 600;
+  --text-body-size: 18px;
+  --text-body-leading: 1.9;
+  --text-body-weight: 400;
+  --text-card-title-size: 16px;
+  --text-card-title-leading: 1.6;
+  --text-card-title-weight: 600;
+  --text-card-body-size: 15px;
+  --text-card-body-leading: 1.8;
+  --text-card-body-weight: 400;
+  --text-ui-size: 15px;
+  --text-ui-leading: 1.4;
+  --text-ui-weight: 500;
+  --text-meta-size: 13px;
+  --text-meta-leading: 1.4;
+  --text-meta-weight: 400;
+  --tracking-body: 0.02em;
+  --tracking-title: 0.01em;
+
+  --layout-topbar-height: 64px;
+  --layout-editor-max: 36em;
+  --layout-sidebar-width: 320px;
+  --layout-nav-width: 240px;
+
+  --z-sidebar: 10;
+  --z-toolbar: 20;
+  --z-drawer: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+
+  --provenance-line: 1.5px;
+  --provenance-opacity: 1;
+  --provenance-fill: 12%;
+
+  --font-reading: "Noto Sans TC", "PingFang TC", "Source Han Sans TC", "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-reading-serif: "Source Serif 4", "Noto Serif TC", "Source Han Serif TC", "Songti TC", serif;
+  --font-ui: "Noto Sans TC", "PingFang TC", "Source Han Sans TC", "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "Noto Sans Mono", monospace;
+}
