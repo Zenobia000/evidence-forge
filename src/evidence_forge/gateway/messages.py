@@ -39,7 +39,10 @@ def anthropic_error(status: int, message: str) -> JSONResponse:
     return JSONResponse(
         {
             "type": "error",
-            "error": {"type": _ERROR_TYPES.get(status, "api_error"), "message": message},
+            "error": {
+                "type": _ERROR_TYPES.get(status, "api_error"),
+                "message": message,
+            },
         },
         status_code=status,
     )
@@ -49,7 +52,9 @@ def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
 
-def add_message_routes(app: FastAPI, config: GatewayConfig, stages: ActiveStages) -> None:
+def add_message_routes(
+    app: FastAPI, config: GatewayConfig, stages: ActiveStages
+) -> None:
     blobs = BlobStore(config.data.blobs)
     recorded_blobs: BlobStore | None = None
     recorded: dict[tuple[str, int, str], str] = {}
@@ -119,17 +124,27 @@ def add_message_routes(app: FastAPI, config: GatewayConfig, stages: ActiveStages
             replayed = recorded_blobs.get(response_hash) if response_hash else None
             if replayed is None:
                 record(
-                    key, tier=tier, model=alias.model, status="error",
-                    started=started, request_hash=request_hash,
+                    key,
+                    tier=tier,
+                    model=alias.model,
+                    status="error",
+                    started=started,
+                    request_hash=request_hash,
                 )
                 return anthropic_error(
-                    500, f"重播模式：沒有錄過這個請求（{key.stage} 第 {key.attempt} 次）"
+                    500,
+                    f"重播模式：沒有錄過這個請求（{key.stage} 第 {key.attempt} 次）",
                 )
             blobs.put(replayed)
             record(
-                key, tier=tier, model=alias.model, status="cache_hit",
-                started=started, request_hash=request_hash,
-                response_hash=response_hash, tokens=ledger.usage_from_sse(replayed),
+                key,
+                tier=tier,
+                model=alias.model,
+                status="cache_hit",
+                started=started,
+                request_hash=request_hash,
+                response_hash=response_hash,
+                tokens=ledger.usage_from_sse(replayed),
             )
             return Response(replayed, media_type="text/event-stream")
 
@@ -151,8 +166,12 @@ def add_message_routes(app: FastAPI, config: GatewayConfig, stages: ActiveStages
             upstream = await client.send(upstream_request, stream=True)
         except httpx.HTTPError as exc:
             record(
-                key, tier=tier, model=alias.model, status="error",
-                started=started, request_hash=request_hash,
+                key,
+                tier=tier,
+                model=alias.model,
+                status="error",
+                started=started,
+                request_hash=request_hash,
             )
             # 基礎設施故障：停下標失敗，不改用別的模型（NFR-RUN-05）
             return anthropic_error(502, f"模型後端連不上：{type(exc).__name__}")
@@ -173,10 +192,15 @@ def add_message_routes(app: FastAPI, config: GatewayConfig, stages: ActiveStages
                 ok = complete and upstream.status_code == 200
                 response = bytes(collected)
                 record(
-                    key, tier=tier, model=alias.model,
+                    key,
+                    tier=tier,
+                    model=alias.model,
                     status="ok" if ok else "error",
-                    started=started, request_hash=request_hash,
-                    response_hash=blobs.put(response) if ok else None,
+                    started=started,
+                    request_hash=request_hash,
+                    # 完整收到就存，跟狀態碼無關：出錯的那次最需要回頭看原文。
+                    # 中途斷掉的不存，免得半截回應被當成完整的。
+                    response_hash=blobs.put(response) if complete else None,
                     tokens=ledger.usage_from_sse(response) if ok else (0, 0),
                     ttft_ms=ttft_ms,
                 )

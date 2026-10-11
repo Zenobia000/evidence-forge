@@ -52,9 +52,15 @@ def usage_from_sse(stream: bytes) -> tuple[int, int]:
 
 
 def index_by_call(entries: Iterable[LedgerEntry]) -> dict[tuple[str, int, str], str]:
-    """（段, 次, 請求 hash）→ 回應 hash。只收有完整回應的呼叫。"""
+    """（段, 次, 請求 hash）→ 回應 hash。只收成功的呼叫。
+
+    出錯的呼叫也可能存了完整的回應本文（例如後端回 500），
+    但那不能當成功的回應重播給 Pi，所以照狀態挑。
+    """
     return {
         (entry.stage, entry.attempt, entry.request_hash): entry.response_hash
         for entry in entries
-        if entry.kind == "llm" and entry.response_hash is not None
+        if entry.kind == "llm"
+        and entry.status in ("ok", "cache_hit")
+        and entry.response_hash is not None
     }

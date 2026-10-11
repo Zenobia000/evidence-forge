@@ -93,7 +93,9 @@ def _post(url: str, key: str, body: dict[str, Any]) -> httpx.Response:
 
 def _ledger(data: DataDir) -> list[LedgerEntry]:
     path = data.job_dir(JOB) / "ledger.jsonl"
-    return [LedgerEntry.model_validate_json(line) for line in path.read_text().splitlines()]
+    return [
+        LedgerEntry.model_validate_json(line) for line in path.read_text().splitlines()
+    ]
 
 
 @pytest.fixture
@@ -161,7 +163,8 @@ def test_請求與回應依_hash_存進_blobs_帳本記下是哪一段哪一次(
 
 @pytest.mark.promise("NFR-SEC-02")
 @pytest.mark.parametrize(
-    "key", [str(JobKey(JOB, "echo", 2)), str(JobKey("other-job", "echo", 1)), "", "sk-ant-x"]
+    "key",
+    [str(JobKey(JOB, "echo", 2)), str(JobKey("other-job", "echo", 1)), "", "sk-ant-x"],
 )
 def test_不是正在跑的鑰匙不轉送(
     serve: Callable[[Any], AbstractContextManager[str]],
@@ -191,7 +194,7 @@ def test_不認得的等級別名不轉送(
     assert ollama.received == []
 
 
-def _recording(tmp_path: Path, raw: bytes) -> Path:
+def _recording(tmp_path: Path, raw: bytes, status: str = "ok") -> Path:
     """做一份錄音：一行帳本加上兩個 blob，跟 live 模式寫出來的格式一樣。"""
     replay = tmp_path / "recording"
     (replay / "blobs").mkdir(parents=True)
@@ -208,7 +211,7 @@ def _recording(tmp_path: Path, raw: bytes) -> Path:
         "tier": "local",
         "model": "qwen3.5:9b",
         "latency_ms": 10,
-        "status": "ok",
+        "status": status,
         "request_hash": request_hash,
         "response_hash": response_hash,
     }
@@ -263,4 +266,63 @@ def test_重播模式遇到沒錄過的請求報錯_不轉送(
         response = _post(url, str(KEY), PI_BODY)
     assert response.status_code >= 500
     assert response.json()["type"] == "error"
+    assert ollama.received == []
+
+
+# 後端出錯時回的完整本文（Anthropic 的錯誤格式）
+UPSTREAM_ERROR = b'{"type":"error","error":{"type":"api_error","message":"boom"}}'
+
+
+@pytest.mark.promise("NFR-KEEP-01")
+def test_後端回_500_回應本文照樣存進_blobs_帳本記_error(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    failing = FastAPI()
+
+    @failing.post("/v1/messages")
+    async def messages() -> Response:
+        return Response(UPSTREAM_ERROR, status_code=500, media_type="application/json")
+
+    with serve(failing) as backend:
+        config = GatewayConfig(data=data, mode="live", ollama_url=backend)
+        with _gateway(serve, config, stages) as url:
+            response = _post(url, str(KEY), PI_BODY)
+    # 狀態碼與本文原樣交還給 Pi
+    assert response.status_code == 500
+    assert response.content == UPSTREAM_ERROR
+    [entry] = _ledger(data)
+    assert entry.status == "error"
+    # 出錯的那次最需要回頭看原文：完整收到就存，跟狀態碼無關
+    assert entry.response_hash == hashlib.sha256(UPSTREAM_ERROR).hexdigest()
+    assert (data.blobs / entry.response_hash).read_bytes() == UPSTREAM_ERROR
+    assert (entry.input_tokens, entry.output_tokens) == (0, 0)
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_重播模式不回放錄音裡出錯的那次(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    ollama: Stub,
+    data: DataDir,
+    stages: ActiveStages,
+    tmp_path: Path,
+) -> None:
+    # 錄音時後端回了錯誤：帳本那行有 response_hash，但不能當成功的回應交給 Pi
+    raw = json.dumps(PI_BODY).encode()
+    config = GatewayConfig(
+        data=data,
+        mode="replay",
+        replay_dir=_recording(tmp_path, raw, status="error"),
+        ollama_url=ollama.url,
+    )
+    with _gateway(serve, config, stages) as url:
+        response = httpx.post(
+            f"{url}/v1/messages?beta=true",
+            content=raw,
+            headers={"x-api-key": str(KEY)},
+            timeout=10,
+        )
+    assert response.status_code >= 500
+    assert response.content != SSE
     assert ollama.received == []
