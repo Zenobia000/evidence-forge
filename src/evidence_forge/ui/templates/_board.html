@@ -1,0 +1,34 @@
+{% from "_icons.html" import icon %}
+{# 看板整塊：每 5 秒由 htmx 重抓換掉。卡片上不放輸入框或展開的選單（換掉會打斷）。 #}
+<div id="board-region" class="s0-loadwrap" hx-get="/board" hx-trigger="every 5s" hx-swap="outerHTML" hx-indicator="this">
+{# 輪詢回來的內容（fragment）順便更新分頁標題、導覽列的待審數與「上次更新」；第一次整頁載入不需要。 #}
+{% if fragment %}
+<title>{{ page_title }}</title>
+{% with oob = true %}{% include "_nav_count.html" %}{% endwith %}
+<span id="board-updated" class="s0-mono" hx-swap-oob="true">{{ updated }}</span>
+{% endif %}
+{% if error %}
+<div class="s0-alert" role="alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到資料目錄</p><p class="s0-small" style="margin: 0">路徑：<span class="s0-mono">{{ error.path }}</span><br>原因：{{ error.reason }}</p></div></div>
+<p class="s0-small">看板不會顯示舊資料冒充新的；修好之後下一次更新就會恢復。</p>
+{% elif total == 0 and not unreadable %}
+<div class="s0-state" style="max-width: 480px">
+<p style="margin: 0; font-weight: 600">還沒有工單</p>
+<p class="s0-small" style="margin: 0">貼一個網址、一段文字或上傳檔案，系統會整理並二創，做完放進「待審」等你看。</p>
+<div><a class="lm-btn" data-variant="primary" href="/jobs/new">{{ icon("plus") }}新增工單</a></div>
+</div>
+{% else %}
+{% for bad in unreadable %}
+<div class="s0-alert" role="alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">有一張單讀不懂</p><p class="s0-small" style="margin: 0">編號：<span class="s0-mono">{{ bad.job_id }}</span><br>原因：{{ bad.reason }}</p></div></div>
+{% endfor %}
+<div class="s0-board">
+{% for col in columns %}
+<section class="s0-col" data-col="{{ col.status }}" aria-labelledby="col-{{ col.status }}">
+<div class="s0-col__head"><h2 class="s0-col__title" id="col-{{ col.status }}">{{ icon(col.status) }}{{ col.label }}</h2><span class="s0-col__count">{% if col.status == "review" and col.count %}{{ col.count }} 張等你{% else %}{{ col.count }}{% endif %}</span></div>
+{% for card in col.cards %}{% include "_card.html" %}{% endfor %}
+{% if col.truncated %}<p class="s0-col__foot">只顯示最近 {{ col.limit }} 張</p>{% endif %}
+</section>
+{% endfor %}
+</div>
+{% endif %}
+<div class="s0-loading" aria-hidden="true"><div class="s0-board">{% for _ in range(5) %}<div class="s0-col"><div class="s0-card" style="box-shadow: none"><span class="s0-skel" style="width: 80%"></span><span class="s0-skel" style="width: 50%"></span></div><div class="s0-card" style="box-shadow: none"><span class="s0-skel" style="width: 65%"></span><span class="s0-skel" style="width: 40%"></span></div></div>{% endfor %}</div></div>
+</div>

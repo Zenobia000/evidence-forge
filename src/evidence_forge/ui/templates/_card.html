@@ -1,0 +1,16 @@
+{% from "_icons.html" import icon %}
+<a class="s0-card" href="/jobs/{{ card.job_id }}">
+<p class="s0-card__title">{{ card.title }}</p>
+{% if card.status == "queued" %}
+<div class="s0-card__meta"><span>{{ card.feed }}</span><span>排隊 <span class="s0-mono">{{ card.queued_for }}</span></span>{% if card.rerun_note %}<span>{{ card.rerun_note }}</span>{% endif %}</div>
+{% elif card.status == "running" %}
+<div class="s0-card__meta">{% if card.stage %}<span class="s0-mono">{{ card.stage_index }}</span><span>{{ card.stage }}</span><span>這段 <span class="s0-mono">{{ card.stage_elapsed }}</span></span>{% else %}<span>準備中</span>{% endif %}</div>
+{% if card.waiting %}{% with badge = card.waiting %}{% include "_badge.html" %}{% endwith %}{% endif %}
+<div class="s0-stack" style="gap: 4px"><div class="s0-row s0-row--between s0-small"><span>花費</span><span class="s0-mono">{{ card.spent }} / {{ card.budget }}</span></div><span class="s0-meter"><span style="width: {{ card.meter }}%"></span></span></div>
+{% elif card.status == "review" %}
+{% for badge in card.badges %}{% include "_badge.html" %}{% endfor %}
+<div class="s0-card__meta"><span class="s0-mono">{{ card.spent }}</span><span>{{ card.version }}</span></div>
+{% else %}
+<div class="s0-card__meta"><span class="s0-mono">{{ card.date }}</span><span class="s0-mono">{{ card.spent }}</span></div>
+{% endif %}
+</a>

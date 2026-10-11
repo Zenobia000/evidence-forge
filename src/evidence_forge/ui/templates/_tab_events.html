@@ -1,0 +1,11 @@
+<div class="s0-panel" style="padding: 8px 16px">
+<div class="s0-tablewrap">
+<table class="s0-table">
+<thead><tr><th>時間</th><th>段</th><th>事件</th><th>細節</th></tr></thead>
+<tbody>
+{% for e in view.event_rows %}<tr><td class="s0-mono">{{ e.time }}</td><td>{{ e.stage }}</td><td>{{ e.kind }}</td><td class="s0-muted">{{ e.detail }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="s0-small" style="margin: 12px 0 8px">{% if view.event_total > view.event_rows|length %}只列最新 {{ view.event_rows|length }} 筆，共 {{ view.event_total }} 筆。{% endif %}完整紀錄在這張單的 <span class="s0-mono">events.jsonl</span>。</p>
+</div>
