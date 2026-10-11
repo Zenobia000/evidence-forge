@@ -15,6 +15,7 @@
 
 import itertools
 import json
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ from evidence_forge.budget import usd_to_micros
 from evidence_forge.paths import DataDir
 
 TAIPEI = ZoneInfo("Asia/Taipei")
+
+_log = logging.getLogger(__name__)
 
 BudgetLimit = Literal["job", "month"]
 
@@ -44,9 +47,10 @@ def taipei_month(ts: datetime) -> str:
 
 @dataclass
 class _FileTally:
-    """一份帳本讀到哪裡、讀過的部分各月花了多少。"""
+    """一份帳本讀到哪裡（位元組與行數）、讀過的部分各月花了多少。"""
 
     offset: int = 0
+    lines: int = 0
     by_month: dict[str, int] = field(default_factory=dict)
     total: int = 0
 
@@ -57,6 +61,7 @@ class SpendTally:
     每份檔只讀新增的部分（帳本只增不改），所以每次預留都重算也不貴；
     誰寫的都讀得到，投入帳本（S0.5 寫）不用另外通知這裡。
     還沒寫完的最後一行（沒有換行）先不算，下次讀到完整的才算。
+    讀不懂的行（寫到一半被砍、之後被下一筆用換行封起來的半行）跳過，記一筆警告指出 `檔名:行號`。
     """
 
     def __init__(self, data: DataDir) -> None:
@@ -82,21 +87,25 @@ class SpendTally:
             chunk = handle.read(size - tally.offset)
         complete = chunk.rfind(b"\n") + 1
         for line in chunk[:complete].splitlines():
-            self._add(tally, line)
+            tally.lines += 1
+            if line.strip() and not self._add(tally, line):
+                _log.warning("帳本 %s:%d 這一行讀不懂，加總時跳過", path, tally.lines)
         tally.offset += complete
         return tally
 
     @staticmethod
-    def _add(tally: _FileTally, line: bytes) -> None:
+    def _add(tally: _FileTally, line: bytes) -> bool:
+        """把一行的金額加進去；讀不懂就什麼都不加，回 False。"""
         # 只讀加總需要的兩欄，工單帳本與投入帳本共用
         try:
             row = json.loads(line)
             month = taipei_month(datetime.fromisoformat(row["ts"]))
             micros = usd_to_micros(float(row.get("cost_usd", 0.0)))
         except (ValueError, KeyError, TypeError):
-            return
+            return False
         tally.by_month[month] = tally.by_month.get(month, 0) + micros
         tally.total += micros
+        return True
 
     def month_micros(self, month: str) -> int:
         return sum(self._refresh(path).by_month.get(month, 0) for path in self._paths())

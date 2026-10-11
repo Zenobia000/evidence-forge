@@ -335,11 +335,8 @@ def add_message_routes(
         if recorded_blobs is not None:
             hashes = recorded.get((key.stage, key.attempt, call.request_hash), [])
             return recorded_blobs.get(hashes[nth]) if nth < len(hashes) else None
-        try:
-            entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
-        except ValueError:
-            # 帳本有一行壞了：不冒險回放，照常轉送
-            return None
+        # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過，那一次的回應就不回放
+        entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
         # 只認真的轉送拿到的成功回應；cache_hit 那幾行是回放，不能再算成一份
         hashes = ledger.responses_by_call(entries, ("ok",)).get(
             (key.stage, key.attempt, call.request_hash), []

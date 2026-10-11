@@ -5,6 +5,7 @@
 """
 
 import json
+import logging
 import os
 import threading
 from collections.abc import Iterable
@@ -13,6 +14,8 @@ from pathlib import Path
 
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry, LedgerStatus
 from evidence_forge.paths import DataDir
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "IntakeEntry",
@@ -34,11 +37,19 @@ def _append_line(path: Path, line: str) -> None:
 
     `ef new`（另一個程序）也會寫投入帳本；每行一次 write、檔案用 O_APPEND 開，
     兩個程序同時寫也不會把兩行交錯成一行。同一個程序裡的執行緒另外上鎖。
+
+    檔尾不是換行，表示上一個寫的程序在一行的中間被砍了（或只寫進一部分）：
+    先補一個換行把那半行封起來，這一筆才不會黏在它後面、跟著一起解析失敗而少算錢。
+    半行本身讀的時候跳過（`read`、`gateway/budget.py`）。兩個程序剛好同時補，
+    最多多出一行空行，讀的時候也跳過。
     """
     data = line.encode("utf-8")
     with _lock:
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
         try:
+            size = os.fstat(fd).st_size
+            if size > 0 and os.pread(fd, 1, size - 1) != b"\n":
+                data = b"\n" + data
             written = os.write(fd, data)
         finally:
             os.close(fd)
@@ -61,13 +72,21 @@ def append_intake(data: DataDir, entry: IntakeEntry) -> None:
 
 
 def read(path: Path) -> list[LedgerEntry]:
+    """讀一份工單帳本。讀不懂的行（例如寫到一半被砍的半行）跳過，記一筆警告指出 `檔名:行號`。
+
+    一行壞掉不能讓整本帳讀不出來；用位元組讀，半行切在中文字中間也只壞那一行。
+    """
     if not path.is_file():
         return []
-    return [
-        LedgerEntry.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    entries: list[LedgerEntry] = []
+    for number, line in enumerate(path.read_bytes().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            entries.append(LedgerEntry.model_validate_json(line))
+        except ValueError:
+            _log.warning("帳本 %s:%d 這一行讀不懂，跳過", path, number)
+    return entries
 
 
 @dataclass(frozen=True)
