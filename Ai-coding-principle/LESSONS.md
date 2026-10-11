@@ -171,13 +171,15 @@
 - **狀態**：現役・降頻（`guard-git.sh` 的「HEAD 須等於 PR head」已擋掉主要路徑，拒絕訊息也點名本條；仍未擋 `stash`／`reset`，也擋不住「別的 session 切走分支」——這一段真的踩過，見第 2 次）
 
 - **首犯**：2026-09-06。派審查代理驗 PR 時，交辦文寫「先 `gh pr checkout <n>` 讓 HEAD 對齊 PR head 再跑本機驗證」。代理照做，於是在**多個 session 共用的主工作目錄**上 checkout，順手把另一個 session 未提交的 hook 修改 stash 起來，repo 停在 detached HEAD。對方是排程醒來、發現檔案內容變回舊版才知道——沒有任何訊號。
-- **累犯**：2
+- **累犯**：3
   - 2026-09-09（第 2 次）：**方向相反的那一半。** 首犯是「我動了別人」，這次是「別人動了我」。我在主目錄 `git checkout -b <新分支>`，當下 HEAD 卻不在 `main`——另一個 session 早已切到它自己的分支，所以我的新分支從一開始就指到對方的 commit。接著對方把 HEAD 拉回 `main` 並 pull，我隨後的 `git commit` 就**落在保護分支 `main` 上**，而 `git push -u origin <我的分支名>` 把對方三顆已合併的 commit 推成了一條新的遠端分支。沒有任何一步報錯。抓到的方式是 commit 輸出那一行——它印的是 `[main 7fb63bd]`，跟我以為的分支名不一樣。損害：零（先用 `git branch <保險名> <sha>` 留了 ref）。
+  - 2026-10-11（第 3 次）：**我以為的工作目錄被換掉了。** 視覺設計 session 在自己的 worktree `.claude/worktrees/ui-static` 開工，中間 harness 把「主要工作目錄」換回主目錄，只在下一個工具結果附了一行 `Environment update: Primary working directory: … (was …)`。我照舊用相對路徑下 `git checkout --detach <PR head>` 準備審 PR，結果是主目錄停在 detached HEAD。抓到的方式是那行環境通知加上 `git worktree list` （主目錄那一列印著 PR 的 sha）。損害：零（主目錄當時乾淨，約一分鐘後 `git checkout dev` 還原）。這次補上第三種形狀：前兩次是人或 session 去動主目錄，這次是**執行環境換了 cwd**，而 cwd 本身就是「我現在在哪」那個會過期的答案。
 - **坑**：主工作目錄是共用資源。`checkout`／`stash`／`reset` 都會影響別人正在改的東西，而且**不會通知任何人**。
   第 2 次補上另一半：**共用目錄裡，「我現在在哪條分支」是一個會過期的答案**。`git branch --show-current` 只描述問的那一瞬間，而開分支到提交之間隔著讀檔、編輯、跑檢查——那段時間足夠別人把 HEAD 搬走三次。危險的不是切分支這個動作，是**兩次 git 動作之間的那段假設**。
 - **訊號**：交辦文裡出現「在主工作目錄上切分支／暫存」這類指示；代理回報「為了拿乾淨的樹所以 stash」；`git stash list` 出現不是自己建的項目。**`git commit` 印出來的 `[分支名 sha]` 跟你以為的分支不一樣**——那一行是唯一會出聲的地方，而它長得像例行輸出。還有：`ps` 看得到不只一個 `claude` 行程；`git reflog` 出現自己沒下過的 `checkout`／`pull`／`cherry-pick`。
 - **對策**：派任何會動 git 狀態的代理，一律用 `isolation: "worktree"` 或明確指示開 `git worktree`；**驗證 PR 要在 worktree 裡 checkout，不在主工作目錄**。只讀的代理（grep、gh api、讀檔）不受此限。
 - **對策（第 2 次補）**：**確認 HEAD 不是對策，開 worktree 才是。**「提交前再看一次分支」只是把假設的有效期從十分鐘縮到十秒，競態還在（`L-002` 證明過：加一句話防不了結構性的問題，見 `P-005`）。規則改成一句沒有例外的：**只要這次工作會產生 commit，第一個動作就是 `git worktree add`，不在主目錄開分支。** 主目錄留給唯讀與跑檢查。
+- **對策（第 3 次補）**：會動 git 狀態的指令一律寫 `git -C <worktree 絕對路徑>`，不靠目前目錄。看到 `Environment update: Primary working directory` 這種通知，就當成 HEAD 和 cwd 都可能換了，重跑一次 `git worktree list` 再動作。
 - **連帶對策**：**修復建議本身也可能是攻擊面**。錯誤訊息若寫「commit or stash」，在共用 checkout 裡就是錯的建議——stash stack 也是共用的。凡是要人「清乾淨工作區」的訊息，都要改成「提交，或從乾淨的 worktree 跑」。
 - **例外（什麼時候可以動別人的東西）**：擁有者明示同意 **且** 自己驗證過內容確實被取代——兩個條件都齊才動。驗證方式：`grep -Fxv -f <已提交版本> <工作區版本>`，輸出為空才算涵蓋。
 
