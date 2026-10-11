@@ -30,6 +30,7 @@
 | 派子代理做審查或任何「只讀」的工作 | L-016 |
 | 合併一個底下還疊著別的 PR 的分支 | L-018 |
 | repo 放在慢的或跨系統的檔案系統上；checkout 之後跑測試，結果對不上那個 commit | L-019 |
+| WSL 整個重開、所有 session 同時斷線；要替當機找原因 | L-025 |
 | 子代理清自己的測試程序 | L-020 |
 | 多個子代理同時用同一個暫存目錄 | L-021 |
 | 跟使用者說「可以按」、合併前後對 head | L-022 |
@@ -350,19 +351,20 @@
 
 - **狀態**：現役
 - **首犯**：2026-10-02。repo 放在慢的、跨系統的檔案系統上（例：WSL 讀 Windows 磁碟）。合併用的 worktree `git checkout -q --detach origin/<分支>` 之後，`git log -1` 顯示新 commit、`git status` 乾淨，但工作目錄的檔案還是舊版；同一天兩次。其中一次本機「驗過」的其實是修前的檔，CI 跑的才是對的，純註解改動所以無害。
-- **累犯**：11
-  - 2026-10-11（第 9～11 次，型：掛載卡死，evidence-forge）：一天當三次。12:32 一次（一個 session 搬 Ollama 模型時，對 `/mnt/d` 與 `/mnt/e` 兩個掛載上共約 6.5 GB 的檔案跑 `sha256sum` 校驗，只有這一條線）；16:05、16:13 兩次，都是兩個子代理同時在 `/mnt/d` 的 worktree 跑 `uv sync` 與 pytest（只有兩條線，已經在 `PIPELINE.md` 的上限內）。照事先定好的觸發條件（Q-34）把 repo 搬到 WSL 原生磁碟 `~/evidence-forge`；兩個子代理的半成品先 commit 推上遠端才搬，沒有遺失。搬過去之後同一套單元測試從 0.92 秒變 0.30 秒。教訓：「最多兩條線」在這台機器上仍然不夠，根治只有搬家，這次證明了 `PIPELINE.md`〈慢檔案系統的 I/O 上限〉第 5 條。
+- **累犯**：8
+  - **更正（2026-10-11 晚）：下面這一筆原本記成第 9～11 次，現在不算進本條，真正的原因見 L-025。** 這三次當機前後一分鐘內，Windows 系統紀錄都有一筆事件 2004（虛擬記憶體不足：12:30:16→12:33:00、16:04:22→16:04:55、16:11:52→16:11:53，箭頭前是 WSL 最後一筆日誌、後面是事件時間）。repo 搬到原生磁碟之後，沒有任何 `/mnt` 讀寫的時候，WSL 也還是照樣掛掉（17:24、18:51、19:33）。所以「`/mnt` I/O 造成當機」和「搬家能根治」這兩個結論都不成立。原文保留如下，留著是為了記住當時怎麼推錯的：
+  - ~~2026-10-11（第 9～11 次，型：掛載卡死，evidence-forge）~~：一天當三次。12:32 一次（一個 session 搬 Ollama 模型時，對 `/mnt/d` 與 `/mnt/e` 兩個掛載上共約 6.5 GB 的檔案跑 `sha256sum` 校驗，只有這一條線）；16:05、16:13 兩次，都是兩個子代理同時在 `/mnt/d` 的 worktree 跑 `uv sync` 與 pytest（只有兩條線，已經在 `PIPELINE.md` 的上限內）。照事先定好的觸發條件（Q-34）把 repo 搬到 WSL 原生磁碟 `~/evidence-forge`；兩個子代理的半成品先 commit 推上遠端才搬，沒有遺失。搬過去之後同一套單元測試從 0.92 秒變 0.30 秒。教訓：「最多兩條線」在這台機器上仍然不夠，根治只有搬家，這次證明了 `PIPELINE.md`〈慢檔案系統的 I/O 上限〉第 5 條。
   - 2026-10-10（第 8 次，型：掛載卡死）：同時有三條線在跑——另一個 session 的 e2e、兩個子代理，加上主 session 自己在合併 worktree 跑單元測試——整個掛載變成 EIO，所有 session 的 shell 都起不來（`EIO: i/o error, posix_spawn '/usr/bin/zsh'`）。只有使用者手動重啟子系統（`wsl --shutdown`）能救；改到一半的檔都還在。
   - 2026-10-09～10（第 6、7 次，型：掛載卡死）：同形狀兩次，同時有 2～3 條線在同一個掛載上跑 `git fetch`、`pnpm install`、vitest、playwright。每掛一次整條產線停擺到使用者醒來，夜間最傷。
   - 更早：5 次，最早 2026-10-02。型：**索引沒跟上** 2 次（2026-10-02 同日兩次，即首犯）；**鎖檔殘影** 3 次——2026-10-03 一次（同一個 worktree 連下三個寫索引的 git 指令，連撞三次 `index.lock: File exists`，去看時鎖檔已經不在）、2026-10-05 夜間兩次（同一回合兩個 Bash 呼叫各自在同一個 worktree 跑會寫索引的 git 指令）。
-- **坑**：慢的或跨系統的掛載上，git 的 stat cache 偶爾判定檔案沒變、不重寫；`status` 也照 cache 回乾淨，只看 `git log -1` 看不出來。鎖檔的建立與刪除有延遲，看起來像別人在用。I/O 一多（安裝、測試、重 git 同時跑），整個掛載可能直接卡死，而那時連 shell 都起不來，代理沒有任何自救的手段。
+- **坑**：慢的或跨系統的掛載上，git 的 stat cache 偶爾判定檔案沒變、不重寫；`status` 也照 cache 回乾淨，只看 `git log -1` 看不出來。鎖檔的建立與刪除有延遲，看起來像別人在用。I/O 一多（安裝、測試、重 git 同時跑），整個掛載可能直接卡死，而那時連 shell 都起不來，代理沒有任何自救的手段。（第 6～8 次「整個掛載卡死」當時沒有查 Windows 的事件紀錄，可能跟 L-025 是同一個原因；下次遇到，先照 L-025 查過再記進這一條。）
 - **訊號**：checkout 後 `git diff HEAD --stat` 不是空的；測試數字跟作者回報的差一截；checkout 剛結束就 `index.lock: File exists`，但鎖檔其實不存在；`/proc/stat` 的 `procs_blocked` 長期 > 2；同一時刻有兩條以上的線在同一個掛載上跑測試或安裝；單一 session 對 `/mnt/*` 大量循序讀取（雜湊校驗、整包複製、對大目錄跑 `du`）。
 - **對策**：
   1. checkout 後一律 `git status --short | wc -l` 加 `git diff HEAD --stat | wc -l`，兩個都要是 0 才跑測試。不是 0：`git reset -q && git checkout -q -- .`（先看 `git diff --cached --stat` 確認是舊版內容、不是別人的工作）。
   2. 同一個 worktree 連續兩個會寫索引的 git 指令之間隔 1～2 秒；同一回合的平行工具呼叫，一個 worktree 只給一個會碰索引的 git 指令。
   3. **I/O 上限**：(a) **不論 repo 在哪**，都不在 `/mnt/*` 上做大量循序讀取（雜湊校驗、整包複製、對大目錄跑 `du`）；大檔的搬移和驗證**都從 Windows 那一側做，不經過 WSL 的 `/mnt`**——搬用檔案總管或 `robocopy`，驗用 PowerShell 的 `Get-FileHash`；不要拿 `nohup … & disown` 當保險（整個 WSL 重開時背景程序一樣會死），檔名加大小只能當快速核對、不能證明內容一樣。(b) repo 放在這種掛載上時，同一時刻在這個掛載上跑測試／安裝／重 git 的線只有 **1 條**——**主 session 自己跑也算一條**，全部 session 與子代理合計；e2e 的 worker 設低（例：`--workers=2`）；能離線安裝就離線（`pnpm install --offline`）。規則在 `.claude/skills/PIPELINE.md`〈慢檔案系統的 I/O 上限〉。
   4. 派給子代理的提示裡寫明 1～3。
-  5. **出一次事就搬**到原生檔案系統（例：WSL 自己的 `~/`），不要等第二次、不要先壓上限——那是唯一根治的做法；搬家由使用者點頭，但提的時候是「要搬」。
+  5. **出一次事就搬**到原生檔案系統（例：WSL 自己的 `~/`），不要等第二次、不要先壓上限。搬家治得了本條的索引沒跟上、鎖檔殘影，**治不了 WSL 整個重開**：那要先照 L-025 查 Windows 的事件紀錄。搬家由使用者點頭，但提的時候是「要搬」。
 
 ## L-020 子代理用 `pkill -f` 清自己的測試程序，會殺到整台機器上別的 worktree
 
@@ -422,3 +424,21 @@
   1. 任何會叫外部服務的步驟都要等它的回應（`page.waitForResponse` 或等畫面上的結果）再結束測試，尤其是最後一步。
   2. 看到「平行才會偶發」的失敗，先看它前一條 spec 的結尾，再懷疑那條測試本身。
   3. 寫假回覆進佇列時，可以在 fixture 的 teardown 檢查佇列是空的，不空就讓那條 spec 自己紅。
+
+## L-025 WSL 整個重開，從「當時在做什麼」推原因，結果推錯；真正的原因是 Windows 的記憶體額度用光
+
+- **狀態**：現役
+- **首犯**：2026-10-11（evidence-forge）。WSL 一天重開了十幾次。前三次（12:32、16:05、16:13）剛好有人在 `/mnt` 上做大量讀寫（雜湊校驗、兩個子代理跑 `uv sync` 和 pytest），於是記成 L-019 的「`/mnt` I/O 讓掛載卡死」，照 Q-34 把 repo 搬到原生磁碟。幾個小時內，這個歸因就寫進了 PR #36（帳本）、PR #42（PIPELINE 的規則與「為什麼」），還寫進了記憶檔。搬家之後 WSL 照樣掛掉（17:24、18:51、19:33），那時候根本沒有 `/mnt` 讀寫。Product session 去查 Windows 的系統紀錄才翻案：幾乎每次掛掉的前後一分鐘內，都有一筆 `Microsoft-Windows-Resource-Exhaustion-Detector` 的事件 2004（虛擬記憶體不足）。19:23～19:32 之間有 24 筆，19:33 就重開了。當時 Windows 的記憶體額度（commit charge）用了 121.6／126.1 GB，用最多的是 vmmemWSL、Chrome、python、VS Code、Cursor 和一支 whisper 伺服器。`.wslconfig` 給 WSL 的上限是 `memory=48GB`、`swap=16GB`。19:33 那次重開還把共用的 `.git` 弄壞了：`.git/objects` 底下多了 6 個空的物件檔，`origin/dev` 正好指向其中一個。
+- **累犯**：1
+- **坑**：所有 session 同時斷線的時候，最容易記住的是「那時候我在跑什麼」，於是就拿它當原因。重 I/O 確實會讓 WSL 用更多記憶體（頁面快取變大），所以它可能是**導火線**；但只看「那時候在做什麼」，分不出導火線和原因。錯的歸因又會一路擴散：寫成規則、寫成帳本、拿去做搬家這種動到環境的決定。等到修了還在當，前面的結論已經合進三個地方了。
+- **訊號**：
+  - 所有 session 的 shell 同時起不來；
+  - `uptime -s` 的開機時間是剛剛；
+  - `journalctl --list-boots` 一天裡有好幾次開機；
+  - 「照結論修了，還是在當」——這是最強的訊號，代表原因找錯了。
+- **對策**：
+  1. **WSL 整個重開時，先查 Windows 那一側，再推原因。** `journalctl --list-boots` 看每次開機和結束的時間；從 WSL 跑 `powershell.exe -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Resource-Exhaustion-Detector'; StartTime=(Get-Date).AddDays(-1)}"`，把兩邊的時間對起來。記憶體額度用 `Get-CimInstance Win32_OperatingSystem`（`TotalVirtualMemorySize` 減掉 `FreeVirtualMemory`）看還剩多少。
+  2. **歸因寫進帳本或規則之前，要有一筆能排除其他原因的證據**，例如同樣的事在沒有那個條件時也發生、或不發生。只有「當時剛好在做什麼」不算。
+  3. **治本是使用者的環境決定**：降低 `.wslconfig` 的 `memory`、加大 Windows 的分頁檔、關掉吃記憶體的程式。代理只負責提出，附上量到的數字；不自己改 `.wslconfig` 或分頁檔。
+  4. 重開之後先跑 `git fsck --full`，再做任何 git 操作。有錯先回報給負責共用 `.git` 的那個 session，不要自己刪物件檔。
+  5. 在使用者處理記憶體之前，同時跑測試的子代理壓到 1 個（照〈派工前的資源盤點〉第 3 條：可用記憶體要扣掉 Windows 這邊的額度，不是只看 WSL 裡的 `free -m`）。
