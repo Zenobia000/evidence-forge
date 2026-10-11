@@ -244,3 +244,13 @@ def test_只要有_error_事件就帶出原因_沒有細節的寫成_error(strea
 def test_沒有_error_事件_原因是_None(body: str) -> None:
     # 沒送到結尾、不是串流：不完整，但不是後端在串流裡報錯
     assert read_reply(body.encode()).error is None
+
+
+def test_event_行是_error_data_沒寫_type_也從_data_讀出原因() -> None:
+    # 只有 event 行說它是 error，data 本身沒寫 type；原因照樣從 data 的 error 欄位讀
+    error_event = (
+        "event: error\n"
+        'data: {"error": {"type": "overloaded_error", "message": "Overloaded"}}\n\n'
+    )
+    reply = read_reply((START + error_event + DELTA + STOP).encode())
+    assert reply.error == "overloaded_error：Overloaded"

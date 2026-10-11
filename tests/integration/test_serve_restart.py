@@ -181,7 +181,8 @@ def test_跑到一半殺掉_ef_serve_重開後從同一段同一次重跑_前面
 
 # 第一次：問模型、寫產出、留下自己的 pid，然後一直拿同一把鑰匙打閘道寫檔。測試殺掉第一個
 # `ef serve` 之後放一個 restarted 記號，從那之後收到的狀態碼記進 late-statuses，
-# 所以記到的全是打重開後那個閘道的結果。之後（重開後的新 Pi）：照常寫完
+# 所以記到的全是打重開後那個閘道的結果。之後（重開後的新 Pi）：照常寫完。
+# 最多敲 120 秒就自己結束：pytest 本身被硬殺、finally 沒跑到時，也不會留下一直跑的程序
 PI_KEEPS_KNOCKING = (
     FAKE_PI_LIB
     + """
@@ -194,7 +195,8 @@ if not os.path.exists(MARK):
     with open(MARK + ".tmp", "w") as handle:
         handle.write(str(os.getpid()))
     os.replace(MARK + ".tmp", MARK)
-    while True:
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
         time.sleep(0.05)
         if not os.path.exists(MARKS + "/restarted"):
             continue

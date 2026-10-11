@@ -132,10 +132,14 @@ def test_子程序的工作目錄固定是根目錄(tmp_path: Path) -> None:
 
 # --- 前一個 `ef serve` 留下的 Pi（SEAM-12） ----------------------------------------
 
-# 假 Pi：回報提示詞指到的那個檔在不在、內容是什麼，以及自己的 pid
+# 假 Pi：回報提示詞指到的那個檔的內容與自己的 pid。紀錄是 Popen 回來之後才寫的，
+# 機器忙的時候假 Pi 可能先跑到這裡，所以最多等 10 秒讓它出現
 PID_REPORTER = """
-import json, os, sys
+import json, os, sys, time
 path = sys.argv[-1]
+deadline = time.monotonic() + 10
+while not os.path.exists(path) and time.monotonic() < deadline:
+    time.sleep(0.01)
 print(json.dumps({
     "type": "report",
     "pid": os.getpid(),

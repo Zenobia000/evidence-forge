@@ -195,7 +195,8 @@ def kill_leftover(data: DataDir, key: JobKey, *, wait_s: float = 5.0) -> int | N
 
     只殺環境變數裡 `EF_JOB_KEY` 正是這把鑰匙的程序（`_holds_key`），不照名稱找程序殺：
     同一台機器上別的 worktree、別的 `ef serve` 也有叫 pi 的程序。
-    `wait_s` 秒內還沒死透就丟 `LeftoverPi`，紀錄留著，下次重跑再殺一次。
+    `wait_s` 秒內還沒死透就丟 `LeftoverPi`（工單以失敗進待審），這把鑰匙不登記；
+    紀錄留在 `run/pi-pids/`，給人查是哪一個程序。
     """
     path = pid_file(data, key)
     try:
