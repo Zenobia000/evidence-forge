@@ -799,6 +799,42 @@ def test_200_但讀不到用量的回應照預留入帳_不當成可以回放的
     assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
 
 
+@pytest.mark.promise("NFR-COST-02")
+def test_帳本記成_ok_的回應不是一則完整的訊息_不回放_照常轉送(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # #54 合併後到修好之前，200 加 error 事件的回應也記成 ok：那種舊資料不能被回放
+    raw = _body("strong")
+    broken = bytes(_overloaded_midstream(True)().body)
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    store = BlobStore(data.blobs)
+    ledger.append(
+        data.job_dir(job_id),
+        LedgerEntry.model_validate(
+            {
+                "ts": NOW,
+                "job_id": job_id,
+                "stage": "echo",
+                "attempt": 1,
+                "kind": "llm",
+                "tier": "strong",
+                "model": "claude-sonnet-5-5",
+                "latency_ms": 10,
+                "status": "ok",
+                "request_hash": store.put(raw),
+                "response_hash": store.put(broken),
+            }
+        ),
+    )
+    with gateway(_active(key)) as gw:
+        again = _post(gw.url, key, raw)
+    assert again.content == SSE
+    assert len(anthropic.received) == 1
+
+
 # 結構對、可是沒有輸入用量：後端到底算了多少錢不知道，不能記成成功的 0 元
 NO_USAGE = {
     "json": (
@@ -883,6 +919,24 @@ def test_重播時第_n_次相同的請求回放第_n_份(
     assert [r.content for r in responses[:2]] == [first, second]
     # 錄音裡只有兩份，第三次沒錄過：報錯、不轉送
     assert responses[2].status_code >= 500
+    assert ollama.received == []
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_錄音裡記成_ok_的回應不是一則完整的訊息_重播時當成沒錄過(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    ollama: Backend,
+    tmp_path: Path,
+) -> None:
+    raw = _body("local")
+    broken = bytes(_overloaded_midstream(True)().body)
+    key = JobKey(_job(data), "echo", 1)
+    replay_dir = _recording(tmp_path, raw, [broken])
+    with gateway(_active(key), mode="replay", replay_dir=replay_dir) as gw:
+        response = _post(gw.url, key, raw)
+    assert response.status_code >= 500
+    assert response.content != broken
     assert ollama.received == []
 
 

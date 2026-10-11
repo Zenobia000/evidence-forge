@@ -378,6 +378,17 @@ def add_message_routes(
             delay = config.backoff_base_s * (2**attempt)
         return min(delay, config.backoff_max_s)
 
+    def replayable(store: BlobStore, hashes: list[str], nth: int) -> bytes | None:
+        """第 nth 份回應；不是一則完整的訊息就當作沒有。
+
+        帳本記 ok 不保證回應完整：#54 合併後到修好之前，200 加 error 事件的回應也記成 ok。
+        回放之前再讀一次，壞的那份照常轉送，不會一直回放同一份壞答案（NFR-COST-02）。
+        """
+        response = store.get(hashes[nth]) if nth < len(hashes) else None
+        if response is None or not ledger.read_reply(response).whole:
+            return None
+        return response
+
     def stored_response(call: _Call) -> bytes | None:
         """有沒有存好的回應可以回放（見模組說明第 3 點）；這次是第幾次同樣的請求由 `seen` 算。"""
         key = call.key
@@ -386,7 +397,7 @@ def add_message_routes(
         seen[counter] = nth + 1
         if recorded_blobs is not None:
             hashes = recorded.get((key.stage, key.attempt, call.request_hash), [])
-            return recorded_blobs.get(hashes[nth]) if nth < len(hashes) else None
+            return replayable(recorded_blobs, hashes, nth)
         # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過：那一次的回應不在清單裡，
         # 同一個請求後面的回應往前遞補。回放的仍然都是這個請求真的拿到過的回應
         entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
@@ -394,7 +405,7 @@ def add_message_routes(
         hashes = ledger.responses_by_call(entries, ("ok",)).get(
             (key.stage, key.attempt, call.request_hash), []
         )
-        return blobs.get(hashes[nth]) if nth < len(hashes) else None
+        return replayable(blobs, hashes, nth)
 
     def job_budget_micros(job_id: str) -> int:
         try:
