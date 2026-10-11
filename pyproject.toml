@@ -5,7 +5,8 @@ description = ""
 # 版本由 .python-version 釘住（uv 讀它）；這裡只寫允許的範圍。
 requires-python = ">=3.12,<3.14"
 # 執行期相依等第一個真的模組需要時才加，不先佔位。
-# pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter。
+# pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter；
+# jsonschema：C5 用 skill 的 schema.json 驗證產出（S0.7）。
 dependencies = [
     "fastapi>=0.143.0",
     "httpx>=0.28.1",

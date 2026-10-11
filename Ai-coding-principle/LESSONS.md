@@ -344,18 +344,19 @@
 
 - **狀態**：現役
 - **首犯**：2026-10-02。repo 放在慢的、跨系統的檔案系統上（例：WSL 讀 Windows 磁碟）。合併用的 worktree `git checkout -q --detach origin/<分支>` 之後，`git log -1` 顯示新 commit、`git status` 乾淨，但工作目錄的檔案還是舊版；同一天兩次。其中一次本機「驗過」的其實是修前的檔，CI 跑的才是對的，純註解改動所以無害。
-- **累犯**：8
+- **累犯**：11
+  - 2026-10-11（第 9～11 次，型：掛載卡死，evidence-forge）：一天當三次。12:32 一次（一個 session 搬 Ollama 模型時，對 `/mnt/d` 與 `/mnt/e` 兩個掛載上共約 6.5 GB 的檔案跑 `sha256sum` 校驗，只有這一條線）；16:05、16:13 兩次，都是兩個子代理同時在 `/mnt/d` 的 worktree 跑 `uv sync` 與 pytest（只有兩條線，已經在 `PIPELINE.md` 的上限內）。照事先定好的觸發條件（Q-34）把 repo 搬到 WSL 原生磁碟 `~/evidence-forge`；兩個子代理的半成品先 commit 推上遠端才搬，沒有遺失。搬過去之後同一套單元測試從 0.92 秒變 0.30 秒。教訓：「最多兩條線」在這台機器上仍然不夠，根治只有搬家，這次證明了 `PIPELINE.md`〈慢檔案系統的 I/O 上限〉第 5 條。
   - 2026-10-10（第 8 次，型：掛載卡死）：同時有三條線在跑——另一個 session 的 e2e、兩個子代理，加上主 session 自己在合併 worktree 跑單元測試——整個掛載變成 EIO，所有 session 的 shell 都起不來（`EIO: i/o error, posix_spawn '/usr/bin/zsh'`）。只有使用者手動重啟子系統（`wsl --shutdown`）能救；改到一半的檔都還在。
   - 2026-10-09～10（第 6、7 次，型：掛載卡死）：同形狀兩次，同時有 2～3 條線在同一個掛載上跑 `git fetch`、`pnpm install`、vitest、playwright。每掛一次整條產線停擺到使用者醒來，夜間最傷。
   - 更早：5 次，最早 2026-10-02。型：**索引沒跟上** 2 次（2026-10-02 同日兩次，即首犯）；**鎖檔殘影** 3 次——2026-10-03 一次（同一個 worktree 連下三個寫索引的 git 指令，連撞三次 `index.lock: File exists`，去看時鎖檔已經不在）、2026-10-05 夜間兩次（同一回合兩個 Bash 呼叫各自在同一個 worktree 跑會寫索引的 git 指令）。
 - **坑**：慢的或跨系統的掛載上，git 的 stat cache 偶爾判定檔案沒變、不重寫；`status` 也照 cache 回乾淨，只看 `git log -1` 看不出來。鎖檔的建立與刪除有延遲，看起來像別人在用。I/O 一多（安裝、測試、重 git 同時跑），整個掛載可能直接卡死，而那時連 shell 都起不來，代理沒有任何自救的手段。
-- **訊號**：checkout 後 `git diff HEAD --stat` 不是空的；測試數字跟作者回報的差一截；checkout 剛結束就 `index.lock: File exists`，但鎖檔其實不存在；`/proc/stat` 的 `procs_blocked` 長期 > 2；同一時刻有三條以上的線在同一個掛載上跑測試或安裝。
+- **訊號**：checkout 後 `git diff HEAD --stat` 不是空的；測試數字跟作者回報的差一截；checkout 剛結束就 `index.lock: File exists`，但鎖檔其實不存在；`/proc/stat` 的 `procs_blocked` 長期 > 2；同一時刻有兩條以上的線在同一個掛載上跑測試或安裝；單一 session 對 `/mnt/*` 大量循序讀取（雜湊校驗、整包複製、對大目錄跑 `du`）。
 - **對策**：
   1. checkout 後一律 `git status --short | wc -l` 加 `git diff HEAD --stat | wc -l`，兩個都要是 0 才跑測試。不是 0：`git reset -q && git checkout -q -- .`（先看 `git diff --cached --stat` 確認是舊版內容、不是別人的工作）。
   2. 同一個 worktree 連續兩個會寫索引的 git 指令之間隔 1～2 秒；同一回合的平行工具呼叫，一個 worktree 只給一個會碰索引的 git 指令。
-  3. **I/O 上限**：同一時刻在這個掛載上跑測試／安裝／重 git 的線壓到 1～2 條——**主 session 自己跑也算一條**；e2e 的 worker 設低（例：`--workers=2`）；能離線安裝就離線（`pnpm install --offline`）。規則在 `.claude/skills/PIPELINE.md`〈慢檔案系統的 I/O 上限〉。
+  3. **I/O 上限**：(a) **不論 repo 在哪**，都不在 `/mnt/*` 上做大量循序讀取（雜湊校驗、整包複製、對大目錄跑 `du`）；大檔的搬移和驗證**都從 Windows 那一側做，不經過 WSL 的 `/mnt`**——搬用檔案總管或 `robocopy`，驗用 PowerShell 的 `Get-FileHash`；不要拿 `nohup … & disown` 當保險（整個 WSL 重開時背景程序一樣會死），檔名加大小只能當快速核對、不能證明內容一樣。(b) repo 放在這種掛載上時，同一時刻在這個掛載上跑測試／安裝／重 git 的線只有 **1 條**——**主 session 自己跑也算一條**，全部 session 與子代理合計；e2e 的 worker 設低（例：`--workers=2`）；能離線安裝就離線（`pnpm install --offline`）。規則在 `.claude/skills/PIPELINE.md`〈慢檔案系統的 I/O 上限〉。
   4. 派給子代理的提示裡寫明 1～3。
-  5. 再出事就建議把 repo 搬到原生檔案系統（例：WSL 自己的 `~/`）——那是唯一根治的做法，但搬不搬是使用者的決定。
+  5. **出一次事就搬**到原生檔案系統（例：WSL 自己的 `~/`），不要等第二次、不要先壓上限——那是唯一根治的做法；搬家由使用者點頭，但提的時候是「要搬」。
 
 ## L-020 子代理用 `pkill -f` 清自己的測試程序，會殺到整台機器上別的 worktree
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from evidence_forge.paths import DataDir, resolve_data_dir
+from evidence_forge.paths import DataDir, JobDir, resolve_data_dir
 
 # 這個 repo 的根目錄：tests/ 的上一層。獨立算出來，不借用被測程式的算法。
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -56,3 +56,15 @@ def test_named_locations_follow_the_folder_layout(tmp_path: Path) -> None:
     assert data.job_dir("2026-10-10-substack-abc123") == (
         tmp_path / "jobs" / "2026-10-10-substack-abc123"
     )
+
+
+@pytest.mark.promise("NFR-KEEP-04")
+def test_checks_settings_file_sits_at_the_top_of_the_data_dir(tmp_path: Path) -> None:
+    assert DataDir(tmp_path).check_settings == tmp_path / "checks.yaml"
+
+
+@pytest.mark.promise("NFR-KEEP-04")
+def test_job_folder_locations_follow_the_folder_layout(tmp_path: Path) -> None:
+    job = JobDir(tmp_path / "jobs" / "j1")
+    assert job.assets_file == tmp_path / "jobs" / "j1" / "assets" / "assets.json"
+    assert job.checks == tmp_path / "jobs" / "j1" / "checks"

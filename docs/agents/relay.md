@@ -42,7 +42,7 @@ git branch -r                                        # 遠端有哪些分支、�
 - 派新票前先看 `.claude/skills/PIPELINE.md`〈鞏固站〉的觸發條件；任一成立就停派。
 - 合一條底下疊著別的 PR 的分支：先把上面的 PR 改 base，再合、再刪分支（L-018）。給使用者的合併指令預設不帶 `--delete-branch`。
 - 不在共用的主目錄動 git 狀態；每個 session 用自己的 worktree（L-006）。審查班的 worktree 固定一個名字（例：`.claude/worktrees/merge`）。
-- repo 在慢的掛載上時，兩班加起來同一時刻跑測試的線也只有 1～2 條（`PIPELINE.md`〈慢檔案系統的 I/O 上限〉）。
+- repo 在慢的掛載上時，兩班加起來同一時刻跑測試的線只有 1 條（`PIPELINE.md`〈慢檔案系統的 I/O 上限〉）。不論 repo 在哪，都不在 `/mnt/*` 上做大量循序讀取（雜湊、整包複製、`du` 大目錄），大檔從 Windows 那一側搬與驗（同一節第 2 條）。
 
 ## 撞到了怎麼辦
 
