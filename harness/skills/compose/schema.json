@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "compose 段的產出 compose.json",
+  "description": "二創稿（draft.md）的附表（FR-CP-01～03）。C2 只認叫 fact 的欄位、C5 用這份 schema 驗；改欄位名先看 checks/stages.py 的 FACT_FIELD。",
+  "type": "object",
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "target_genre": {
+      "enum": [
+        "news",
+        "hot-take",
+        "tutorial",
+        "tips",
+        "explainer",
+        "deep-dive",
+        "notes",
+        "review",
+        "case-study",
+        "opinion",
+        "story",
+        "roundup"
+      ]
+    },
+    "style_calibrated": {
+      "description": "作家在目標文類有風格檔、而且它標了 calibrated: true 才是 true；否則稿子是「未校準」",
+      "type": "boolean"
+    },
+    "facts": {
+      "description": "稿子裡的每一句事實句，照稿子原樣、連引用編號一起抄",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "fact": { "type": "string", "minLength": 1, "pattern": "\\[\\^[^\\]\\s]+\\]" }
+        },
+        "required": ["fact"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["title", "target_genre", "style_calibrated", "facts"],
+  "additionalProperties": false
+}
