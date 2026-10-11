@@ -1,0 +1,6 @@
+<div class="s0-panel">
+<dl class="s0-dl">
+{% for row in view.source_rows %}<dt>{{ row.label }}</dt><dd{% if row.label == "抓取時間" %} class="s0-mono"{% endif %}>{{ row.value }}</dd>{% endfor %}
+</dl>
+<p class="s0-small" style="margin: 16px 0 0">S0 只有原文；補充來源、圖與素材的授權在 S3 加進來。</p>
+</div>

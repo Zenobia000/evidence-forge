@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="s0-pagehead">
+<div>
+<h1 class="s0-h1">看板</h1>
+<p class="s0-sub">每 5 秒自動更新・上次更新 <span class="s0-mono" id="board-updated">{{ updated }}</span></p>
+</div>
+</div>
+{% include "_board.html" %}
+{% endblock %}

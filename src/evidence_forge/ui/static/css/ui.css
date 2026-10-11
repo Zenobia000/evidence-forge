@@ -1,0 +1,25 @@
+/* S0 UI 在 s0.css 之外多出來的幾條：頁面是伺服器產生的真連結（不是設計稿的按鈕），
+   以及 htmx 換內容時的載入中骨架。只有版面與顯示，不寫顏色（顏色一律來自 tokens.css）。
+   要最後載入。 */
+
+/* 分頁、卡片是 <a>：去掉底線，行為和設計稿的 <button> 一樣 */
+a.s0-tab, a.s0-tab:hover { text-decoration: none; }
+a.s0-card, a.s0-card:hover { text-decoration: none; }
+a.s0-card:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; }
+a.s0-badge { text-decoration: none; }
+a.s0-badge:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; }
+
+/* 載入中：htmx 發出請求超過 0.4 秒才浮出骨架，平常 5 秒一次的輪詢不會閃。
+   換掉之前舊內容照常顯示（不放假動畫，也不清空畫面）。 */
+.s0-loadwrap { position: relative; }
+.s0-loading {
+  position: absolute; inset: 0; z-index: 1; padding: 12px;
+  background: var(--color-bg-surface);
+  display: flex; flex-direction: column; gap: 12px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+}
+.htmx-request > .s0-loading, .htmx-request.s0-loading {
+  opacity: 1; visibility: visible;
+  transition: opacity 0s linear 0.4s, visibility 0s linear 0.4s;
+}
+.s0-loading .s0-board { width: 100%; }

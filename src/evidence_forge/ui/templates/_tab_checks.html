@@ -1,0 +1,13 @@
+{% from "_icons.html" import icon %}
+<div class="s0-panel">
+<p style="margin: 0 0 4px; font-weight: 600">{{ view.check_summary }}</p>
+{% if view.check_note %}<p class="s0-small" style="margin: 0 0 8px">{{ view.check_note }}</p>{% endif %}
+{% for key, label, items in view.check_groups %}
+<p class="s0-groupnote">{{ label }}</p>
+<ul class="s0-checks">
+{% for c in items %}
+<li class="s0-check" data-result="{{ c.status }}"><span class="s0-check__icon">{{ icon("x" if c.status == "fail" else ("bang" if c.status == "warn" else "check")) }}</span><span class="s0-check__name">{{ c.code }} {{ c.name }}</span><span>{{ c.reason }}{% if c.where %}<br><span class="s0-mono s0-small">{{ c.where }}</span>{% endif %}{% if c.excerpt %}<br><span class="s0-small">「{{ c.excerpt }}」</span>{% endif %}</span><span class="s0-check__status">{{ c.status_label }}</span></li>
+{% endfor %}
+</ul>
+{% endfor %}
+</div>
