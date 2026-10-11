@@ -29,7 +29,7 @@
 | 路徑 | 是什麼 |
 | --- | --- |
 | `CLAUDE.md` | 給 Claude 的常駐指示：專案狀態、技能組態、派子代理、人語層 |
-| `CONTEXT.md` | 領域語言（訂閱源、工作單、配方、閘道…） |
+| `CONTEXT.md` | 領域語言（訂閱源、工單、配方、閘道…） |
 | `.claude/hooks/` | 守衛。`guard-git.sh`（擋大量 add、force push、跳過 hook、按風險分級的合併閘）、`guard-secrets.sh`（擋把金鑰 commit 進去）、`human-only-paths.conf`（這個專案自己的高風險路徑與本機檢查指令）、`test-guard-git.sh`（守衛的測試，CI 會跑） |
 | `.claude/skills/` | 技能。大部分是上游快照，來源與哪些可以改見 `VENDOR.md`、`UPSTREAM.md`；開發順序見 `PIPELINE.md` |
 | `.claude/agents/` | 三格子代理角色（便宜快／強／最強），見 `Ai-coding-principle/MODEL-ROUTING.md` |

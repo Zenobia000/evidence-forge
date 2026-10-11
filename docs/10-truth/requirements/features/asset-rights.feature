@@ -13,7 +13,7 @@ Feature: 素材授權
     Given 一張圖片的授權狀態是 "<license>"
     When 二創段在稿子裡以 embed 放入它
     Then C4 不通過，執行器回二創段改成引用或拿掉
-    And 那張圖與它的授權資訊仍保存在工作單資料夾
+    And 那張圖與它的授權資訊仍保存在工單資料夾
 
     Examples:
       | license |
