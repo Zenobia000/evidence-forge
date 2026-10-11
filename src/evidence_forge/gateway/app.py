@@ -3,6 +3,7 @@
 - `POST /tools/<名稱>`：ef-tools 的工具呼叫（`read_file`、`list_files`、`write_file`、
   `fetch_url`、`run_script`）。
 - `POST /v1/messages`：Pi 的模型請求（Anthropic Messages 格式），見 `messages.py`。
+- `GET /health`、`GET /health/anthropic`：執行器的開跑前檢查用（閘道活著、金鑰有效）。
 
 兩種請求都在 `x-api-key` 帶工單鑰匙；閘道只接受登記中的那一把（`ActiveStages`）。
 `fetch_url` 與 `run_script` 每呼叫一次，在這張工單的帳本記一筆（`kind: fetch`／`script`）。
@@ -13,6 +14,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +23,7 @@ from evidence_forge.gateway import ledger, scope, scripts
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
+from evidence_forge.gateway.credentials import MissingCredential, read_anthropic_key
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.gateway.messages import add_message_routes
 from evidence_forge.jobkey import JobKey
@@ -176,6 +179,40 @@ def create_app(
             "stderr": result.stderr,
             "timed_out": result.timed_out,
         }
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        """開跑前檢查問「閘道活著嗎」（NFR-RUN-01）。"""
+        return {"status": "ok", "mode": config.mode}
+
+    @app.get("/health/anthropic")
+    async def anthropic_health() -> JSONResponse:
+        """開跑前檢查問「Anthropic 金鑰有效嗎」：閘道拿自己保管的金鑰打 `/v1/models`（不花錢）。
+
+        金鑰只有閘道讀（NFR-SEC-04）；回應只說有效或哪裡不對，不帶金鑰內容。
+        """
+        try:
+            key = read_anthropic_key(config.secrets_dir)
+        except MissingCredential as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    f"{config.anthropic_url}/v1/models",
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                )
+        except httpx.HTTPError as exc:
+            return JSONResponse(
+                {"error": f"連不上 Anthropic（{type(exc).__name__}）"}, status_code=503
+            )
+        if response.status_code != 200:
+            return JSONResponse(
+                {
+                    "error": f"金鑰無效或不能用（Anthropic 回 HTTP {response.status_code}）"
+                },
+                status_code=503,
+            )
+        return JSONResponse({"status": "ok"})
 
     add_message_routes(app, config, stages, board or JobBoard(config.clock))
     return app
