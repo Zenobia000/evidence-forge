@@ -7,9 +7,17 @@ requires-python = ">=3.12,<3.14"
 # 執行期相依等第一個真的模組需要時才加，不先佔位。
 # pydantic：資料夾契約的模型（S0.2）；pyyaml：job.md 與配方的 frontmatter。
 dependencies = [
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "jsonschema>=4.26.0",
     "pydantic>=2.14.0",
     "pyyaml>=6.0.3",
+    "uvicorn>=0.54.0",
 ]
+
+# `ef new`、`ef serve`（S0.3）
+[project.scripts]
+ef = "evidence_forge.cli:main"
 
 # uv sync 預設會裝 dev 群組；CI 與本機檢查用同一組。
 [dependency-groups]
@@ -18,6 +26,7 @@ dev = [
     "mypy>=1.13",
     "ruff>=0.8",
     "types-pyyaml>=6.0.12.20260906",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 # uv_build 預設找 src/<套件名>/，也就是 src/evidence_forge/。
@@ -32,12 +41,15 @@ testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "--strict-markers"]
 markers = [
     "promise(id): 這條測試證明的承諾 ID（PRD v2.0，例：NFR-KEEP-01），可以重複標多個",
+    "pipeline: 真的 Pi＋ef-tools＋閘道重播的整條流程（要用 harness/pi/ 鎖定的 Pi）",
 ]
 
 # 型別錯誤在這裡擋，不留到執行時才炸。涵蓋 src/ 與 tests/。
 [tool.mypy]
 files = ["src", "tests"]
-mypy_path = "src"
+# tests/ 也列進來，並依目錄算模組名：tests/conftest.py 與 tests/integration/conftest.py 才不會撞名。
+mypy_path = ["src", "tests"]
+explicit_package_bases = true
 strict = true
 # pydantic 的外掛讓 mypy 看得懂模型的建構子參數與驗證器。
 plugins = ["pydantic.mypy"]
