@@ -77,10 +77,22 @@ def test_實際金額依價目表算_不足一微美元進位() -> None:
 
 @pytest.mark.promise("NFR-COST-01")
 def test_預留金額用偏高的輸入估計加上_max_tokens() -> None:
+    # 300 個中文字是 900 個位元組
     request = ("字" * 300).encode()
-    assert estimate_input_tokens(request) == 150
-    # 輸入用快取寫入價（較貴）：150×2.5 = 375；輸出 1000×10 = 10000
-    assert reservation_micros(SONNET, request, max_tokens=1000) == 10_375
+    assert estimate_input_tokens(request) == 900
+    # 輸入用快取寫入價（較貴）：900×2.5 = 2250；輸出 1000×10 = 10000
+    assert reservation_micros(SONNET, request, max_tokens=1000) == 12_250
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_中文請求的輸入估值不少於字數_中文大約一個字一個_token() -> None:
+    # #54 審查實測：6,600 個中文字的請求，字元數 ÷ 2 只估出 3,324，實際用量大約是兩倍。
+    # 估少了，預留就少，月上限可能被超過
+    text = "預算" * 3300
+    request = json.dumps(
+        {"messages": [{"role": "user", "content": text}]}, ensure_ascii=False
+    ).encode()
+    assert estimate_input_tokens(request) >= len(text)
 
 
 def test_價目表涵蓋對照表裡每個雲端模型() -> None:

@@ -50,14 +50,17 @@ def cost_micros(price: Price, usage: Usage) -> int:
 
 
 def estimate_input_tokens(request: bytes) -> int:
-    """送出前估輸入 token：請求的字元數 ÷ 2，無條件進位。
+    """送出前估輸入 token 的上界：請求本文的 UTF-8 位元組數。
 
-    故意偏高：中文大約一個字一個 token、英文大約四個字元一個 token，而請求裡還有 JSON 的括號與欄位名，
-    除以 2 幾乎一定比實際多。準的做法是打免費的 `/v1/messages/count_tokens`，但每次多一個來回；
-    反正結算時照實際用量退回，S0 先用這個（#22 系統架構留言）。
+    一個 token 至少對到一個位元組，所以文字的 token 數不會超過它的位元組數。中文一個字
+    3 個位元組、大約一個 token，會多估約三倍；英文大約四個位元組一個 token；請求裡的 JSON
+    括號與欄位名也都算進去。多預留的部分結算時照實際用量退回。後端另外加的少量格式 token
+    不在本文裡，跟 `max_tokens` 那一份預留比起來很小。
+
+    舊的估法是字元數 ÷ 2：中文大約一個字一個 token，所以會少估一半
+    （#54 審查實測：6,600 個中文字估出 3,324）。不打 `count_tokens`：不多一個連外的來回。
     """
-    characters = len(request.decode("utf-8", errors="replace"))
-    return (characters + 1) // 2
+    return len(request)
 
 
 def reservation_micros(price: Price, request: bytes, max_tokens: int) -> int:
