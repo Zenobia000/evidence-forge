@@ -49,7 +49,13 @@ from evidence_forge.models import (
     Waiting,
 )
 from evidence_forge.paths import DataDir
-from evidence_forge.runner import events, hard_checks, pi_launch, provenance
+from evidence_forge.runner import (
+    events,
+    hard_checks,
+    pi_launch,
+    provenance,
+    stage_inputs,
+)
 from evidence_forge.transitions import transition
 from evidence_forge.write_once import write_once
 
@@ -63,22 +69,57 @@ def taipei_now() -> datetime:
 
 
 def stage_prompt(
-    recipe: Recipe, stage: RecipeStage, attempt: int, goal: str, fix: str = ""
+    recipe: Recipe,
+    stage: RecipeStage,
+    attempt: int,
+    goal: str,
+    fix: str = "",
+    upstream: Sequence[str] = (),
 ) -> str:
     """這一段給 agent 的任務說明。只放段、次、目標、檔名，不放工單 id 與時間：
     同樣的素材與目標送出的請求要逐位元組相同，快取與重播才對得上。
 
     `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
+    `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
+    earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
     prompt = (
         f"配方「{recipe.name}」的「{stage.id}」段，第 {attempt} 次。\n"
         f"目標：{goal}\n"
         f"素材在 input/content.md。\n"
+        f"{earlier}"
         f"照系統提示裡的 skill 完成這一段，用 write_file 寫出：{outputs}"
     )
     return f"{prompt}\n\n{fix}" if fix else prompt
+
+
+def upstream_outputs(job_dir: Path, recipe: Recipe, stage: RecipeStage) -> list[str]:
+    """這一段之前每一段最後一次的產出路徑（相對於工單資料夾）。
+
+    一段跑到合格才會往下一段走，之後也不會再多一次，所以編號最大的那一次就是合格的那一次。
+    """
+    found: list[str] = []
+    for earlier in recipe.stages:
+        if earlier.id == stage.id:
+            break
+        stage_root = job_dir / "stages" / earlier.id
+        attempts = (
+            [
+                int(p.name)
+                for p in stage_root.iterdir()
+                if p.is_dir() and p.name.isdigit()
+            ]
+            if stage_root.is_dir()
+            else []
+        )
+        if attempts:
+            last = max(attempts)
+            found.extend(
+                f"stages/{earlier.id}/{last}/{name}" for name in earlier.output
+            )
+    return found
 
 
 def validate_outputs(
@@ -451,6 +492,22 @@ class Runner:
             )
             return
 
+        try:
+            # agent 讀不到 harness/ 與作家設定：開段之前放進工單的 input/（ADR-0015、ADR-0018）
+            stage_inputs.prepare_inputs(self.harness, self.data, job_dir, doc.job)
+        except stage_inputs.InputError as exc:
+            if doc.job.status == "queued":
+                doc = self._set(job_dir, doc, "running", "開始")
+            reason = f"參考資料放不進工單：{exc}"
+            self._set(
+                job_dir,
+                doc,
+                "review",
+                reason,
+                result=JobResult(outcome="failed", reason=reason),
+            )
+            return
+
         self._ensure_agent_dir()
         start, resumed = 0, None
         if doc.job.status == "running" and doc.job.stage is not None:
@@ -631,6 +688,7 @@ class Runner:
                 attempt,
                 doc.job.goal,
                 self._fix(job_dir, stage, progress),
+                upstream_outputs(job_dir, recipe, stage),
             ),
             base_env=self._base_env(),
         )

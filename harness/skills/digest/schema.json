@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "digest 段的產出 claims.json",
+  "description": "整理結果（FR-DG-01、FR-DG-02）。C1 只認叫 quote 的欄位、C5 用這份 schema 驗；改欄位名先看 checks/stages.py 的 QUOTE_FIELD。",
+  "type": "object",
+  "properties": {
+    "genre": {
+      "type": "object",
+      "properties": {
+        "primary": { "$ref": "#/$defs/genre_id" },
+        "secondary": { "type": "array", "items": { "$ref": "#/$defs/genre_id" }, "maxItems": 2 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "required": ["primary", "secondary", "confidence", "reason"],
+      "additionalProperties": false
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^c[0-9]+$" },
+          "kind": { "enum": ["fact", "data", "opinion"] },
+          "text": { "type": "string", "minLength": 1 },
+          "quote": { "type": "string", "minLength": 1 },
+          "location": { "description": "第幾段，從 1 數起，以空行分段", "type": "integer", "minimum": 1 },
+          "attributed_to": {
+            "description": "轉述別人的話時，被轉述者與上游連結；作者自己的話是 null",
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "properties": {
+                  "who": { "type": "string", "minLength": 1 },
+                  "url": { "type": ["string", "null"] }
+                },
+                "required": ["who", "url"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": ["id", "kind", "text", "quote", "location", "attributed_to"],
+        "additionalProperties": false
+      }
+    },
+    "extraction": {
+      "description": "依主文類的「抽取欄位」整理；欄位名照文類定義",
+      "type": "object",
+      "minProperties": 1
+    },
+    "structure": {
+      "description": "原文的段落結構，一段一行",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "assets": {
+      "description": "原文提到或嵌入的圖、影片、簡報與上游出處",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string", "minLength": 1 },
+          "url": { "type": ["string", "null"] }
+        },
+        "required": ["description", "url"],
+        "additionalProperties": false
+      }
+    },
+    "research_directions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": { "type": "string", "minLength": 1 },
+          "evidence_needed": { "type": "string", "minLength": 1 }
+        },
+        "required": ["question", "evidence_needed"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["genre", "claims", "extraction", "structure", "assets", "research_directions"],
+  "additionalProperties": false,
+  "$defs": {
+    "genre_id": {
+      "enum": [
+        "news",
+        "hot-take",
+        "tutorial",
+        "tips",
+        "explainer",
+        "deep-dive",
+        "notes",
+        "review",
+        "case-study",
+        "opinion",
+        "story",
+        "roundup"
+      ]
+    }
+  }
+}

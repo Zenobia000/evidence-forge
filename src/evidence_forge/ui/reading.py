@@ -2,9 +2,8 @@
 
 工單、事件、帳本、素材項目、檢查結果都用契約模型讀（`models`、`checks.report`），
 不自己解析格式；對不上格式就回報「讀不懂」，不假裝沒事。
-整理結果（`claims.json`）的契約還在整理 skill 那張票（S0.8）定，所以這裡只定
+整理結果（`claims.json`）的契約是 `harness/skills/digest/schema.json`；這裡只定
 「UI 要用到的那幾個欄位」的寬鬆模型：多出來的欄位忽略、缺的用預設值。
-那張票的模型合併後，換成它的模型。
 """
 
 import json
@@ -14,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from evidence_forge.checks.report import ChecksReport
 from evidence_forge.documents import (
@@ -140,6 +139,19 @@ class DigestFile(_Loose):
     claims: list[DigestClaim] = []
     research_directions: list[str] = []
 
+    @field_validator("research_directions", mode="before")
+    @classmethod
+    def _direction_text(cls, value: object) -> object:
+        """digest skill 寫的是 `{question, evidence_needed}`；畫面只要一行字。"""
+        if not isinstance(value, list):
+            return value
+        return [
+            f"{item.get('question', '')}（需要的證據：{item.get('evidence_needed', '')}）"
+            if isinstance(item, dict)
+            else item
+            for item in value
+        ]
+
 
 # ---------------------------------------------------------------------------
 # 單張工單的素材
@@ -249,7 +261,7 @@ def read_item(data_dir: DataDir, job_dir: Path, job: Job) -> Item | None:
 
 def genre_is_calibrated(data_dir: DataDir, genre: str) -> bool:
     """任何一位作家有這個文類的風格檔，就算校準過（ADR-0015）。`_` 開頭是範本，不算。"""
-    authors = data_dir.root / "authors"
+    authors = data_dir.authors
     if not authors.is_dir() or genre.startswith("_"):
         return False
     return any(

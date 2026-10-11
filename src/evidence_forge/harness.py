@@ -35,6 +35,16 @@ class Harness:
     def recipes(self) -> Path:
         return self.root / "recipes"
 
+    @property
+    def genres(self) -> Path:
+        """12 種文類的定義，一類一個 `<文類>.md`。"""
+        return self.root / "genres"
+
+    @property
+    def conversions(self) -> Path:
+        """文類轉換說明：`<來源>--<目標>.md`。"""
+        return self.root / "conversions"
+
     def skill_dir(self, name: str) -> Path:
         return self.root / "skills" / name
 
