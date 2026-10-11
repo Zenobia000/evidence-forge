@@ -140,6 +140,22 @@ class Reply:
     # 最上層的 usage 寫了輸入 token 數）。不是的話，結算不知道後端實際算了多少錢，
     # 也不能把它當成功的回應回放
     whole: bool
+    # 串流裡 error 事件寫的原因（`overloaded_error：Overloaded`；沒寫細節就是 `error`）；
+    # 沒有 error 事件是 None。這是後端自己說它出錯了，閘道據此回報後端故障（ADR-0011 §3.3）
+    error: str | None = None
+
+
+# error 事件的原因最多留這麼長：它會進待審原因與事件紀錄
+_ERROR_TEXT_LIMIT = 200
+
+
+def _error_text(event: dict[str, object]) -> str:
+    """error 事件的 `error.type` 與 `error.message`；兩個都沒有就是 `error`。"""
+    detail = event.get("error")
+    if not isinstance(detail, dict):
+        return "error"
+    parts = [str(detail[name]) for name in ("type", "message") if detail.get(name)]
+    return "：".join(parts)[:_ERROR_TEXT_LIMIT] or "error"
 
 
 def _read_json_message(text: str) -> Reply:
@@ -169,13 +185,19 @@ def read_reply(body: bytes) -> Reply:
     if not any(line.startswith(("data:", "event:")) for line in lines):
         return _read_json_message(text)
     usage = Usage()
-    started = stopped = failed = False
+    started = stopped = False
+    error: str | None = None
+    # 上一行是 `event: error`：這一行 data 是它的內容，就算 data 裡沒寫 type
+    after_error_line = False
     for line in lines:
         if line.startswith("event:"):
-            failed |= line[len("event:") :].strip() == "error"
+            after_error_line = line[len("event:") :].strip() == "error"
+            if after_error_line and error is None:
+                error = "error"
             continue
         if not line.startswith("data:"):
             continue
+        follows_error, after_error_line = after_error_line, False
         try:
             event = json.loads(line[len("data:") :])
         except json.JSONDecodeError:
@@ -183,8 +205,10 @@ def read_reply(body: bytes) -> Reply:
         if not isinstance(event, dict):
             continue
         kind = event.get("type")
-        if kind == "error":
-            failed = True
+        if kind == "error" or follows_error:
+            # 細節在 data 這一行；先前只從 event 行知道「有錯」的，換成有細節的原因
+            if error is None or error == "error":
+                error = _error_text(event)
             continue
         if kind == "message_stop":
             stopped = True
@@ -200,7 +224,7 @@ def read_reply(body: bytes) -> Reply:
             continue
         usage = _merge(usage, fields)
         started |= kind == "message_start" and _has_input(fields)
-    return Reply(usage, whole=started and stopped and not failed)
+    return Reply(usage, whole=started and stopped and error is None, error=error)
 
 
 CallKey = tuple[str, int, str]

@@ -210,3 +210,47 @@ NOT_WHOLE = {
 @pytest.mark.parametrize("stream", NOT_WHOLE.values(), ids=NOT_WHOLE.keys())
 def test_缺開頭_缺結尾_或串流裡有_error_事件就不是一則完整的訊息(stream: str) -> None:
     assert not read_reply(stream.encode()).whole
+
+
+# 後端過載時的 error 事件；這份樣本只有這一個毛病（有開頭、有結尾、有用量），見 L-008
+OVERLOADED = (
+    "event: error\n"
+    'data: {"type": "error", "error": {"type": "overloaded_error", '
+    '"message": "Overloaded"}}\n\n'
+)
+
+
+def test_串流裡有_error_事件_帶出它的原因_閘道據此回報後端故障() -> None:
+    reply = read_reply((START + OVERLOADED + DELTA + STOP).encode())
+    assert not reply.whole
+    assert reply.error == "overloaded_error：Overloaded"
+
+
+@pytest.mark.parametrize("stream", NOT_WHOLE.values(), ids=NOT_WHOLE.keys())
+def test_只要有_error_事件就帶出原因_沒有細節的寫成_error(stream: str) -> None:
+    reply = read_reply(stream.encode())
+    has_error = "error" in stream
+    assert (reply.error is not None) == has_error
+    if has_error:
+        # 樣本的 error 事件沒有 type 與 message
+        assert reply.error == "error"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [START + DELTA + STOP, START + DELTA, '{"type": "message"}'],
+    ids=["完整", "沒有結尾", "不是串流"],
+)
+def test_沒有_error_事件_原因是_None(body: str) -> None:
+    # 沒送到結尾、不是串流：不完整，但不是後端在串流裡報錯
+    assert read_reply(body.encode()).error is None
+
+
+def test_event_行是_error_data_沒寫_type_也從_data_讀出原因() -> None:
+    # 只有 event 行說它是 error，data 本身沒寫 type；原因照樣從 data 的 error 欄位讀
+    error_event = (
+        "event: error\n"
+        'data: {"error": {"type": "overloaded_error", "message": "Overloaded"}}\n\n'
+    )
+    reply = read_reply((START + error_event + DELTA + STOP).encode())
+    assert reply.error == "overloaded_error：Overloaded"

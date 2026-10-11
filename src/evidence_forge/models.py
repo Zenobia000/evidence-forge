@@ -72,13 +72,23 @@ class FeedRef(_Contract):
 
 
 class StageProgress(_Contract):
-    """目前跑到配方的哪一段。index 從 1 起算（「3／4 二創」的 3）。"""
+    """目前跑到配方的哪一段。index 從 1 起算（「3／4 二創」的 3）。
+
+    `attempt` 是這一段的第幾次（重試、升級、自動修都往上加，對到 `stages/<段>/<第幾次>/`）。
+    `tier`、`failures`、`fixes` 是執行器重開時接著跑要用的：這一次用哪一級、
+    這一級已經連續不合格幾次、自動修已經用掉幾次（NFR-RUN-03、NFR-RUN-04）。
+    舊的 `job.md` 沒有這三欄，讀進來是預設值。
+    """
 
     id: str
     index: PositiveInt
     total: PositiveInt
     attempt: PositiveInt
     started_at: AwareDatetime
+    # 這一次用的等級；沒寫表示配方這一段的等級
+    tier: Tier | None = None
+    failures: NonNegativeInt = 0
+    fixes: NonNegativeInt = 0
 
     @model_validator(mode="after")
     def _index_within_total(self) -> Self:

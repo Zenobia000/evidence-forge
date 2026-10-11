@@ -17,12 +17,17 @@ Pi 本身不做沙箱，工具以 Pi 程序的權限執行（v0.3 §3.3），所
 
 skill 的內容用 `--append-system-prompt <SKILL.md>` 直接放進系統提示：實測 Pi 1.1.0 在換掉
 系統提示、又沒有內建讀檔工具時，`--skill` 不會讓請求裡出現任何 skill 內容。
+
+Pi 開在自己的程序群組（`start_new_session`），`kill -9` 掉 `ef serve` 時它會活下來。
+所以 Pi 跑的期間，它的程序群組編號記在 `run/pi-pids/`；重開後重跑同一段同一次時鑰匙跟
+當機前一模一樣，執行器登記鑰匙之前先用 `kill_leftover` 殺掉還活著的那一個（SEAM-12）。
 """
 
 import json
 import os
 import signal
 import subprocess
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,12 +159,82 @@ class PiRun:
         return self.returncode == 0 and not self.timed_out
 
 
-def run_pi(command: PiCommand, *, log_path: Path, timeout_s: float) -> PiRun:
+def pid_file(data: DataDir, key: JobKey) -> Path:
+    """這一段這一次的 Pi 的程序群組編號記在哪裡；Pi 結束就刪掉。"""
+    return data.run / "pi-pids" / f"{key.job_id}-{key.stage}-{key.attempt}.pid"
+
+
+def _record_pid(path: Path, pgid: int) -> None:
+    # 先寫暫存檔再換上去：重開時讀到的一定是完整的編號
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(f"{pgid}\n", encoding="ascii")
+    os.replace(temporary, path)
+
+
+def _holds_key(pid: int, key: JobKey) -> bool:
+    """`pid` 這個程序的環境變數裡 `EF_JOB_KEY` 是不是這把鑰匙。
+
+    pid 會被重用：紀錄裡的編號現在可能是別人的程序，對不上就不是我們開的那個 Pi。
+    已經死掉、還沒被收屍的程序讀不到環境變數，也算對不上。只有 Linux 有 /proc。
+    """
+    try:
+        environ = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return False
+    return f"EF_JOB_KEY={key}".encode() in environ.split(b"\0")
+
+
+class LeftoverPi(RuntimeError):
+    """前一次的 Pi 送了 SIGKILL 還沒死透；這時登記鑰匙，它的請求會被閘道接受。"""
+
+
+def kill_leftover(data: DataDir, key: JobKey, *, wait_s: float = 5.0) -> int | None:
+    """登記鑰匙之前呼叫：前一個 `ef serve` 被硬殺時留下、還拿著這把鑰匙的 Pi，
+    對它整個程序群組送 SIGKILL，等它死透才回來。回傳殺掉的程序群組編號；沒有就是 None。
+
+    只殺環境變數裡 `EF_JOB_KEY` 正是這把鑰匙的程序（`_holds_key`），不照名稱找程序殺：
+    同一台機器上別的 worktree、別的 `ef serve` 也有叫 pi 的程序。
+    `wait_s` 秒內還沒死透就丟 `LeftoverPi`（工單以失敗進待審），這把鑰匙不登記；
+    紀錄留在 `run/pi-pids/`，給人查是哪一個程序。
+    """
+    path = pid_file(data, key)
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        return None
+    pgid = int(text) if text.isdigit() else None
+    if pgid is None or not _holds_key(pgid, key):
+        # 早就結束了，或編號已經是別人的程序
+        path.unlink(missing_ok=True)
+        return None
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + wait_s
+    while _holds_key(pgid, key):
+        if time.monotonic() > deadline:
+            raise LeftoverPi(f"前一次的 Pi（程序群組 {pgid}）送了 SIGKILL 還沒結束")
+        time.sleep(0.01)
+    path.unlink(missing_ok=True)
+    return pgid
+
+
+def run_pi(
+    command: PiCommand,
+    *,
+    log_path: Path,
+    timeout_s: float,
+    pid_path: Path | None = None,
+) -> PiRun:
     """執行 Pi，等它結束（或逾時殺掉整個程序群組），回傳結束碼與事件。
 
     事件原樣存到 `log_path`（在 `$EF_DATA/run/` 底下，不在工單的 `stages/`：
-    `stages/` 只有 agent 經閘道寫）。函式回傳時 Pi 一定已經結束，
+    `stages/` 只有 agent 經閘道寫，ADR-0010 §3 第 3 點；執行器自己的紀錄放在
+    `events.jsonl` 與 `provenance/`）。函式回傳時 Pi 一定已經結束，
     呼叫端這時才撤銷鑰匙，前一次的 Pi 不會在撤銷後還拿著鑰匙。
+    有給 `pid_path` 的話，Pi 跑的期間它的程序群組編號記在那裡（`pid_file`），結束才刪。
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     stderr_path = log_path.with_suffix(".stderr")
@@ -178,12 +253,18 @@ def run_pi(command: PiCommand, *, log_path: Path, timeout_s: float) -> PiRun:
             stderr=stderr,
             start_new_session=True,
         )
+        if pid_path is not None:
+            # 自己一個 session：程序群組編號就是 Pi 的 pid
+            _record_pid(pid_path, process.pid)
         try:
             process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             timed_out = True
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+    # 走到這裡 Pi 一定已經結束；中途丟例外的話紀錄留著，下次重跑先殺它
+    if pid_path is not None:
+        pid_path.unlink(missing_ok=True)
     events: list[dict[str, object]] = []
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:

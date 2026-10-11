@@ -18,7 +18,12 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
-from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
+from evidence_forge.gateway.app import (
+    ActiveStages,
+    GatewayConfig,
+    JobBoard,
+    create_app,
+)
 from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.paths import DataDir
@@ -331,3 +336,102 @@ def test_重播模式不回放錄音裡出錯的那次(
     assert response.status_code >= 500
     assert response.content != SSE
     assert ollama.received == []
+
+
+# --- 後端故障告訴執行器（告示板）：基礎設施故障不升級（NFR-RUN-05、ADR-0011 §3.3） ------
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_Ollama_連不上_告示板記下這一段這一次碰到後端故障(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    config = GatewayConfig(data=data, mode="live", ollama_url="http://127.0.0.1:9")
+    board = JobBoard(config.clock)
+    with serve(create_app(config, stages, board)) as url:
+        response = _post(url, str(KEY), PI_BODY)
+    assert response.status_code == 502
+    outage = board.outage(KEY)
+    assert outage is not None and outage.backend == "ollama"
+    assert "連不上" in outage.message
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_後端回_5xx_也算後端故障(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    failing = FastAPI()
+
+    @failing.post("/v1/messages")
+    async def messages() -> Response:
+        return Response(UPSTREAM_ERROR, status_code=503, media_type="application/json")
+
+    with serve(failing) as backend:
+        config = GatewayConfig(data=data, mode="live", ollama_url=backend)
+        board = JobBoard(config.clock)
+        with serve(create_app(config, stages, board)) as url:
+            _post(url, str(KEY), PI_BODY)
+    outage = board.outage(KEY)
+    assert outage is not None and "503" in outage.message
+
+
+def test_後端正常回應_告示板沒有故障(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+    ollama: Stub,
+) -> None:
+    config = GatewayConfig(data=data, mode="live", ollama_url=ollama.url)
+    board = JobBoard(config.clock)
+    with serve(create_app(config, stages, board)) as url:
+        assert _post(url, str(KEY), PI_BODY).status_code == 200
+    assert board.outage(KEY) is None
+
+
+@pytest.mark.promise("FR-MD-01")
+def test_執行器登記這一次是升級上來的_帳本記下_escalated_from(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    ollama: Stub,
+) -> None:
+    stages = ActiveStages()
+    stages.activate(KEY, escalated_from="local")
+    secrets = data.root.parent / "secrets"
+    secrets.mkdir()
+    (secrets / "anthropic").write_text("sk-fake-xxxx-escalate", encoding="utf-8")
+    config = GatewayConfig(
+        data=data, mode="live", anthropic_url=ollama.url, secrets_dir=secrets
+    )
+    # 這張單沒有 job.md，預算當成 0：被擋下的那一筆也照樣記等級與升級來源
+    with _gateway(serve, config, stages) as url:
+        _post(url, str(KEY), {**PI_BODY, "model": "strong"})
+    [entry] = _ledger(data)
+    assert (entry.tier, entry.escalated_from) == ("strong", "local")
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_後端先回_503_同一把鑰匙之後成功_告示板的故障清掉(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    replies = [Response(UPSTREAM_ERROR, status_code=503, media_type="application/json")]
+    flaky = FastAPI()
+
+    @flaky.post("/v1/messages")
+    async def messages() -> Response:
+        if replies:
+            return replies.pop()
+        return Response(SSE, media_type="text/event-stream")
+
+    with serve(flaky) as backend:
+        config = GatewayConfig(data=data, mode="live", ollama_url=backend)
+        board = JobBoard(config.clock)
+        with serve(create_app(config, stages, board)) as url:
+            assert _post(url, str(KEY), PI_BODY).status_code == 503
+            assert board.outage(KEY) is not None
+            assert _post(url, str(KEY), PI_BODY).status_code == 200
+    assert board.outage(KEY) is None

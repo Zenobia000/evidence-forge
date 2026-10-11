@@ -1,7 +1,8 @@
 """讀 `harness/recipes/*.md`，並確認每份都能跑（FR-RC-01、SEAM-05）。
 
 新增一份配方就能用，執行器不改程式；格式不合的配方在 `ef serve` 啟動與開單時就被擋下，
-訊息寫明是哪一份、哪一欄，不等到跑到一半才出錯。
+訊息寫明是哪一份、哪一欄，不等到跑到一半才出錯。每一段的 skill 要有 `SKILL.md`
+與 `schema.json`：沒有 schema 就沒辦法驗產出（ADR-0009 §3 第 6 點）。
 """
 
 from collections.abc import Collection
@@ -47,6 +48,12 @@ def load_recipe(harness: Harness, path: Path, tiers: Collection[str]) -> Recipe:
         if not (harness.skill_dir(stage.skill) / "SKILL.md").is_file():
             raise RecipeError(
                 f"{path.name} 的 stages[{index}].skill：找不到 skill {stage.skill}"
+            )
+        if not harness.schema_file(stage.skill).is_file():
+            # 不擋的話，這一段寫出任何不是空的 JSON 都會被當成合格
+            raise RecipeError(
+                f"{path.name} 的 stages[{index}].skill：skill {stage.skill} "
+                "少了 schema.json，執行器沒辦法驗這一段的產出"
             )
         for tier_field, tier in (
             ("tier", stage.tier),

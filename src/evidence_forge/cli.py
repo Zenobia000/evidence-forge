@@ -5,6 +5,8 @@
   `--genre`、`--budget-usd`。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
   網址讀不到（403、付費牆、robots、內網位址）不開單，結束碼 1，提示改用 `--text` 或 `--file`。
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
+  啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01）；同時最多跑 `--parallel` 張（預設 2）；
+  重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
 
 兩個指令啟動時都先讀全部配方，有一份不能用就拒絕並點名（FR-RC-01）。
 """
@@ -33,6 +35,7 @@ from evidence_forge.runner.intake import (
     WebPage,
     open_job,
 )
+from evidence_forge.runner.preflight import Preflight
 from evidence_forge.runner.recipes import RecipeError, load_recipes
 from evidence_forge.runner.runner import Runner, taipei_now
 
@@ -97,9 +100,22 @@ def _new(args: argparse.Namespace) -> int:
 def _serve(args: argparse.Namespace) -> int:
     harness = _harness(args.harness)
     recipes = _recipes(harness)
+    if args.parallel < 1:
+        raise ValueError(f"--parallel 至少是 1：{args.parallel}")
     data = resolve_data_dir()
-    data.ensure()
     config = config_from_env(data)
+    gateway_url = f"http://127.0.0.1:{args.port}"
+    preflight = Preflight(config, gateway_url)
+    problems = preflight.startup()
+    if problems:
+        # 故障注入、資料目錄不可寫、硬碟滿：怎麼等都不會自己好，直接不啟動
+        print(
+            "ef serve：開跑前檢查沒過，不啟動：\n"
+            + "\n".join(f"- {problem}" for problem in problems),
+            file=sys.stderr,
+        )
+        return 2
+    data.ensure()
     stages = ActiveStages()
     # 閘道寫、執行器讀：等待狀態與預算擋下的原因
     board = JobBoard(config.clock)
@@ -127,18 +143,27 @@ def _serve(args: argparse.Namespace) -> int:
         harness=harness,
         recipes=recipes,
         stages=stages,
-        gateway_url=f"http://127.0.0.1:{args.port}",
+        gateway_url=gateway_url,
         board=board,
+        max_parallel=args.parallel,
+        preflight=preflight,
     )
+    blocked: str | None = None
     try:
         while True:
-            job_id = runner.run_once()
-            if job_id is not None:
+            # 重開之後先接著跑沒跑完的單，再照開單順序拿排隊單，同時最多 --parallel 張
+            started = runner.start_available()
+            for job_id in runner.finished():
                 print(f"工單 {job_id} 已進待審", flush=True)
-            elif args.once:
+            if runner.blocked != blocked:
+                blocked = runner.blocked
+                if blocked is not None:
+                    print(f"ef serve：{blocked}", file=sys.stderr, flush=True)
+            if args.once and not started and not runner.running():
+                if blocked is not None:
+                    return 1
                 return 0
-            else:
-                time.sleep(args.interval)
+            time.sleep(0.1 if args.once else args.interval)
     except KeyboardInterrupt:
         return 0
     finally:
@@ -168,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--interval", type=float, default=2.0, help="掃描間隔（秒）")
     serve.add_argument("--once", action="store_true", help="把排隊中的工單跑完就結束")
+    serve.add_argument(
+        "--parallel", type=int, default=2, help="同時跑幾張工單（預設 2）"
+    )
     serve.add_argument("--harness", help="harness 資料夾（預設 repo 的 harness/）")
     serve.set_defaults(handler=_serve)
 

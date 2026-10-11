@@ -133,3 +133,30 @@ def test_有一份配方格式不合_啟動與開單都拒絕並點名(
     }[command]
     assert main(args) != 0
     assert "broken.md 的 stages" in capsys.readouterr().err
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_正式執行設了故障注入_ef_serve_不啟動並點名這一項(
+    ef_data: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EF_GATEWAY_MODE", "live")
+    monkeypatch.setenv("EF_GATEWAY_FAULT", "rate_limit")
+
+    assert main(["serve", "--once"]) == 2
+    assert "EF_GATEWAY_FAULT" in capsys.readouterr().err
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_資料目錄不可寫_ef_serve_不啟動並點名這一項(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    readonly = tmp_path / "ro"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    monkeypatch.setenv("EF_DATA", str(readonly / "data"))
+    monkeypatch.setenv("EF_GATEWAY_REPLAY_DIR", str(tmp_path / "recording"))
+    try:
+        assert main(["serve", "--once"]) == 2
+    finally:
+        readonly.chmod(0o755)
+    assert "資料目錄不可寫" in capsys.readouterr().err

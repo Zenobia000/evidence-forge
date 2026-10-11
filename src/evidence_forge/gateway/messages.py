@@ -20,6 +20,7 @@
    完整收到的回應存進 `blobs/`（跟狀態碼無關）；中途斷掉的不存。
    狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、沒送到結尾、讀不到用量）記 `error`、
    照預留的金額入帳：不知道後端實際算了多少，而 `error` 的回應不會被回放。
+   串流裡有 error 事件（後端過載時常見）跟 5xx 一樣算後端故障，告訴執行器（告示板）。
 """
 
 import asyncio
@@ -50,6 +51,7 @@ from evidence_forge.ledger_models import LedgerEntry, LedgerStatus
 from evidence_forge.gateway.prices import Price, cost_micros, reservation_micros
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import JobKey
+from evidence_forge.models import TIER_ORDER
 
 _log = logging.getLogger(__name__)
 
@@ -202,6 +204,7 @@ def add_message_routes(
                     "kind": "llm",
                     "tier": call.tier,
                     "model": call.alias.model,
+                    "escalated_from": escalated_from(call),
                     "input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,
                     "cache_read_tokens": usage.cache_read_tokens,
@@ -217,6 +220,16 @@ def add_message_routes(
                 }
             ),
         )
+
+    def escalated_from(call: _Call) -> str | None:
+        """執行器登記的升級前等級（ADR-0011 §3.3）。只收比這次低的等級：Pi 送來的等級
+        跟執行器想的不一樣時不記，免得帳本那一行驗不過、整筆帳漏記。"""
+        source = stages.escalated_from(call.key)
+        if source not in TIER_ORDER or call.tier not in TIER_ORDER:
+            return None
+        if TIER_ORDER.index(source) >= TIER_ORDER.index(call.tier):
+            return None
+        return source
 
     def release(call: _Call, unbooked: int = 0) -> None:
         """放掉預留、GPU、等待狀態。可以重複呼叫；收尾一律經過 `finish`。
@@ -272,6 +285,10 @@ def add_message_routes(
             )
             return None
 
+    def down(call: _Call, message: str) -> None:
+        """後端故障告訴執行器：它據此直接標失敗，不重試、不升級（NFR-RUN-05）。"""
+        board.report_outage(call.key, call.alias.backend, message)
+
     def fail(
         call: _Call, status: LedgerStatus, http_status: int, message: str
     ) -> JSONResponse:
@@ -296,6 +313,10 @@ def add_message_routes(
             call.complete = True
         except httpx.TimeoutException:
             call.timed_out = True
+            down(call, "模型後端回應到一半沒有下文")
+            raise
+        except httpx.HTTPError as exc:
+            down(call, f"模型後端回應到一半斷線：{type(exc).__name__}")
             raise
         finally:
             # 送出最後一段之前就記好帳：Pi 看到回應結束時，帳本已經有這一行。
@@ -334,8 +355,14 @@ def add_message_routes(
         # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件、沒送到結尾就結束，
         # 也可能根本讀不到用量。那種回應記 error，重播索引只收成功的，所以不會被回放
         succeeded = call.complete and call.status_code == 200 and reply.whole
+        if call.status_code == 200 and reply.error is not None:
+            # 200 加串流裡的 error 事件（overloaded_error、api_error）：後端自己說它出錯了，
+            # 跟 5xx 一樣是故障。不告訴執行器的話，它會當成產出不合格而升級（ADR-0011 §3.3）
+            down(call, f"模型後端在串流裡回報錯誤：{reply.error}")
         if succeeded:
             status: LedgerStatus = success
+            # Pi 自己重試成功：先前的 5xx 或斷線是暫時的，執行器不該當成故障
+            board.recovered(call.key)
         elif call.complete and call.status_code == 429:
             status = "rate_limited"
         elif call.timed_out:
@@ -460,6 +487,7 @@ def add_message_routes(
         # 故障注入蓋過存好的回應：重播模式下也要看得到故障（UAT、重試與升級的測試）
         if config.fault == "backend_down":
             # 基礎設施故障：停下標失敗，不改用別的模型（NFR-RUN-05）
+            down(call, "模型後端連不上（故障注入 backend_down）")
             return fail(call, "error", 502, "模型後端連不上（故障注入 backend_down）")
         if config.fault == "bad_output":
             return relay(call, single(BAD_OUTPUT_SSE), success="ok")
@@ -490,6 +518,7 @@ def add_message_routes(
             try:
                 headers["x-api-key"] = read_anthropic_key(config.secrets_dir)
             except MissingCredential as exc:
+                down(call, str(exc))
                 return fail(call, "error", 502, str(exc))
             beta = request.headers.get("anthropic-beta")
             if beta:
@@ -536,11 +565,13 @@ def add_message_routes(
                     )
                     pending = upstream
                 except httpx.TimeoutException as exc:
+                    down(call, f"模型後端沒有回應：{type(exc).__name__}")
                     return fail(
                         call, "timeout", 502, f"模型後端沒有回應：{type(exc).__name__}"
                     )
                 except httpx.HTTPError as exc:
                     # 只帶例外的種類：例外訊息可能含請求細節
+                    down(call, f"模型後端連不上：{type(exc).__name__}")
                     return fail(
                         call, "error", 502, f"模型後端連不上：{type(exc).__name__}"
                     )
@@ -553,6 +584,9 @@ def add_message_routes(
                 await back_off(call, backoff_delay(retry_after, attempt))
             call.upstream = upstream
             call.status_code = upstream.status_code
+            if upstream.status_code >= 500:
+                # 後端自己出錯（模型載不起來、過載）：換一級也不會好，算故障
+                down(call, f"模型後端回 HTTP {upstream.status_code}")
             return relay(
                 call,
                 upstream.aiter_raw(),

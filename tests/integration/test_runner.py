@@ -1,80 +1,41 @@
 """SEAM-01（整合）：執行器 ↔ Pi 程序 ↔ 閘道，用假的 Pi 跑完整條打通路徑。
 
-假 Pi 是一支小程式：照 Pi `--mode json` 的格式印事件，並且真的用工單鑰匙打閘道的
-`/v1/messages?beta=true` 與 `/tools/*`，跟 ef-tools 送的請求一樣。
-模型後端是本機 stub，所以不需要 Ollama。
+假 Pi、假後端與閘道的組法在 `tests/runner_world.py`。
 """
 
 import json
 import shutil
-import stat
-import sys
+import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, replace
-from datetime import datetime
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from runner_world import (
+    ARTICLE,
+    BAD_OUTPUT,
+    FAKE_PI_HEAD,
+    FAKE_PI_LIB,
+    NOW,
+    WELL_BEHAVED,
+    World,
+    runner_world,
+)
 
 from evidence_forge.documents import read_job
-from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
+from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
 from evidence_forge.gateway.ledger import append_intake
-from evidence_forge.ledger_models import IntakeEntry
-from evidence_forge.harness import Harness, default_harness
+from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
+from evidence_forge.models import Recipe
+from evidence_forge.ledger_models import IntakeEntry
 from evidence_forge.models import Event
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import PastedText, open_job
-from evidence_forge.runner.recipes import load_recipes
-from evidence_forge.runner.runner import Runner
-
-TAIPEI = ZoneInfo("Asia/Taipei")
-NOW = datetime(2026, 10, 11, 12, 0, 0, tzinfo=TAIPEI)
-ARTICLE = Path(__file__).parents[1] / "fixtures" / "articles" / "tracer.md"
-
-# 假 Pi 的共同部分：讀環境變數裡的閘道與鑰匙，提供 call() 打閘道。
-FAKE_PI_HEAD = """
-import json, os, sys, urllib.request, urllib.error
-URL = os.environ["EF_GATEWAY_URL"]
-KEY = os.environ["EF_JOB_KEY"]
-def call(path, body):
-    request = urllib.request.Request(
-        URL + path, data=json.dumps(body).encode(),
-        headers={"x-api-key": KEY, "content-type": "application/json"})
-    try:
-        with urllib.request.urlopen(request) as response:
-            return response.status, response.read()
-    except urllib.error.HTTPError as error:
-        return error.code, error.read()
-def event(**fields):
-    print(json.dumps(fields), flush=True)
-event(type="session", version=3)
-event(type="agent_start")
-status, _ = call("/v1/messages?beta=true", {"model": "local", "stream": True,
-    "messages": [{"role": "user", "content": sys.argv[-1]}]})
-assert status == 200, status
-event(type="tool_execution_start", toolName="read_file")
-status, body = call("/tools/read_file", {"path": "input/content.md"})
-assert status == 200, status
-event(type="tool_execution_end", toolName="read_file", isError=False)
-"""
-
-WELL_BEHAVED = (
-    FAKE_PI_HEAD
-    + """
-summary = {"summary": "這是一段測試用的摘要。"}
-status, _ = call("/tools/write_file", {"path": "stages/echo/1/summary.json",
-    "content": json.dumps(summary, ensure_ascii=False)})
-assert status == 200, status
-event(type="agent_end")
-"""
-)
 
 # 原文裡的提示注入得逞時，agent 會試著寫審稿決定與狀態檔
 INJECTED = (
@@ -84,18 +45,8 @@ results = {}
 for path in ["review/decision.v1.json", "job.md", "events.jsonl", "ledger.jsonl"]:
     status, _ = call("/tools/write_file", {"path": path, "content": '{"action": "approve"}'})
     results[path] = status
-call("/tools/write_file", {"path": "stages/echo/1/summary.json",
-    "content": json.dumps({"summary": "照常完成"})})
+write("summary.json", {"summary": "照常完成"})
 event(type="agent_end", rejected=results)
-"""
-)
-
-BAD_OUTPUT = (
-    FAKE_PI_HEAD
-    + """
-call("/tools/write_file", {"path": "stages/echo/1/summary.json",
-    "content": json.dumps({"summery": "欄位名打錯"})})
-event(type="agent_end")
 """
 )
 
@@ -109,7 +60,7 @@ sys.exit(3)
 
 # 打 strong（雲端）；被拒就把錯誤印到 stderr、非零結束，跟 Pi 收到錯誤時一樣
 CLOUD_CALL = (
-    FAKE_PI_HEAD.split("status, _ = call(")[0]
+    FAKE_PI_LIB
     + """
 status, body = call("/v1/messages?beta=true", {"model": "strong", "stream": True,
     "messages": [{"role": "user", "content": sys.argv[-1]}]})
@@ -120,92 +71,13 @@ event(type="agent_end")
 """
 )
 
-SSE = (
-    b'event: message_start\ndata: {"type":"message_start","message":{"usage":'
-    b'{"input_tokens":1,"output_tokens":0}}}\n\n'
-    b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
-)
-
-
-@dataclass
-class World:
-    data: DataDir
-    runner: Runner
-    gateway_url: str
-    stages: ActiveStages
-    backend_calls: list[dict[str, Any]]
-
-    def job(self, budget_usd: float = 0.5) -> str:
-        recipe = self.runner.recipes["echo"]
-        return open_job(
-            self.data,
-            recipe,
-            PastedText(ARTICLE.read_text(encoding="utf-8")),
-            goal="用一段話說明這篇在講什麼",
-            now=NOW,
-            budget_usd=budget_usd,
-        ).job.id
-
-
-def _fake_pi(tmp_path: Path, script: str) -> Path:
-    path = tmp_path / "fake-pi"
-    path.write_text(f"#!{sys.executable}\n{script}", encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
-
 
 @pytest.fixture
 def world_for(
     tmp_path: Path, serve: Callable[[Any], AbstractContextManager[str]]
-) -> Iterator[Callable[[str], World]]:
-    data = DataDir(tmp_path / "data")
-    data.ensure()
-    stages = ActiveStages()
-    backend_calls: list[dict[str, Any]] = []
-    # 假的雲端金鑰（帶 xxxx，guard-secrets 認得是假的）
-    secrets = tmp_path / "secrets"
-    secrets.mkdir()
-    (secrets / "anthropic").write_text("sk-fake-xxxx-runner", encoding="utf-8")
-
-    stub = FastAPI()
-
-    @stub.post("/v1/messages")
-    async def messages(request: Request) -> Response:
-        backend_calls.append(json.loads(await request.body()))
-        return Response(SSE, media_type="text/event-stream")
-
-    with serve(stub) as ollama_url:
-        config = GatewayConfig(
-            data=data,
-            mode="live",
-            ollama_url=ollama_url,
-            # strong 也打同一個 stub：被預算擋下的測試斷言它一個請求都沒收到
-            anthropic_url=ollama_url,
-            secrets_dir=secrets,
-            clock=lambda: NOW,
-        )
-        board = JobBoard(config.clock)
-        with serve(create_app(config, stages, board)) as gateway_url:
-
-            def build(script: str) -> World:
-                repo = default_harness()
-                harness = Harness(
-                    root=repo.root,
-                    pi=replace(repo.pi, pi_bin=_fake_pi(tmp_path, script)),
-                )
-                runner = Runner(
-                    data=data,
-                    harness=harness,
-                    recipes=load_recipes(harness, tiers=config.aliases.keys()),
-                    stages=stages,
-                    gateway_url=gateway_url,
-                    clock=lambda: NOW,
-                    base_env={"PATH": "/usr/bin:/bin"},
-                    board=board,
-                )
-                return World(data, runner, gateway_url, stages, backend_calls)
-
-            yield build
+) -> Iterator[Callable[..., World]]:
+    with runner_world(tmp_path, serve) as build:
+        yield build
 
 
 def _events(data: DataDir, job_id: str) -> list[Event]:
@@ -215,7 +87,7 @@ def _events(data: DataDir, job_id: str) -> list[Event]:
 
 @pytest.mark.promise("FR-RC-01", "NFR-KEEP-02")
 def test_開單後跑完唯一一段_產出合格_工單進待審且結果完成(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(WELL_BEHAVED)
     job_id = world.job()
@@ -233,7 +105,7 @@ def test_開單後跑完唯一一段_產出合格_工單進待審且結果完成
 
 
 @pytest.mark.promise("NFR-KEEP-02", "NFR-RUN-02")
-def test_狀態轉換依序寫進事件紀錄(world_for: Callable[[str], World]) -> None:
+def test_狀態轉換依序寫進事件紀錄(world_for: Callable[..., World]) -> None:
     world = world_for(WELL_BEHAVED)
     job_id = world.job()
     world.runner.run_once()
@@ -250,13 +122,13 @@ def test_狀態轉換依序寫進事件紀錄(world_for: Callable[[str], World])
     ]
 
 
-def test_沒有排隊中的工單就什麼都不做(world_for: Callable[[str], World]) -> None:
+def test_沒有排隊中的工單就什麼都不做(world_for: Callable[..., World]) -> None:
     assert world_for(WELL_BEHAVED).runner.run_once() is None
 
 
 @pytest.mark.promise("NFR-SEC-02", "NFR-KEEP-02")
 def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常停在待審(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(INJECTED)
     job_id = world.job()
@@ -276,7 +148,7 @@ def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常停在
 
 @pytest.mark.promise("NFR-RUN-03")
 def test_產出不合_schema_工單以失敗進待審並寫明原因(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(BAD_OUTPUT)
     job_id = world.job()
@@ -289,7 +161,7 @@ def test_產出不合_schema_工單以失敗進待審並寫明原因(
 
 
 def test_Pi_非零結束_工單以失敗進待審並附上錯誤輸出(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(CRASHES)
     job_id = world.job()
@@ -301,7 +173,7 @@ def test_Pi_非零結束_工單以失敗進待審並附上錯誤輸出(
 
 
 @pytest.mark.promise("NFR-SEC-02")
-def test_段結束後鑰匙失效_拿舊鑰匙讀寫都被拒(world_for: Callable[[str], World]) -> None:
+def test_段結束後鑰匙失效_拿舊鑰匙讀寫都被拒(world_for: Callable[..., World]) -> None:
     world = world_for(WELL_BEHAVED)
     job_id = world.job()
     world.runner.run_once()
@@ -317,7 +189,7 @@ def test_段結束後鑰匙失效_拿舊鑰匙讀寫都被拒(world_for: Callabl
 
 @pytest.mark.promise("NFR-COST-06")
 def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請求都沒收到(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
     tmp_path: Path,
     serve: Callable[[Any], AbstractContextManager[str]],
 ) -> None:
@@ -363,7 +235,7 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
 
 @pytest.mark.promise("NFR-COST-01")
 def test_工單預算不夠_Pi_被擋下_工單以未完成進待審_原因是預算用完(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(CLOUD_CALL)
     # 一次 strong 呼叫要預留約 US$0.16
@@ -379,7 +251,7 @@ def test_工單預算不夠_Pi_被擋下_工單以未完成進待審_原因是�
 
 @pytest.mark.promise("NFR-COST-01", "FR-LG-01")
 def test_本月額度用完_工單以未完成進待審_原因是本月額度用完(
-    world_for: Callable[[str], World],
+    world_for: Callable[..., World],
 ) -> None:
     world = world_for(CLOUD_CALL)
     # 投入帳本裡的抓取已經花掉 US$9.95，月上限預設 US$10
@@ -401,3 +273,167 @@ def test_本月額度用完_工單以未完成進待審_原因是本月額度用
     assert job.result is not None
     assert (job.result.outcome, job.result.reason) == ("incomplete", "本月額度用完")
     assert world.backend_calls == []
+
+
+@pytest.mark.promise("NFR-RUN-02")
+def test_段裡丟例外_Pi_執行檔不見_工單以失敗進待審_不卡在執行中(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(WELL_BEHAVED)
+    world.runner.harness = replace(
+        world.runner.harness,
+        pi=replace(world.runner.harness.pi, pi_bin=Path("/nonexistent/pi")),
+    )
+    job_id = world.job()
+
+    assert world.runner.run_once() == job_id
+
+    job = world.read(job_id)
+    assert job.status == "review"
+    assert job.result is not None and job.result.outcome == "failed"
+    assert "/nonexistent/pi" in job.result.reason
+    # 鑰匙有撤銷
+    assert not world.stages.is_active(JobKey(job_id, "echo", 1))
+
+
+def test_有一張的_job_md_壞掉_略過它_照樣跑下一張(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(WELL_BEHAVED)
+    broken = world.data.jobs / "20200101-000000-broken"
+    broken.mkdir(parents=True)
+    (broken / "job.md").write_text("---\nnot: [valid\n---\n", encoding="utf-8")
+    job_id = world.job()
+
+    assert world.runner.run_once() == job_id
+    assert world.read(job_id).status == "review"
+
+
+@pytest.mark.promise("NFR-PAR-01")
+def test_同時最多跑兩張_最舊的先跑_第三張等有空位才開始(
+    world_for: Callable[..., World], tmp_path: Path
+) -> None:
+    release = tmp_path / "release"
+    script = (
+        FAKE_PI_LIB
+        + f"""
+while not os.path.exists({str(release)!r}):
+    time.sleep(0.02)
+write("summary.json", {{"summary": "好"}})
+"""
+    )
+    world = world_for(script, max_parallel=2)
+    # 工單 id 開頭是開單時間：第 3 篇最晚開，內容 hash 排在前面也一樣排最後
+    first, second, third = (
+        world.job(
+            text=f"第 {n} 篇測試文章，內容各不相同。", now=NOW + timedelta(minutes=n)
+        )
+        for n in (1, 2, 3)
+    )
+
+    assert world.runner.start_available() == [first, second]
+    assert world.read(third).status == "queued"
+    assert world.runner.start_available() == []
+
+    release.touch()
+    world.runner.wait(timeout_s=30)
+    assert sorted(world.runner.finished()) == sorted([first, second])
+    assert world.runner.start_available() == [third]
+    world.runner.wait(timeout_s=30)
+    for job_id in (first, second, third):
+        job = world.read(job_id)
+        assert job.result is not None and job.result.outcome == "complete"
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_開跑前檢查沒過_工單留在排隊_事件紀錄寫明是哪一項_好了之後自己開始(
+    world_for: Callable[..., World],
+) -> None:
+    problems = ["Ollama 沒回應：連不上 http://127.0.0.1:11434"]
+    world = world_for(WELL_BEHAVED, preflight=lambda recipe: list(problems))
+    job_id = world.job()
+
+    assert world.runner.run_once() is None
+    assert world.runner.run_once() is None
+    assert world.read(job_id).status == "queued"
+    errors = [e.message for e in world.events(job_id) if e.kind == "error"]
+    # 同樣的原因只寫一次
+    assert len(errors) == 1 and "Ollama 沒回應" in errors[0]
+    assert world.backend_calls == []
+
+    problems.clear()
+    assert world.runner.run_once() == job_id
+    assert world.read(job_id).status == "review"
+
+
+@pytest.mark.promise("NFR-RUN-06")
+def test_每份段產出記著模型對照_skill_的_git_sha_與配方版本(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(WELL_BEHAVED)
+    job_id = world.job()
+    world.runner.run_once()
+
+    job_dir = world.data.job_dir(job_id)
+    # 版本紀錄是執行器寫的，放在 provenance/；stages/ 只有 agent 經閘道寫（ADR-0010 §3 第 3 點）
+    record = json.loads(
+        (job_dir / "provenance" / "echo.1.json").read_text(encoding="utf-8")
+    )
+    assert [p.name for p in (job_dir / "stages" / "echo" / "1").iterdir()] == [
+        "summary.json"
+    ]
+    repo = default_harness().root.parent
+    skill_sha = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "-1",
+            "--format=%H",
+            "--",
+            "harness/skills/echo",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    recipe_sha = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "-1",
+            "--format=%H",
+            "--",
+            "harness/recipes/echo.md",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert record["skill"]["name"] == "echo"
+    assert record["skill"]["git_sha"] == skill_sha
+    assert record["recipe"]["name"] == "echo"
+    assert record["recipe"]["git_sha"] == recipe_sha
+    assert record["models"]["local"] == {"backend": "ollama", "model": "qwen3.5:9b"}
+    assert len(record["models_sha256"]) == 64
+    assert (record["tier"], record["escalated_from"]) == ("local", None)
+
+
+@pytest.mark.promise("NFR-RUN-01", "NFR-RUN-02")
+def test_開跑前檢查自己丟例外_當成沒過_工單留在排隊_執行器不停(
+    world_for: Callable[..., World],
+) -> None:
+    def broken(recipe: Recipe) -> list[str]:
+        raise TypeError("'NoneType' object is not iterable")
+
+    world = world_for(WELL_BEHAVED, preflight=broken)
+    job_id = world.job()
+
+    assert world.runner.run_once() is None
+    assert world.runner.start_available() == []
+    assert world.read(job_id).status == "queued"
+    errors = [e.message for e in world.events(job_id) if e.kind == "error"]
+    assert len(errors) == 1 and "TypeError" in errors[0]

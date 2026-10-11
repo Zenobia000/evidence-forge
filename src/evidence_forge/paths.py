@@ -43,7 +43,8 @@ class DataDir:
 
     @property
     def run(self) -> Path:
-        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄。不是工單資料。"""
+        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄、
+        正在跑的 Pi 的程序群組編號（`run/pi-pids/`）。不是工單資料。"""
         return self.root / "run"
 
     @property
@@ -69,7 +70,7 @@ class DataDir:
 class JobDir:
     """一張工單的資料夾（`jobs/<id>/`）裡的固定位置。只算路徑，不建資料夾。
 
-    目前只放自動檢查用得到的兩個；其他位置等用到的模組出現再加。
+    目前只放用到的幾個；其他位置等用到的模組出現再加。
     """
 
     root: Path
@@ -83,6 +84,14 @@ class JobDir:
     def checks(self) -> Path:
         """檢查結果 `checks.vN.json` 所在的資料夾。"""
         return self.root / "checks"
+
+    @property
+    def provenance(self) -> Path:
+        """版本紀錄 `<段>.<第幾次>.json` 所在的資料夾；只有執行器寫，只增不改。
+
+        不放在 `stages/` 底下：那裡只有 agent 經閘道寫（ADR-0010 §3 第 3 點）。
+        """
+        return self.root / "provenance"
 
 
 def resolve_data_dir(env: Mapping[str, str] | None = None) -> DataDir:
