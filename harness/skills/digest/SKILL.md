@@ -20,7 +20,7 @@ You take apart an article written by someone else. You do not rewrite it and you
    - `quote`: copy the exact words from the article, character for character, one continuous span. Do not fix typos, do not shorten with "...", do not translate, do not join two places. A quote that is not in the article fails the job.
    - `text`: the claim in your own short words, in the article's language.
    - `kind`: `fact` (something that happened or is true), `data` (a number or measurement), or `opinion` (the author's judgement, prediction or advice). Never label an opinion as a fact.
-   - `location`: where it is, for example "paragraph 2".
+   - `location`: the paragraph number where the quote is, as an integer. Count blocks separated by blank lines from 1; the title line counts as 1.
    - `attributed_to`: if the author is retelling what someone else said or found, `{"who": "<that person or source>", "url": "<link in the article, or null>"}`. Otherwise `null`.
    - `id`: `c1`, `c2`, ... in order.
 5. Fill `extraction` with the extraction fields of the primary genre from `input/genres.md`, using those field names as keys. Use only what the article says.
@@ -33,7 +33,7 @@ You take apart an article written by someone else. You do not rewrite it and you
    {
      "genre": {"primary": "explainer", "secondary": [], "confidence": 0.8, "reason": "..."},
      "claims": [
-       {"id": "c1", "kind": "fact", "text": "...", "quote": "...", "location": "paragraph 1", "attributed_to": null}
+       {"id": "c1", "kind": "fact", "text": "...", "quote": "...", "location": 2, "attributed_to": null}
      ],
      "extraction": {"concept": "..."},
      "structure": ["..."],

@@ -25,7 +25,7 @@
           "kind": { "enum": ["fact", "data", "opinion"] },
           "text": { "type": "string", "minLength": 1 },
           "quote": { "type": "string", "minLength": 1 },
-          "location": { "type": "string", "minLength": 1 },
+          "location": { "description": "第幾段，從 1 數起，以空行分段", "type": "integer", "minimum": 1 },
           "attributed_to": {
             "description": "轉述別人的話時，被轉述者與上游連結；作者自己的話是 null",
             "anyOf": [

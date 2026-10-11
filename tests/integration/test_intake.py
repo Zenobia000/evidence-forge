@@ -386,3 +386,33 @@ def test_文類與預算寫進_job_md(data: DataDir) -> None:
     )
     job = read_job(data.job_dir(intake.job.id) / "job.md").job
     assert (job.target_genre, job.budget.usd) == ("explainer", 1.25)
+
+
+def _author(data: DataDir, default_genre: str) -> None:
+    author = data.root / "authors" / "me"
+    author.mkdir(parents=True)
+    (author / "voice.md").write_text(
+        f"---\nid: me\ndefault_genre: {default_genre}\n---\n聲音\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.promise("FR-CP-03")
+def test_沒指定目標文類_用作家設定的預設文類_記在_job_md(data: DataDir) -> None:
+    _author(data, "opinion")
+    intake = _submit(data, PastedText("文章"))
+    job = read_job(data.job_dir(intake.job.id) / "job.md").job
+    assert job.target_genre == "opinion"
+
+
+@pytest.mark.promise("FR-CP-03")
+def test_有指定目標文類_不用作家的預設(data: DataDir) -> None:
+    _author(data, "opinion")
+    intake = open_job(
+        data, RECIPE, PastedText("文章"), goal="目標", now=NOW, genre="explainer"
+    )
+    assert intake.job.target_genre == "explainer"
+
+
+def test_沒有作家設定也沒指定_目標文類留空(data: DataDir) -> None:
+    intake = _submit(data, PastedText("文章"))
+    assert intake.job.target_genre is None

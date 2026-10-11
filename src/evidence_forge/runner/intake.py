@@ -32,6 +32,7 @@ from evidence_forge.gateway.fetch import Fetcher, cache_key, fetch_for_intake
 from evidence_forge.models import Budget, Event, FeedRef, Item, Job, Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.runner import events
+from evidence_forge.runner.stage_inputs import default_genre
 from evidence_forge.write_once import write_once
 
 MANUAL_FEED = "manual"
@@ -245,6 +246,8 @@ def open_job(
     沒有目標可用丟 `ValueError`（含 `ExtractError`）。兩種都不開單。
     """
     chosen_goal = effective_goal(recipe, goal)
+    # 目標文類沒指定就用作家設定的預設文類，開單時記進 job.md（FR-CP-03、ADR-0015 §3.5）
+    genre = genre or default_genre(data)
     match source:
         case PastedText(text=text):
             material = _Material(text=text, title=_title(text))

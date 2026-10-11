@@ -271,6 +271,27 @@ def test_digest_tab_lists_genre_claims_with_quotes_and_directions(
     assert "舊的一輪" not in body  # 只看最新一次嘗試
 
 
+def test_digest_tab_shows_research_directions_written_by_the_digest_skill(
+    folder: Folder,
+) -> None:
+    # digest skill 的 schema（S0.8）：研究方向是 {question, evidence_needed}
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
+    folder.json_file(
+        "j",
+        "stages/digest/1/claims.json",
+        {
+            "claims": [],
+            "research_directions": [
+                {"question": "剩貨率怎麼算", "evidence_needed": "店家的每日產量紀錄"}
+            ],
+        },
+    )
+
+    body = panel(client_for(folder).get("/jobs/j?tab=digest").text)
+
+    assert "剩貨率怎麼算" in body and "店家的每日產量紀錄" in body
+
+
 def test_sources_tab_shows_where_the_article_came_from(folder: Folder) -> None:
     folder.job("j", status="review", title="一篇文章", result=REVIEW_COMPLETE)
 
