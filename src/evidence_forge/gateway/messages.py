@@ -216,7 +216,7 @@ def add_message_routes(
         )
 
     def release(call: _Call) -> None:
-        """寫完帳本之後放掉預留、GPU、等待狀態。可以重複呼叫。"""
+        """放掉預留、GPU、等待狀態。可以重複呼叫；收尾一律經過 `finish`。"""
         if call.reservation is not None:
             guard.release(call.reservation)
             call.reservation = None
@@ -225,13 +225,38 @@ def add_message_routes(
             call.semaphore = None
         board.done(call.key.job_id)
 
+    def finish(
+        call: _Call,
+        status: LedgerStatus,
+        *,
+        response: bytes | None = None,
+        usage: Usage | None = None,
+        cost: int = 0,
+    ) -> None:
+        """收尾：先記一行帳，再放掉預留與 GPU。只做一次；這裡沒有 await，取消打不斷。
+
+        記帳丟例外（例如磁碟滿）也一定放資源：不然這筆預留一直佔著工單預算與本月額度，
+        本機等級的 GPU 也不放，之後的本機請求全部排隊到逾時。`response` 有給就存進 `blobs/`。
+        """
+        if call.finished:
+            return
+        call.finished = True
+        try:
+            record(
+                call,
+                status,
+                response_hash=blobs.put(response) if response is not None else None,
+                usage=usage,
+                cost=cost,
+            )
+        finally:
+            release(call)
+
     def fail(
         call: _Call, status: LedgerStatus, http_status: int, message: str
     ) -> JSONResponse:
         """沒拿到回應就結束：記一行、放掉資源、回 Anthropic 格式的錯誤。"""
-        record(call, status)
-        release(call)
-        call.finished = True
+        finish(call, status)
         return anthropic_error(http_status, message)
 
     async def body(
@@ -278,10 +303,9 @@ def add_message_routes(
         )
 
     def settle(call: _Call, success: LedgerStatus) -> None:
-        """結算：照實際用量記帳，再放掉預留。只做一次；這裡沒有 await，取消打不斷。"""
+        """結算：照實際用量記帳，再放掉預留（`finish`）。只做一次；這裡沒有 await，取消打不斷。"""
         if call.finished:
             return
-        call.finished = True
         response = bytes(call.collected)
         reply = ledger.read_reply(response)
         # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件，
@@ -303,16 +327,15 @@ def add_message_routes(
                 # 中途斷掉、200 但串流裡報錯、讀不到用量：不知道後端實際算了多少，
                 # 照預留的金額算（寧可多算，不少算）。其餘狀態碼是後端拒收，不算錢
                 cost = call.reservation.micros
-        record(
+        finish(
             call,
             status,
             # 完整收到就存，跟狀態碼無關：出錯的那次最需要回頭看原文。
             # 中途斷掉的不存，免得半截回應被當成完整的。
-            response_hash=blobs.put(response) if call.complete else None,
+            response=response if call.complete else None,
             usage=reply.usage,
             cost=cost,
         )
-        release(call)
 
     async def single(data: bytes) -> AsyncIterator[bytes]:
         yield data
@@ -456,9 +479,7 @@ def add_message_routes(
                 )
             except BudgetExceeded as exc:
                 board.stop_for_budget(call.key, exc.limit)
-                record(call, "budget_exceeded")
-                release(call)
-                call.finished = True
+                finish(call, "budget_exceeded")
                 return anthropic_error(400, exc.message, "budget_exceeded")
 
         # 預留之後到交給 relay 之前，任何沒接住的例外（讀 429 本文時斷線、關機時被取消）
@@ -504,11 +525,10 @@ def add_message_routes(
                 media_type=upstream.headers.get("content-type", "text/event-stream"),
             )
         except BaseException:
-            if not call.finished:
-                # 這裡沒有 await，被取消也會跑完
-                record(call, "error")
-                release(call)
-                call.finished = True
-            if pending is not None and call.upstream is None:
-                await pending.aclose()
+            try:
+                # 這裡沒有 await，被取消也會跑完；已經收尾過的不會再記一次
+                finish(call, "error")
+            finally:
+                if pending is not None and call.upstream is None:
+                    await pending.aclose()
             raise

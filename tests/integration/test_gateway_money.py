@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -23,6 +24,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
+from evidence_forge.gateway import ledger
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
 from evidence_forge.gateway.config import Fault
 from evidence_forge.gateway.ledger import append_intake
@@ -601,6 +603,40 @@ def test_關後端連線時出錯_帳本照樣有這一行(
     [entry] = _ledger(data, job_id)
     assert entry.status == "error"
     assert entry.cost_usd > 0
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-PAR-02")
+@pytest.mark.parametrize("tier", ["local", "strong"])
+def test_結算時寫帳本失敗_預留與_GPU_照樣放掉_下一個請求不卡(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    monkeypatch: pytest.MonkeyPatch,
+    tier: str,
+) -> None:
+    # 帳本寫不進去（例如磁碟滿）：預留沒退，工單預算與本月額度就一直被佔著；
+    # 本機等級的 GPU 不放，之後所有本機請求都排隊排到逾時
+    write = ledger.append
+    failed: list[LedgerEntry] = []
+
+    def disk_full_once(job_dir: Path, entry: LedgerEntry) -> None:
+        if not failed:
+            failed.append(entry)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        write(job_dir, entry)
+
+    monkeypatch.setattr(ledger, "append", disk_full_once)
+    # 預算只夠預留一次 strong（約 US$0.16）：第一次的預留沒退，第二次就預留不到
+    job_id = _job(data, budget_usd=0.2)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        try:
+            _post(gw.url, key, _body(tier, "one"))
+        except httpx.HTTPError:
+            pass  # 結算丟例外，這個回應可能沒有正常收尾
+        second = _post(gw.url, key, _body(tier, "two"))
+    # 失敗的是第一次呼叫的結算，不是別的地方
+    assert [entry.status for entry in failed] == ["ok"]
+    assert second.status_code == 200
 
 
 # --- HTTP 200 但不是一則完整的訊息 ------------------------------------------------
