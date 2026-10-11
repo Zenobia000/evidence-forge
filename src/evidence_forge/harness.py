@@ -38,6 +38,10 @@ class Harness:
     def skill_dir(self, name: str) -> Path:
         return self.root / "skills" / name
 
+    def schema_file(self, name: str) -> Path:
+        """skill 的 `schema.json`：執行器用它驗這一段的產出（ADR-0009 §3 第 6 點）。"""
+        return self.skill_dir(name) / "schema.json"
+
 
 def default_harness() -> Harness:
     return Harness.at(_PROJECT_ROOT / "harness")

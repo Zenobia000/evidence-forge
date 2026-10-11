@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from runner_world import BAD_OUTPUT, FAKE_PI_LIB, WELL_BEHAVED, World, runner_world
+from runner_world import (
+    BAD_OUTPUT,
+    FAKE_PI_LIB,
+    WELL_BEHAVED,
+    World,
+    fake_harness,
+    runner_world,
+)
 
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import Recipe, RecipeStage
@@ -236,3 +243,22 @@ def test_碰過一次後端故障但_Pi_自己重試成功_產出合格就算這
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+@pytest.mark.promise("NFR-RUN-03")
+def test_skill_少了_schema_json_產出沒辦法驗_以失敗進待審_不重試(
+    world_for: Callable[..., World], tmp_path: Path
+) -> None:
+    # 配方直接交給執行器（不經 load_recipes），模擬跑到一半 schema.json 被刪掉
+    root = fake_harness(tmp_path / "harness", {"echo": {"type": "object"}})
+    (root / "skills" / "echo" / "schema.json").unlink()
+    world = world_for(WELL_BEHAVED, recipes={"retry": _recipe()}, harness_root=root)
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "failed", job.result
+    assert "沒辦法驗" in job.result.reason and "schema.json" in job.result.reason
+    # skill 自己缺東西，重跑模型修不好：只有第 1 次
+    assert [entry.attempt for entry in world.ledger(job_id)] == [1]

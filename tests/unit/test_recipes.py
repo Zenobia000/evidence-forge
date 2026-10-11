@@ -65,3 +65,17 @@ def test_配方格式不合_點名哪一份哪一欄(
     with pytest.raises(RecipeError) as raised:
         load_recipes(_harness(tmp_path, recipe), TIERS)
     assert expected in str(raised.value)
+
+
+@pytest.mark.promise("FR-RC-01", "NFR-RUN-03")
+def test_skill_少了_schema_json_啟動就擋下_點名哪一份哪一段哪個_skill(
+    tmp_path: Path,
+) -> None:
+    # 沒有 schema 就沒辦法驗產出；不擋的話，任何不是空的 JSON 都會被當成合格
+    harness = _harness(tmp_path, GOOD)
+    (harness.skill_dir("echo") / "schema.json").unlink()
+    with pytest.raises(RecipeError) as raised:
+        load_recipes(harness, TIERS)
+    message = str(raised.value)
+    assert "mine.md 的 stages[0].skill" in message
+    assert "echo" in message and "schema.json" in message

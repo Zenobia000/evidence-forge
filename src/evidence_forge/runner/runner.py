@@ -86,14 +86,15 @@ def validate_outputs(
     """檢查這一段宣告的產出：每個檔都要在、不能是空的；`.json` 檔要符合 skill 的 schema。
 
     回傳問題清單，空的表示合格。schema.json 驗的是這一段的 JSON 產出。
+    skill 的 schema 不在或壞了丟 `SchemaError`：重跑模型修不好，執行器直接送進待審。
+    不在的時候不能當成「不用驗」，不然任何不是空的 JSON 都會被當成合格。
     """
-    schema = None
-    if schema_path.is_file():
-        try:
-            schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            # skill 自己的 schema 壞了：重跑模型修不好，交給執行器直接送進待審
-            raise SchemaError(f"skill 的 schema {schema_path} 讀不出來：{exc}") from exc
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise SchemaError(f"skill 的 schema {schema_path} 不存在") from exc
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SchemaError(f"skill 的 schema {schema_path} 讀不出來：{exc}") from exc
     problems: list[str] = []
     for name in stage.output:
         path = stage_dir / name
@@ -110,12 +111,11 @@ def validate_outputs(
             except json.JSONDecodeError as exc:
                 problems.append(f"{name} 不是合法的 JSON：{exc.msg}")
                 continue
-            if schema is not None:
-                error = jsonschema.exceptions.best_match(
-                    jsonschema.Draft202012Validator(schema).iter_errors(document)
-                )
-                if error is not None:
-                    problems.append(f"{name} 不合 schema：{error.message}")
+            error = jsonschema.exceptions.best_match(
+                jsonschema.Draft202012Validator(schema).iter_errors(document)
+            )
+            if error is not None:
+                problems.append(f"{name} 不合 schema：{error.message}")
     return problems
 
 
@@ -666,7 +666,9 @@ class Runner:
             ]
         else:
             try:
-                problems = validate_outputs(stage_dir, stage, skill_dir / "schema.json")
+                problems = validate_outputs(
+                    stage_dir, stage, self.harness.schema_file(stage.skill)
+                )
             except SchemaError as exc:
                 reason = f"{stage.id} 段第 {attempt} 次的產出沒辦法驗：{exc}"
                 self._stage_event(job_dir, stage.id, attempt, reason)
@@ -693,7 +695,7 @@ class Runner:
                 job_dir,
                 stage,
                 attempt,
-                skill_dir / "schema.json",
+                self.harness.schema_file(stage.skill),
                 self.clock,
             )
         except hard_checks.ChecksUnavailable as exc:
