@@ -10,7 +10,7 @@
 
 | 項目 | 狀態 | 備註 |
 | :--- | :--- | :--- |
-| `/init-from-template` | 完成 | 2026-10-10；接力日誌 #2；`dev` 分支已建 |
+| `/init-from-template` | 完成 | 2026-10-10；交接紀錄 #2；`dev` 分支已建 |
 | 設計改版（agent 核心＋資料夾狀態） | 完成 | PR #6；ADR-0009～0016、PRD v2.0、路線圖 S0～S4 |
 | 待決事項 | Q-24～Q-28 待決 | `open-questions.md` |
 
@@ -19,7 +19,7 @@
 | 產出 | 檔案 | 狀態 |
 | :--- | :--- | :--- |
 | S0 簡易 UI 資訊架構 | `30-snapshot/plans/design/2026-10-11-s0-ui-ia.md` | 待創作者確認 |
-| S0 簡易 UI 設計稿（4 頁、5 張） | — | 等 IA 確認後由視覺設計 session 畫（設計站） |
+| S0 簡易 UI 設計稿（4 頁、5 張） | — | 等 IA 確認後由視覺設計 session 畫（設計稿確認） |
 | 設計系統（Loomy，Artifact 版） | https://claude.ai/artifact/NxwdZTmM2cgFPgFVZVKP3z | 視覺設計 session 維護；token 命名見 ADR-0007、ADR-0008；S4 才完整套用 |
 | 舊設計的 persona、IA、前端架構、狀態機、13 頁 wireframe | `30-snapshot/plans/design/2026-10-10-*`、`30-snapshot/plans/2026-10-10-run-state-machine-draft.md`、https://claude.ai/artifact/5V74dVTcwULeRXbcko5rYt | 已被 PR #6 的新設計取代，只留作對照 |
 
