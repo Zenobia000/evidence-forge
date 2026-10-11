@@ -1,10 +1,10 @@
 """UI 讀資料夾的地方：只讀，不寫（FR-UI-01、SEAM-08）。
 
-工單、事件、帳本、素材項目都用 `models` 的契約模型讀，不自己解析格式。
-整理結果（`claims.json`）和檢查結果（`checks.vN.json`）的契約還在別張票
-（整理 skill、自動檢查）定，所以這裡只定「UI 要用到的那幾個欄位」的寬鬆模型：
-多出來的欄位忽略、缺的用預設值；對不上格式就回報「讀不懂」，不假裝沒事。
-等那兩張票的模型合併後，換成它們的模型。
+工單、事件、帳本、素材項目、檢查結果都用契約模型讀（`models`、`checks.report`），
+不自己解析格式；對不上格式就回報「讀不懂」，不假裝沒事。
+整理結果（`claims.json`）的契約還在整理 skill 那張票（S0.8）定，所以這裡只定
+「UI 要用到的那幾個欄位」的寬鬆模型：多出來的欄位忽略、缺的用預設值。
+那張票的模型合併後，換成它的模型。
 """
 
 import json
@@ -12,10 +12,11 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from evidence_forge.checks.report import ChecksReport
 from evidence_forge.documents import (
     FrontmatterError,
     JobDocument,
@@ -140,26 +141,6 @@ class DigestFile(_Loose):
     research_directions: list[str] = []
 
 
-class CheckLocation(_Loose):
-    file: str = ""
-    line: int | None = None
-    pointer: str | None = None
-
-
-class CheckRow(_Loose):
-    check: str
-    status: Literal["pass", "fail", "warn"]
-    reason: str = ""
-    location: CheckLocation | None = None
-    excerpt: str = ""
-
-
-class ChecksFile(_Loose):
-    stage: str = ""
-    attempt: int | None = None
-    entries: list[CheckRow] = []
-
-
 # ---------------------------------------------------------------------------
 # 單張工單的素材
 # ---------------------------------------------------------------------------
@@ -213,7 +194,7 @@ def read_digest(job_dir: Path) -> DigestRead:
 
 @dataclass(frozen=True)
 class ChecksRead:
-    checks: ChecksFile | None
+    checks: ChecksReport | None
     error: str | None
     version: int | None
 
@@ -224,7 +205,9 @@ def read_checks(job_dir: Path) -> ChecksRead:
     version = latest_version(directory, "checks", ".json")
     if version == 0:
         return ChecksRead(None, None, None)
-    checks, error = _load_json_model(directory / f"checks.v{version}.json", ChecksFile)
+    checks, error = _load_json_model(
+        directory / f"checks.v{version}.json", ChecksReport
+    )
     return ChecksRead(checks, error, version)
 
 
