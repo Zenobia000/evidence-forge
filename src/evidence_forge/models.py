@@ -184,6 +184,8 @@ class Recipe(_Contract):
     stages: tuple[RecipeStage, ...] = Field(min_length=1)
     # 退件時預設從哪一段重跑
     on_feedback: str
+    # 投入時沒填目標就用這一句（FR-IN-01）；沒寫的配方，投入時一定要填目標
+    default_goal: str | None = None
     # 每段最多試幾次（含升級前）
     max_attempts: PositiveInt = 2
     # 檢查沒過時，自動回寫作段修幾次
@@ -206,7 +208,11 @@ class Recipe(_Contract):
 
 
 class Item(_Contract):
-    """一個素材項目的出處與內容 hash。同一個內容 hash 只開一次工單。"""
+    """一個素材項目的出處與內容 hash。同一個內容 hash 只建一份素材項目。
+
+    讀不到的網址（403、付費牆、robots、內網位址）也記一份：標 `unavailable`、
+    寫明原因，沒有內容所以沒有內容 hash，也不開工單（FR-IN-01）。
+    """
 
     id: str
     # 訂閱源名稱（feeds.yaml 裡的 name；手動投入是 manual）
@@ -217,7 +223,51 @@ class Item(_Contract):
     author: str | None = None
     published_at: AwareDatetime | None = None
     fetched_at: AwareDatetime
-    content_hash: Sha256Hex
+    content_hash: Sha256Hex | None = None
+    unavailable: bool = False
+    unavailable_reason: str = ""
+
+    @model_validator(mode="after")
+    def _content_or_reason(self) -> Self:
+        if self.unavailable != bool(self.unavailable_reason.strip()):
+            raise ValueError("讀不到的素材項目要寫原因，讀得到的不寫")
+        if not self.unavailable and self.content_hash is None:
+            raise ValueError("讀得到的素材項目要有內容 hash")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# cache/fetch/<網址 hash>/<抓取時間>.json：一次抓網頁的結果（v0.3 §4.3）。只有閘道寫。
+# ---------------------------------------------------------------------------
+
+FetchStatus = Literal["ok", "unavailable"]
+
+
+class FetchRecord(_Contract):
+    """抓一個網址的結果。讀得到的才進快取；讀不到的寫明原因，不繞過。"""
+
+    url: str
+    # 照著轉址走到的最後一個網址；讀不到時可能沒有
+    final_url: str | None = None
+    status: FetchStatus
+    reason: str = ""
+    http_status: int | None = None
+    fetched_at: AwareDatetime
+    # 寫入時依當時的有效期限算的到期時間（給人看）；判斷有沒有過期用的是現在的設定值
+    expires_at: AwareDatetime | None = None
+    content_type: str | None = None
+    title: str | None = None
+    author: str | None = None
+    # 抽出的正文
+    text: str = ""
+    # 原始回應本文在 blobs/ 的 hash
+    raw_hash: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def _reason_only_when_unavailable(self) -> Self:
+        if (self.status == "unavailable") != bool(self.reason.strip()):
+            raise ValueError("讀不到要寫原因，讀得到的不寫")
+        return self
 
 
 # ---------------------------------------------------------------------------

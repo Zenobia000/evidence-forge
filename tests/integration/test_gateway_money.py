@@ -30,7 +30,7 @@ from evidence_forge.ledger_models import IntakeEntry, LedgerEntry
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.paths import DataDir
-from evidence_forge.runner.intake import open_job
+from evidence_forge.runner.intake import PastedText, open_job
 from evidence_forge.runner.recipes import load_recipes
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -215,8 +215,13 @@ def _job(data: DataDir, budget_usd: float = 1.0, goal: str = "測試") -> str:
     harness = default_harness()
     recipe = load_recipes(harness, tiers=["local", "strong", "max"])["echo"]
     return open_job(
-        data, recipe, text=f"素材 {goal}", goal=goal, now=NOW, budget_usd=budget_usd
-    ).id
+        data,
+        recipe,
+        PastedText(f"素材 {goal}"),
+        goal=goal,
+        now=NOW,
+        budget_usd=budget_usd,
+    ).job.id
 
 
 def _active(*keys: JobKey) -> ActiveStages:

@@ -246,7 +246,7 @@ class Runner:
         )
         self._stage_event(job_dir, stage.id, attempt, "開 Pi")
         # 鑰匙只在 Pi 活著的這段時間有效；run_pi 回來時 Pi 一定已經結束（或被殺掉）
-        self.stages.activate(key)
+        self.stages.activate(key, skill_dir=skill_dir)
         try:
             result = pi_launch.run_pi(
                 command,
