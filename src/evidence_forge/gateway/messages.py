@@ -18,10 +18,13 @@
 7. 串流逐位元組原樣回傳。結束時（不管是完整收到、後端斷線、Pi 斷線）**先寫帳本**，
    再放掉預留與 GPU、最後才關後端連線：關連線可能被取消打斷，帳本不能跟著漏記。
    完整收到的回應存進 `blobs/`（跟狀態碼無關）；中途斷掉的不存。
+   狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、沒送到結尾、讀不到用量）記 `error`、
+   照預留的金額入帳：不知道後端實際算了多少，而 `error` 的回應不會被回放。
 """
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -47,6 +50,8 @@ from evidence_forge.ledger_models import LedgerEntry, LedgerStatus
 from evidence_forge.gateway.prices import Price, cost_micros, reservation_micros
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import JobKey
+
+_log = logging.getLogger(__name__)
 
 _ERROR_TYPES = {
     400: "invalid_request_error",
@@ -213,23 +218,65 @@ def add_message_routes(
             ),
         )
 
-    def release(call: _Call) -> None:
-        """寫完帳本之後放掉預留、GPU、等待狀態。可以重複呼叫。"""
+    def release(call: _Call, unbooked: int = 0) -> None:
+        """放掉預留、GPU、等待狀態。可以重複呼叫；收尾一律經過 `finish`。
+
+        `unbooked` 是帳本沒寫進去的實際金額，交給預算照樣算進上限（`BudgetGuard.release`）。
+        """
         if call.reservation is not None:
-            guard.release(call.reservation)
+            guard.release(call.reservation, unbooked_micros=unbooked)
             call.reservation = None
         if call.semaphore is not None:
             call.semaphore.release()
             call.semaphore = None
         board.done(call.key.job_id)
 
+    def finish(
+        call: _Call,
+        status: LedgerStatus,
+        *,
+        response: bytes | None = None,
+        usage: Usage | None = None,
+        cost: int = 0,
+    ) -> None:
+        """收尾：先記一行帳，再放掉預留與 GPU。只做一次；這裡沒有 await，取消打不斷。
+
+        記帳丟例外（例如磁碟滿）也一定放資源：不然這筆預留一直佔著工單預算與本月額度，
+        本機等級的 GPU 也不放，之後的本機請求全部排隊到逾時。可是錢已經花了：
+        這次的實際金額（`cost`）留給預算照樣算進上限，寫不進帳本的期間上限才擋得住。
+        `response` 有給就存進 `blobs/`。
+        """
+        if call.finished:
+            return
+        call.finished = True
+        unbooked = cost
+        try:
+            record(call, status, response_hash=keep(response), usage=usage, cost=cost)
+            unbooked = 0
+        finally:
+            release(call, unbooked)
+
+    def keep(response: bytes | None) -> str | None:
+        """回應原文存進 `blobs/`，回傳 hash；存不進去就記一筆警告、回傳 None。
+
+        原文是事後查帳用的，帳本那一行才是錢：不能因為原文存不進去就連帳都不記。
+        沒有 `response_hash` 的那一行不會被回放。
+        """
+        if response is None:
+            return None
+        try:
+            return blobs.put(response)
+        except OSError:
+            _log.warning(
+                "回應原文存不進 blobs/，帳本這一行不帶 response_hash", exc_info=True
+            )
+            return None
+
     def fail(
         call: _Call, status: LedgerStatus, http_status: int, message: str
     ) -> JSONResponse:
         """沒拿到回應就結束：記一行、放掉資源、回 Anthropic 格式的錯誤。"""
-        record(call, status)
-        release(call)
-        call.finished = True
+        finish(call, status)
         return anthropic_error(http_status, message)
 
     async def body(
@@ -263,10 +310,13 @@ def add_message_routes(
         media_type: str = "text/event-stream",
     ) -> _Relay:
         async def close() -> None:
-            # generator 沒開始跑就被取消時，它的 finally 不會執行；這裡補記
-            settle(call, success)
-            if call.upstream is not None:
-                await call.upstream.aclose()
+            # generator 沒開始跑就被取消時，它的 finally 不會執行；這裡補記。
+            # 補記丟例外（寫不進帳本）也要關後端連線
+            try:
+                settle(call, success)
+            finally:
+                if call.upstream is not None:
+                    await call.upstream.aclose()
 
         return _Relay(
             body(call, source, success),
@@ -276,13 +326,15 @@ def add_message_routes(
         )
 
     def settle(call: _Call, success: LedgerStatus) -> None:
-        """結算：照實際用量記帳，再放掉預留。只做一次；這裡沒有 await，取消打不斷。"""
+        """結算：照實際用量記帳，再放掉預留（`finish`）。只做一次；這裡沒有 await，取消打不斷。"""
         if call.finished:
             return
-        call.finished = True
         response = bytes(call.collected)
-        usage = ledger.usage_from_sse(response)
-        if call.complete and call.status_code == 200:
+        reply = ledger.read_reply(response)
+        # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件、沒送到結尾就結束，
+        # 也可能根本讀不到用量。那種回應記 error，重播索引只收成功的，所以不會被回放
+        succeeded = call.complete and call.status_code == 200 and reply.whole
+        if succeeded:
             status: LedgerStatus = success
         elif call.complete and call.status_code == 429:
             status = "rate_limited"
@@ -292,21 +344,21 @@ def add_message_routes(
             status = "error"
         cost = 0
         if call.price is not None and call.reservation is not None:
-            if not call.complete:
-                # 中途斷掉：拿不到完整的用量，照預留的金額算（寧可多算，不少算）
+            if succeeded:
+                cost = cost_micros(call.price, reply.usage)
+            elif not call.complete or call.status_code == 200:
+                # 中途斷掉、200 但串流裡報錯、讀不到用量：不知道後端實際算了多少，
+                # 照預留的金額算（寧可多算，不少算）。其餘狀態碼是後端拒收，不算錢
                 cost = call.reservation.micros
-            elif call.status_code == 200:
-                cost = cost_micros(call.price, usage)
-        record(
+        finish(
             call,
             status,
             # 完整收到就存，跟狀態碼無關：出錯的那次最需要回頭看原文。
             # 中途斷掉的不存，免得半截回應被當成完整的。
-            response_hash=blobs.put(response) if call.complete else None,
-            usage=usage,
+            response=response if call.complete else None,
+            usage=reply.usage,
             cost=cost,
         )
-        release(call)
 
     async def single(data: bytes) -> AsyncIterator[bytes]:
         yield data
@@ -326,6 +378,17 @@ def add_message_routes(
             delay = config.backoff_base_s * (2**attempt)
         return min(delay, config.backoff_max_s)
 
+    def replayable(store: BlobStore, hashes: list[str], nth: int) -> bytes | None:
+        """第 nth 份回應；不是一則完整的訊息就當作沒有。
+
+        帳本記 ok 不保證回應完整：#54 合併後到修好之前，200 加 error 事件的回應也記成 ok。
+        回放之前再讀一次，壞的那份照常轉送，不會一直回放同一份壞答案（NFR-COST-02）。
+        """
+        response = store.get(hashes[nth]) if nth < len(hashes) else None
+        if response is None or not ledger.read_reply(response).whole:
+            return None
+        return response
+
     def stored_response(call: _Call) -> bytes | None:
         """有沒有存好的回應可以回放（見模組說明第 3 點）；這次是第幾次同樣的請求由 `seen` 算。"""
         key = call.key
@@ -334,17 +397,15 @@ def add_message_routes(
         seen[counter] = nth + 1
         if recorded_blobs is not None:
             hashes = recorded.get((key.stage, key.attempt, call.request_hash), [])
-            return recorded_blobs.get(hashes[nth]) if nth < len(hashes) else None
-        try:
-            entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
-        except ValueError:
-            # 帳本有一行壞了：不冒險回放，照常轉送
-            return None
+            return replayable(recorded_blobs, hashes, nth)
+        # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過：那一次的回應不在清單裡，
+        # 同一個請求後面的回應往前遞補。回放的仍然都是這個請求真的拿到過的回應
+        entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
         # 只認真的轉送拿到的成功回應；cache_hit 那幾行是回放，不能再算成一份
         hashes = ledger.responses_by_call(entries, ("ok",)).get(
             (key.stage, key.attempt, call.request_hash), []
         )
-        return blobs.get(hashes[nth]) if nth < len(hashes) else None
+        return replayable(blobs, hashes, nth)
 
     def job_budget_micros(job_id: str) -> int:
         try:
@@ -453,9 +514,7 @@ def add_message_routes(
                 )
             except BudgetExceeded as exc:
                 board.stop_for_budget(call.key, exc.limit)
-                record(call, "budget_exceeded")
-                release(call)
-                call.finished = True
+                finish(call, "budget_exceeded")
                 return anthropic_error(400, exc.message, "budget_exceeded")
 
         # 預留之後到交給 relay 之前，任何沒接住的例外（讀 429 本文時斷線、關機時被取消）
@@ -501,11 +560,10 @@ def add_message_routes(
                 media_type=upstream.headers.get("content-type", "text/event-stream"),
             )
         except BaseException:
-            if not call.finished:
-                # 這裡沒有 await，被取消也會跑完
-                record(call, "error")
-                release(call)
-                call.finished = True
-            if pending is not None and call.upstream is None:
-                await pending.aclose()
+            try:
+                # 這裡沒有 await，被取消也會跑完；已經收尾過的不會再記一次
+                finish(call, "error")
+            finally:
+                if pending is not None and call.upstream is None:
+                    await pending.aclose()
             raise

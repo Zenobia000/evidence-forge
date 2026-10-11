@@ -77,10 +77,22 @@ def test_實際金額依價目表算_不足一微美元進位() -> None:
 
 @pytest.mark.promise("NFR-COST-01")
 def test_預留金額用偏高的輸入估計加上_max_tokens() -> None:
+    # 300 個中文字是 900 個位元組
     request = ("字" * 300).encode()
-    assert estimate_input_tokens(request) == 150
-    # 輸入用快取寫入價（較貴）：150×2.5 = 375；輸出 1000×10 = 10000
-    assert reservation_micros(SONNET, request, max_tokens=1000) == 10_375
+    assert estimate_input_tokens(request) == 900
+    # 輸入用快取寫入價（較貴）：900×2.5 = 2250；輸出 1000×10 = 10000
+    assert reservation_micros(SONNET, request, max_tokens=1000) == 12_250
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_中文請求的輸入估值不少於字數_中文大約一個字一個_token() -> None:
+    # #54 審查實測：6,600 個中文字的請求，字元數 ÷ 2 只估出 3,324，實際用量大約是兩倍。
+    # 估少了，預留就少，月上限可能被超過
+    text = "預算" * 3300
+    request = json.dumps(
+        {"messages": [{"role": "user", "content": text}]}, ensure_ascii=False
+    ).encode()
+    assert estimate_input_tokens(request) >= len(text)
 
 
 def test_價目表涵蓋對照表裡每個雲端模型() -> None:
@@ -182,3 +194,24 @@ def test_預留中的金額先算進去_退回之後才放出來(data: DataDir) 
     _job_ledger(data, "a", _line(OCT, 0.2))
     guard.release(first)
     guard.reserve("b", job_budget_micros=1_000_000, micros=600_000)
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_帳本寫不進去的花費只算進那個月的額度_工單預算一直算(data: DataDir) -> None:
+    # 10 月有一筆 US$0.80 寫不進帳本；閘道一路跑到 11 月，11 月還一毛都沒花
+    now = [OCT]
+    guard = BudgetGuard(
+        data, monthly_cap_micros=usd_to_micros(1.0), clock=lambda: now[0]
+    )
+    spent = guard.reserve("a", job_budget_micros=5_000_000, micros=900_000)
+    guard.release(spent, unbooked_micros=800_000)
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("b", job_budget_micros=5_000_000, micros=300_000)
+    assert refused.value.limit == "month"
+    # UTC 10/31 17:00 是台北 11/1 01:00
+    now[0] = datetime(2026, 10, 31, 17, 0, tzinfo=UTC)
+    guard.reserve("b", job_budget_micros=5_000_000, micros=300_000)
+    # 工單的預算不分月份：那 0.80 還是這張單花掉的
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("a", job_budget_micros=1_000_000, micros=300_000)
+    assert refused.value.limit == "job"

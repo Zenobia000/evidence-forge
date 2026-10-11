@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -23,9 +24,13 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
+from evidence_forge.gateway import ledger
+from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
+from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.gateway.config import Fault
 from evidence_forge.gateway.ledger import append_intake
+from evidence_forge.gateway.prices import load_prices
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
@@ -603,6 +608,266 @@ def test_關後端連線時出錯_帳本照樣有這一行(
     assert entry.cost_usd > 0
 
 
+@pytest.fixture
+def ledger_fails_once(monkeypatch: pytest.MonkeyPatch) -> list[LedgerEntry]:
+    """帳本第一次寫不進去（例如磁碟滿），之後恢復；回傳那一筆沒寫進去的。"""
+    write = ledger.append
+    failed: list[LedgerEntry] = []
+
+    def disk_full_once(job_dir: Path, entry: LedgerEntry) -> None:
+        if not failed:
+            failed.append(entry)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        write(job_dir, entry)
+
+    monkeypatch.setattr(ledger, "append", disk_full_once)
+    return failed
+
+
+def _post_settle_fails(url: str, key: JobKey, raw: bytes) -> None:
+    try:
+        _post(url, key, raw)
+    except httpx.HTTPError:
+        pass  # 結算丟例外，這個回應可能沒有正常收尾
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-PAR-02")
+@pytest.mark.parametrize("tier", ["local", "strong"])
+def test_結算時寫帳本失敗_預留與_GPU_照樣放掉_下一個請求不卡(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    ledger_fails_once: list[LedgerEntry],
+    tier: str,
+) -> None:
+    # 帳本寫不進去（例如磁碟滿）：預留沒退，工單預算與本月額度就一直被佔著；
+    # 本機等級的 GPU 不放，之後所有本機請求都排隊排到逾時
+    # 預算只夠預留一次 strong（約 US$0.16）：第一次的預留沒退，第二次就預留不到
+    job_id = _job(data, budget_usd=0.2)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post_settle_fails(gw.url, key, _body(tier, "one"))
+        second = _post(gw.url, key, _body(tier, "two"))
+    # 失敗的是第一次呼叫的結算，不是別的地方
+    assert [entry.status for entry in ledger_fails_once] == ["ok"]
+    assert second.status_code == 200
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_結算時寫帳本失敗_這次實際花掉的錢照樣算進工單預算(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    ledger_fails_once: list[LedgerEntry],
+) -> None:
+    # 錢已經付給後端，帳本卻沒有這一行：預留整個放掉的話，寫不進帳本的這段期間上限完全擋不住
+    expensive = _sse("好", input_tokens=1000, output_tokens=15000)
+    anthropic.replies = [lambda: Response(expensive, media_type="text/event-stream")]
+    job_id = _job(data, budget_usd=0.2)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post_settle_fails(gw.url, key, _body("strong", "one"))
+        second = _post(gw.url, key, _body("strong", "two"))
+    # 第一次實際花了 1000×$2 + 15000×$10（每百萬 token）＝ US$0.152，剩 0.048，不夠再預留一次 strong
+    assert [entry.cost_usd for entry in ledger_fails_once] == [0.152]
+    assert second.status_code == 400
+    assert second.json()["error"]["type"] == "budget_exceeded"
+    assert len(anthropic.received) == 1
+
+
+@pytest.mark.promise("FR-LG-01", "NFR-COST-01")
+def test_回應原文存不進_blobs_帳本照樣記這一行_金額照算(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 原文是事後查帳用的，帳本那一行才是錢：原文存不進去不能連帳都不記
+    put = BlobStore.put
+
+    def no_room_for_responses(self: BlobStore, content: bytes) -> str:
+        if content == SSE:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return put(self, content)
+
+    monkeypatch.setattr(BlobStore, "put", no_room_for_responses)
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        response = _post(gw.url, key, _body("strong"))
+    assert response.content == SSE
+    [entry] = _ledger(data, job_id)
+    assert (entry.status, entry.cost_usd, entry.response_hash) == ("ok", 0.004, None)
+
+
+# --- HTTP 200 但不是一則完整的訊息 ------------------------------------------------
+
+# 一次 strong 呼叫至少預留 max_tokens 個輸出 token 的錢（models.yaml、prices.yaml；現在是 US$0.16）
+_STRONG = load_aliases()["strong"]
+STRONG_RESERVATION_FLOOR_USD = float(
+    _STRONG.max_tokens * load_prices()[_STRONG.model].output / 1_000_000
+)
+
+
+def _overloaded_midstream(with_event_line: bool) -> Callable[[], Response]:
+    """後端過載時常見的樣子：狀態碼 200 已經送出，串流開頭之後送一個 error 事件。"""
+    start = {
+        "type": "message_start",
+        "message": {"id": "msg_1", "usage": {"input_tokens": 1000, "output_tokens": 1}},
+    }
+    error = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+    event_line = "event: error\n" if with_event_line else ""
+    body = (
+        f"event: message_start\ndata: {json.dumps(start)}\n\n"
+        f"{event_line}data: {json.dumps(error)}\n\n"
+    ).encode()
+    return lambda: Response(body, media_type="text/event-stream")
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+@pytest.mark.parametrize("with_event_line", [True, False])
+def test_200_的串流裡有_error_事件_記成_error_照預留入帳_重開後同樣的請求重新轉送(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    with_event_line: bool,
+) -> None:
+    # 記成 ok 的話，同段同次的相同請求會一直回放這份錯誤（NFR-COST-02），金額也少算
+    anthropic.replies = [_overloaded_midstream(with_event_line)]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    with gateway(_active(key)) as gw:
+        again = _post(gw.url, key, _body("strong"))
+    assert again.content == SSE
+    assert len(anthropic.received) == 2
+    entries = _ledger(data, job_id)
+    assert [entry.status for entry in entries] == ["error", "ok"]
+    # 輸出到哪裡才報錯不知道：照預留的金額入帳（寧可多算）
+    assert entries[0].cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
+def _json_message() -> Response:
+    """不是串流的回應：整則訊息一次回來，用量在最上層的 usage。"""
+    message = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "好"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    return Response(json.dumps(message).encode(), media_type="application/json")
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-OBS-01")
+def test_200_的非串流_JSON_回應照_usage_入帳(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    anthropic.replies = [_json_message]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "ok"
+    assert (entry.input_tokens, entry.output_tokens) == (1000, 200)
+    # 1000×$2 + 200×$10（每百萬 token）＝ 4000 微美元
+    assert entry.cost_usd == 0.004
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+def test_200_但讀不到用量的回應照預留入帳_不當成可以回放的回應(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # 例如中間的代理回了一頁 HTML：不知道後端算了多少錢，也不是 Pi 看得懂的回應
+    anthropic.replies = [
+        lambda: Response(b"<html>bad gateway</html>", media_type="text/html")
+    ]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "error"
+    assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
+@pytest.mark.promise("NFR-COST-02")
+def test_帳本記成_ok_的回應不是一則完整的訊息_不回放_照常轉送(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # #54 合併後到修好之前，200 加 error 事件的回應也記成 ok：那種舊資料不能被回放
+    raw = _body("strong")
+    broken = bytes(_overloaded_midstream(True)().body)
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    store = BlobStore(data.blobs)
+    ledger.append(
+        data.job_dir(job_id),
+        LedgerEntry.model_validate(
+            {
+                "ts": NOW,
+                "job_id": job_id,
+                "stage": "echo",
+                "attempt": 1,
+                "kind": "llm",
+                "tier": "strong",
+                "model": "claude-sonnet-5-5",
+                "latency_ms": 10,
+                "status": "ok",
+                "request_hash": store.put(raw),
+                "response_hash": store.put(broken),
+            }
+        ),
+    )
+    with gateway(_active(key)) as gw:
+        again = _post(gw.url, key, raw)
+    assert again.content == SSE
+    assert len(anthropic.received) == 1
+
+
+# 結構對、可是沒有輸入用量：後端到底算了多少錢不知道，不能記成成功的 0 元
+NO_USAGE = {
+    "json": (
+        b'{"type": "message", "role": "assistant", "content": [], "usage": {}}',
+        "application/json",
+    ),
+    "sse": (
+        b'event: message_start\ndata: {"type": "message_start", "message": {"usage": {}}}\n\n'
+        b'event: message_stop\ndata: {"type": "message_stop"}\n\n',
+        "text/event-stream",
+    ),
+}
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+@pytest.mark.parametrize("body", NO_USAGE.values(), ids=NO_USAGE.keys())
+def test_200_但沒有輸入用量的回應照預留入帳_不當成成功(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    body: tuple[bytes, str],
+) -> None:
+    content, media_type = body
+    anthropic.replies = [lambda: Response(content, media_type=media_type)]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "error"
+    assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
 # --- 重播 -------------------------------------------------------------------
 
 
@@ -654,6 +919,24 @@ def test_重播時第_n_次相同的請求回放第_n_份(
     assert [r.content for r in responses[:2]] == [first, second]
     # 錄音裡只有兩份，第三次沒錄過：報錯、不轉送
     assert responses[2].status_code >= 500
+    assert ollama.received == []
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_錄音裡記成_ok_的回應不是一則完整的訊息_重播時當成沒錄過(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    ollama: Backend,
+    tmp_path: Path,
+) -> None:
+    raw = _body("local")
+    broken = bytes(_overloaded_midstream(True)().body)
+    key = JobKey(_job(data), "echo", 1)
+    replay_dir = _recording(tmp_path, raw, [broken])
+    with gateway(_active(key), mode="replay", replay_dir=replay_dir) as gw:
+        response = _post(gw.url, key, raw)
+    assert response.status_code >= 500
+    assert response.content != broken
     assert ollama.received == []
 
 
