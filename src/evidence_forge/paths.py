@@ -37,6 +37,11 @@ class DataDir:
         return self.root / "blobs"
 
     @property
+    def run(self) -> Path:
+        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄。不是工單資料。"""
+        return self.root / "run"
+
+    @property
     def check_settings(self) -> Path:
         """自動檢查的設定（只寫要蓋掉預設值的那幾項）；不存在就全用預設值。"""
         return self.root / "checks.yaml"

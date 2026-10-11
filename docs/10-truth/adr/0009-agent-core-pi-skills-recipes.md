@@ -1,6 +1,7 @@
 # ADR-0009：agent 核心用 Pi，流程寫成配方與 skill
 
 > **狀態：** 已接受 | **日期：** 2026-10-10 | **決策者：** 專案擁有者（與架構 session 討論後拍板）
+> **後續修正：** §3 第 3 點載入 skill 的做法由 ADR-0018 修正——改用 `--no-skills --append-system-prompt <SKILL.md>`；agent 讀不到 `SKILL.md` 以外的附帶檔，要由執行器放進工單資料夾。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **取代 ADR-0001**（LangGraph 確定性節點圖）。**修正 ADR-0002** 的「節點」概念：模型分工改由 ADR-0011 決定。
 

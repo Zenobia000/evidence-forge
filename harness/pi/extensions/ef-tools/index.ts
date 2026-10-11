@@ -1,0 +1,78 @@
+// ef-tools：agent 唯一能用的工具（架構草案 v0.3 §3.4）。
+//
+// 這裡只做轉送：每個工具把參數 POST 到閘道的 /tools/<名稱>，帶上工單鑰匙。
+// 路徑限制、只增不改、鑰匙是否還有效，全部在閘道（Python）判斷，這裡不重複一份規則。
+// 閘道位址與鑰匙由執行器（runner/pi_launch.py）用環境變數 EF_GATEWAY_URL、EF_JOB_KEY 傳進來。
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+async function callGateway(tool: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const url = process.env.EF_GATEWAY_URL;
+  const key = process.env.EF_JOB_KEY;
+  if (!url || !key) {
+    throw new Error("ef-tools: EF_GATEWAY_URL or EF_JOB_KEY is not set");
+  }
+  const response = await fetch(`${url}/tools/${tool}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": key },
+    body: JSON.stringify(body),
+  });
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    // 丟出錯誤，Pi 會把它變成失敗的工具結果，模型看得到被拒的原因
+    throw new Error(String(data.error ?? `gateway returned HTTP ${response.status}`));
+  }
+  return data;
+}
+
+function text(value: string) {
+  return { content: [{ type: "text" as const, text: value }], details: undefined };
+}
+
+const readFile = defineTool({
+  name: "read_file",
+  label: "Read file",
+  description: "Read a text file inside the job folder. The path is relative to the job folder, e.g. input/content.md.",
+  parameters: Type.Object({
+    path: Type.String({ description: "Path relative to the job folder" }),
+  }),
+  async execute(_id, params) {
+    const data = await callGateway("read_file", { path: params.path });
+    return text(String(data.content ?? ""));
+  },
+});
+
+const listFiles = defineTool({
+  name: "list_files",
+  label: "List files",
+  description: "List the entries of a folder inside the job folder. Folders end with /. Use \".\" for the job folder itself.",
+  parameters: Type.Object({
+    path: Type.String({ description: "Folder path relative to the job folder; \".\" for the job folder" }),
+  }),
+  async execute(_id, params) {
+    const data = await callGateway("list_files", { path: params.path });
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    return text(entries.length > 0 ? entries.join("\n") : "(empty)");
+  },
+});
+
+const writeFile = defineTool({
+  name: "write_file",
+  label: "Write file",
+  description:
+    "Create a new file. Only allowed inside this stage's output directory named in the task (stages/<stage>/<attempt>/). Existing files cannot be overwritten.",
+  parameters: Type.Object({
+    path: Type.String({ description: "Path relative to the job folder, inside the output directory" }),
+    content: Type.String({ description: "Full file content" }),
+  }),
+  async execute(_id, params) {
+    const data = await callGateway("write_file", { path: params.path, content: params.content });
+    return text(`wrote ${String(data.written ?? params.path)}`);
+  },
+});
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool(readFile);
+  pi.registerTool(listFiles);
+  pi.registerTool(writeFile);
+}

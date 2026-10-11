@@ -1,0 +1,18 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_7a7ee11e97f92b802d6f5f9f","type":"message","role":"assistant","model":"qwen3.5:9b","content":[],"usage":{"input_tokens":896,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_hgq9sz6h","name":"write_file","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"stages/echo/1/summary.json\",\"content\":\"{\\\"summary\\\": \\\"這篇文章虛構地描述了一家名為「巷口麵包店」的店家在上個月改採預約制的經過：前一天晚上九點前在網站下單，隔天早上七至十點取貨。老闆表示這種模式將剩餘麵包從兩成降到不到一成，但同時也導致臨時想購買的顧客難以購得；目前門口只設一個小架子，擺放當天多做的吐司，通常不到九點就售罄。\\\"}\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":231,"cache_read_input_tokens":944,"output_tokens":142}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

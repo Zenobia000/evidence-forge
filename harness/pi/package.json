@@ -1,0 +1,12 @@
+{
+  "name": "evidence-forge-pi-harness",
+  "private": true,
+  "description": "鎖定 Pi 的版本：執行器用 node_modules/.bin/pi，不用全域安裝的那一份。升版要重跑 #10 的六題驗證。",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0"
+  }
+}
