@@ -11,6 +11,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeGuard
 
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry, LedgerStatus
 from evidence_forge.paths import DataDir
@@ -100,9 +101,18 @@ class Usage:
     cache_write_tokens: int = 0
 
 
+def _is_count(value: object) -> TypeGuard[int]:
+    return isinstance(value, int) and value >= 0
+
+
 def _count(usage: dict[str, object], name: str, default: int) -> int:
     value = usage.get(name)
-    return value if isinstance(value, int) and value >= 0 else default
+    return value if _is_count(value) else default
+
+
+def _has_input(fields: object) -> bool:
+    """這份 usage 有沒有寫輸入 token 數。沒有的話，後端實際算了多少錢無從得知。"""
+    return isinstance(fields, dict) and _is_count(fields.get("input_tokens"))
 
 
 def _merge(current: Usage, fields: dict[str, object]) -> Usage:
@@ -125,9 +135,10 @@ class Reply:
 
     # 讀到的用量；讀不到的欄位是 0
     usage: Usage
-    # 是不是一則完整的訊息：讀到開頭（message_start 與它的用量）、收到結尾（message_stop）、
-    # 中間沒有 error 事件（不是串流的回應：是一則帶 usage 的 message）。不是的話，
-    # 結算不知道後端實際算了多少錢，也不能把它當成功的回應回放
+    # 是不是一則完整的訊息：讀到開頭（message_start，它的 usage 寫了輸入 token 數）、
+    # 收到結尾（message_stop）、中間沒有 error 事件（不是串流的回應：是一則 message，
+    # 最上層的 usage 寫了輸入 token 數）。不是的話，結算不知道後端實際算了多少錢，
+    # 也不能把它當成功的回應回放
     whole: bool
 
 
@@ -142,7 +153,7 @@ def _read_json_message(text: str) -> Reply:
     usage = message.get("usage")
     if not isinstance(usage, dict):
         return Reply(Usage(), whole=False)
-    return Reply(_merge(Usage(), usage), whole=True)
+    return Reply(_merge(Usage(), usage), whole=_has_input(usage))
 
 
 def read_reply(body: bytes) -> Reply:
@@ -188,7 +199,7 @@ def read_reply(body: bytes) -> Reply:
         if not isinstance(fields, dict):
             continue
         usage = _merge(usage, fields)
-        started |= kind == "message_start"
+        started |= kind == "message_start" and _has_input(fields)
     return Reply(usage, whole=started and stopped and not failed)
 
 

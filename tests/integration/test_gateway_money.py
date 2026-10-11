@@ -799,6 +799,39 @@ def test_200_但讀不到用量的回應照預留入帳_不當成可以回放的
     assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
 
 
+# 結構對、可是沒有輸入用量：後端到底算了多少錢不知道，不能記成成功的 0 元
+NO_USAGE = {
+    "json": (
+        b'{"type": "message", "role": "assistant", "content": [], "usage": {}}',
+        "application/json",
+    ),
+    "sse": (
+        b'event: message_start\ndata: {"type": "message_start", "message": {"usage": {}}}\n\n'
+        b'event: message_stop\ndata: {"type": "message_stop"}\n\n',
+        "text/event-stream",
+    ),
+}
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-COST-02")
+@pytest.mark.parametrize("body", NO_USAGE.values(), ids=NO_USAGE.keys())
+def test_200_但沒有輸入用量的回應照預留入帳_不當成成功(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    body: tuple[bytes, str],
+) -> None:
+    content, media_type = body
+    anthropic.replies = [lambda: Response(content, media_type=media_type)]
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post(gw.url, key, _body("strong"))
+    [entry] = _ledger(data, job_id)
+    assert entry.status == "error"
+    assert entry.cost_usd >= STRONG_RESERVATION_FLOOR_USD
+
+
 # --- 重播 -------------------------------------------------------------------
 
 
