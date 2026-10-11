@@ -18,7 +18,7 @@
 7. 串流逐位元組原樣回傳。結束時（不管是完整收到、後端斷線、Pi 斷線）**先寫帳本**，
    再放掉預留與 GPU、最後才關後端連線：關連線可能被取消打斷，帳本不能跟著漏記。
    完整收到的回應存進 `blobs/`（跟狀態碼無關）；中途斷掉的不存。
-   狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、讀不到用量）記 `error`、
+   狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、沒送到結尾、讀不到用量）記 `error`、
    照預留的金額入帳：不知道後端實際算了多少，而 `error` 的回應不會被回放。
 """
 
@@ -308,7 +308,7 @@ def add_message_routes(
             return
         response = bytes(call.collected)
         reply = ledger.read_reply(response)
-        # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件，
+        # 狀態碼 200 不代表拿到一則完整的訊息：串流中途可能送 error 事件、沒送到結尾就結束，
         # 也可能根本讀不到用量。那種回應記 error，重播索引只收成功的，所以不會被回放
         succeeded = call.complete and call.status_code == 200 and reply.whole
         if succeeded:
