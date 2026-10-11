@@ -36,6 +36,11 @@ class DataDir:
     def blobs(self) -> Path:
         return self.root / "blobs"
 
+    @property
+    def run(self) -> Path:
+        """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄。不是工單資料。"""
+        return self.root / "run"
+
     def job_dir(self, job_id: str) -> Path:
         return self.jobs / job_id
 
