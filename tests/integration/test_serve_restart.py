@@ -75,7 +75,9 @@ def ollama(serve: Callable[[Any], AbstractContextManager[str]]) -> Iterator[Any]
 def _harness(tmp_path: Path, marks: Path, pi: str = PI) -> Path:
     repo = default_harness()
     root = tmp_path / "harness"
-    shutil.copytree(repo.recipes, root / "recipes")
+    # 只帶 echo 配方：其他配方用到的 skill 沒複製過來，`ef serve` 啟動時會擋
+    (root / "recipes").mkdir(parents=True)
+    shutil.copy(repo.recipes / "echo.md", root / "recipes" / "echo.md")
     shutil.copytree(repo.skill_dir("echo"), root / "skills" / "echo")
     shutil.copytree(repo.pi.agent_template, root / "pi" / "agent")
     bin_dir = root / "pi" / "node_modules" / ".bin"

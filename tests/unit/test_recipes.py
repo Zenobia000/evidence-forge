@@ -31,7 +31,7 @@ on_feedback: first
 
 @pytest.mark.promise("FR-RC-01")
 def test_repo_裡的配方都讀得進來_含打通用的_echo() -> None:
-    recipes = load_recipes(default_harness(), TIERS)
+    recipes = load_recipes(default_harness(), ("local", "strong", "max"))
     echo = recipes["echo"]
     assert [(s.id, s.skill, s.tier) for s in echo.stages] == [("echo", "echo", "local")]
 
