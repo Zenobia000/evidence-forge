@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from runner_world import BAD_OUTPUT, FAKE_PI_LIB, WELL_BEHAVED, World, runner_world
 
+from evidence_forge.jobkey import JobKey
 from evidence_forge.models import Recipe, RecipeStage
 
 
@@ -174,3 +175,20 @@ event(type="agent_end")
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "failed"
     assert "沒有錄過這個請求" in job.result.reason
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_碰過一次後端故障但_Pi_自己重試成功_產出合格就算這段過了(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(WELL_BEHAVED, recipes={"retry": _recipe()})
+    job_id = world.job(recipe="retry")
+    # 閘道在這一段這一次記過一次故障（例如一次 503），之後 Pi 重試成功
+    world.board.report_outage(
+        JobKey(job_id, "echo", 1), "ollama", "模型後端回 HTTP 503"
+    )
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result

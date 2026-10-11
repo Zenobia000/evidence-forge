@@ -31,6 +31,7 @@ from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
 from evidence_forge.gateway.ledger import append_intake
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
+from evidence_forge.models import Recipe
 from evidence_forge.ledger_models import IntakeEntry
 from evidence_forge.models import Event
 from evidence_forge.paths import DataDir
@@ -413,3 +414,20 @@ def test_每份段產出記著模型對照_skill_的_git_sha_與配方版本(
     assert record["models"]["local"] == {"backend": "ollama", "model": "qwen3.5:9b"}
     assert len(record["models_sha256"]) == 64
     assert (record["tier"], record["escalated_from"]) == ("local", None)
+
+
+@pytest.mark.promise("NFR-RUN-01", "NFR-RUN-02")
+def test_開跑前檢查自己丟例外_當成沒過_工單留在排隊_執行器不停(
+    world_for: Callable[..., World],
+) -> None:
+    def broken(recipe: Recipe) -> list[str]:
+        raise TypeError("'NoneType' object is not iterable")
+
+    world = world_for(WELL_BEHAVED, preflight=broken)
+    job_id = world.job()
+
+    assert world.runner.run_once() is None
+    assert world.runner.start_available() == []
+    assert world.read(job_id).status == "queued"
+    errors = [e.message for e in world.events(job_id) if e.kind == "error"]
+    assert len(errors) == 1 and "TypeError" in errors[0]

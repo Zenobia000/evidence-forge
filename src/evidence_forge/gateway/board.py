@@ -73,6 +73,11 @@ class JobBoard:
             # 同一段同一次先碰到哪一個故障就記哪一個
             self._outages.setdefault(key, Outage(backend, message))
 
+    def recovered(self, key: JobKey) -> None:
+        """同一段同一次後來有一次成功的呼叫：先前的故障是暫時的，不算數。"""
+        with self._lock:
+            self._outages.pop(key, None)
+
     def outage(self, key: JobKey) -> Outage | None:
         """這一段這一次有沒有碰到後端故障。"""
         with self._lock:

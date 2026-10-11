@@ -39,8 +39,10 @@ assert status == 200, status
 # 真的 agent 會把寫檔的結果送進下一個請求：被拒（409）的話請求就跟上次不同、快取接不上
 assert write("summary.json", {"summary": "重跑也一樣"}) == 200
 if not os.path.exists(MARK):
-    with open(MARK, "w") as handle:
+    # 先寫暫存再改名：測試一看到記號檔，裡面就一定有完整的 pid
+    with open(MARK + ".tmp", "w") as handle:
         handle.write(str(os.getpid()))
+    os.replace(MARK + ".tmp", MARK)
     while True:
         time.sleep(1)
 event(type="agent_end")

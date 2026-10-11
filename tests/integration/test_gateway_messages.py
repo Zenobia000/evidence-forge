@@ -410,3 +410,28 @@ def test_執行器登記這一次是升級上來的_帳本記下_escalated_from(
         _post(url, str(KEY), {**PI_BODY, "model": "strong"})
     [entry] = _ledger(data)
     assert (entry.tier, entry.escalated_from) == ("strong", "local")
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_後端先回_503_同一把鑰匙之後成功_告示板的故障清掉(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    replies = [Response(UPSTREAM_ERROR, status_code=503, media_type="application/json")]
+    flaky = FastAPI()
+
+    @flaky.post("/v1/messages")
+    async def messages() -> Response:
+        if replies:
+            return replies.pop()
+        return Response(SSE, media_type="text/event-stream")
+
+    with serve(flaky) as backend:
+        config = GatewayConfig(data=data, mode="live", ollama_url=backend)
+        board = JobBoard(config.clock)
+        with serve(create_app(config, stages, board)) as url:
+            assert _post(url, str(KEY), PI_BODY).status_code == 503
+            assert board.outage(KEY) is not None
+            assert _post(url, str(KEY), PI_BODY).status_code == 200
+    assert board.outage(KEY) is None

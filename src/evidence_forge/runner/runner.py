@@ -306,7 +306,13 @@ class Runner:
             self.blocked = None
             return None
         if self.preflight is not None:
-            problems = self._preflight_for(job_id)
+            try:
+                problems = self._preflight_for(job_id)
+            except Exception as exc:
+                # 探測本身出錯（後端回了奇怪的東西、讀不到 job.md）：當成沒過，
+                # 不讓整個 `ef serve` 帶著 traceback 停掉
+                _log.warning("工單 %s 的開跑前檢查出錯", job_id, exc_info=True)
+                problems = [f"開跑前檢查本身出錯：{type(exc).__name__}：{exc}"]
             if problems:
                 message = "開跑前檢查沒過，不開跑：" + "；".join(problems)
                 self.blocked = message
@@ -648,33 +654,36 @@ class Runner:
             reason = LIMIT_REASONS[limit]
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="incomplete", reason=reason))
+        if result.timed_out:
+            self._stage_event(job_dir, stage.id, attempt, "Pi 逾時")
+            problems = [f"Pi 超過 {self.pi_timeout_s:.0f} 秒沒結束，已停止"]
+        elif result.returncode != 0:
+            self._stage_event(
+                job_dir, stage.id, attempt, f"Pi 結束碼 {result.returncode}"
+            )
+            problems = [
+                f"Pi 結束碼 {result.returncode}：{result.stderr_tail.strip()[-500:]}"
+            ]
+        else:
+            try:
+                problems = validate_outputs(stage_dir, stage, skill_dir / "schema.json")
+            except SchemaError as exc:
+                reason = f"{stage.id} 段第 {attempt} 次的產出沒辦法驗：{exc}"
+                self._stage_event(job_dir, stage.id, attempt, reason)
+                return _Tried(stop=JobResult(outcome="failed", reason=reason))
+            error = pi_error(result.events)
+            if problems and error is not None:
+                # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡
+                problems = [f"Pi 回報模型呼叫失敗：{error}", *problems]
         outage = self.board.outage(key) if self.board is not None else None
-        if outage is not None:
-            # 基礎設施故障：不重試、不升級，直接標失敗（ADR-0011 §3.3、NFR-RUN-05）
+        if problems and outage is not None:
+            # 這一次沒有合格產出、途中又碰到後端故障：算基礎設施故障，不重試、不升級，
+            # 直接標失敗（ADR-0011 §3.3、NFR-RUN-05）。產出合格的話以產出為準：
+            # Pi 碰到一次 5xx 會自己重試，重試成功不該丟掉付過錢的產出
             name = BACKEND_NAMES.get(outage.backend, outage.backend)
             reason = f"{name} 沒回應（{stage.id} 段第 {attempt} 次：{outage.message}）"
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))
-        if result.timed_out:
-            self._stage_event(job_dir, stage.id, attempt, "Pi 逾時")
-            return _Tried([f"Pi 超過 {self.pi_timeout_s:.0f} 秒沒結束，已停止"])
-        if result.returncode != 0:
-            self._stage_event(
-                job_dir, stage.id, attempt, f"Pi 結束碼 {result.returncode}"
-            )
-            return _Tried(
-                [f"Pi 結束碼 {result.returncode}：{result.stderr_tail.strip()[-500:]}"]
-            )
-        try:
-            problems = validate_outputs(stage_dir, stage, skill_dir / "schema.json")
-        except SchemaError as exc:
-            reason = f"{stage.id} 段第 {attempt} 次的產出沒辦法驗：{exc}"
-            self._stage_event(job_dir, stage.id, attempt, reason)
-            return _Tried(stop=JobResult(outcome="failed", reason=reason))
-        error = pi_error(result.events)
-        if problems and error is not None:
-            # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡
-            problems = [f"Pi 回報模型呼叫失敗：{error}", *problems]
         if problems:
             self._stage_event(job_dir, stage.id, attempt, "產出不合格")
             return _Tried(problems)

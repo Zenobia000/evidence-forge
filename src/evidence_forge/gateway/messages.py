@@ -356,6 +356,8 @@ def add_message_routes(
         succeeded = call.complete and call.status_code == 200 and reply.whole
         if succeeded:
             status: LedgerStatus = success
+            # Pi 自己重試成功：先前的 5xx 或斷線是暫時的，執行器不該當成故障
+            board.recovered(call.key)
         elif call.complete and call.status_code == 429:
             status = "rate_limited"
         elif call.timed_out:
