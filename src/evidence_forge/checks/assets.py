@@ -17,17 +17,22 @@ from pathlib import Path
 from evidence_forge.checks.report import CheckEntry, Location
 from evidence_forge.checks.text import line_column, mask_code
 
-# 網址可以用 <> 包起來；後面可以接 "標題"、'標題' 或 (標題)。
-_DESTINATION = r"(<[^>\n]*>|[^\s)]+)"
+# 說明文字（alt）可以換行，也可以有一層成對的中括號：![圖 [1] 示意](…)
+_ALT = r"(?:[^\[\]]|\[[^\[\]]*\])*"
+# 網址可以用 <> 包起來，也可以有一層成對的括號：…/Foo_(bar).png
+_DESTINATION = r"(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)"
+# 網址後面可以接 "標題"、'標題' 或 (標題)。
 _TITLE = r"""(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?"""
-_INLINE_IMAGE = re.compile(rf"!\[[^\]\n]*\]\(\s*{_DESTINATION}{_TITLE}\s*\)")
+_INLINE_IMAGE = re.compile(rf"!\[{_ALT}\]\(\s*{_DESTINATION}{_TITLE}\s*\)")
 # ![alt][label]、![label][]、![label]（後面不能緊接 [ 或 (，那是另外兩種寫法）
-_REFERENCE_IMAGE = re.compile(r"!\[([^\]\n]*)\](?:\[([^\]\n]*)\]|(?![\[(]))")
+_REFERENCE_IMAGE = re.compile(rf"!\[({_ALT})\](?:\[([^\]\n]*)\]|(?![\[(]))")
 _REFERENCE_DEFINITION = re.compile(
     r"^ {0,3}\[([^\]\n]+)\]:\s*(<[^>\n]*>|\S+)", re.MULTILINE
 )
+# src 前面不能是字母或 -：data-src、srcset 之類的屬性不是真的顯示的圖。
 _HTML_IMAGE = re.compile(
-    r"""<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE
+    r"""<img\b[^>]*?(?<![\w-])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""",
+    re.IGNORECASE,
 )
 
 
@@ -48,10 +53,10 @@ def find_images(draft: str) -> list[tuple[int, str]]:
     images: list[tuple[int, str]] = []
     for match in _INLINE_IMAGE.finditer(text):
         images.append((match.start(), _unwrap(match.group(1))))
-    definitions = {
-        _label_key(match.group(1)): _unwrap(match.group(2))
-        for match in _REFERENCE_DEFINITION.finditer(text)
-    }
+    # 同一個參照定義兩次時第一個生效（CommonMark），所以用 setdefault。
+    definitions: dict[str, str] = {}
+    for match in _REFERENCE_DEFINITION.finditer(text):
+        definitions.setdefault(_label_key(match.group(1)), _unwrap(match.group(2)))
     for match in _REFERENCE_IMAGE.finditer(text):
         label = match.group(2) or match.group(1)
         url = definitions.get(_label_key(label))

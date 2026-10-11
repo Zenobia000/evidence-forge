@@ -121,3 +121,21 @@ def test_ordinary_sentence_starting_with_import_is_fine() -> None:
     draft = "# 關稅\n\nimport duties rose again this quarter.\n"
     entries = check_markdown(draft, file=FILE)
     assert [entry.status for entry in entries] == ["pass"]
+
+
+@pytest.mark.parametrize("draft", ["---\ntitle: x\n---\n", "---\n```\n```\n---\n"])
+def test_draft_with_only_frontmatter_is_empty(draft: str) -> None:
+    entries = check_markdown(draft, file=FILE)
+    assert [entry.status for entry in entries] == ["fail"]
+
+
+def test_generic_type_in_prose_is_not_mdx() -> None:
+    draft = "# 型別\n\nJava 的 List<String> 型別很常見。\n"
+    entries = check_markdown(draft, file=FILE)
+    assert [entry.status for entry in entries] == ["pass"]
+
+
+def test_inline_code_with_three_backticks_is_not_an_unclosed_fence() -> None:
+    draft = "# 標題\n\n```js``` 是寫法。\n\n內文。\n"
+    entries = check_markdown(draft, file=FILE)
+    assert [entry.status for entry in entries] == ["pass"]

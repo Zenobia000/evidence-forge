@@ -97,3 +97,31 @@ def test_malformed_assets_file_is_an_error_not_an_empty_list(tmp_path: Path) -> 
     path.write_text('{"assets": "oops"}', encoding="utf-8")
     with pytest.raises(ValueError, match=r"assets\.json"):
         load_asset_urls(path)
+
+
+@pytest.mark.parametrize(
+    ("draft", "url"),
+    [
+        # 說明文字裡有成對的中括號
+        ("![圖 [1] 示意](http://x.example/a.png)", "http://x.example/a.png"),
+        # 說明文字換行
+        ("![第一行\n第二行](http://x.example/b.png)", "http://x.example/b.png"),
+        # 網址裡有成對的括號
+        ("![](https://e.example/Foo_(bar).png)", "https://e.example/Foo_(bar).png"),
+        # data-src 不是 src，真正顯示的是 src
+        (
+            '<img data-src="https://ok.example/1.png" src="https://x.example/c.png">',
+            "https://x.example/c.png",
+        ),
+        # 參照定義重複時，第一個生效（CommonMark）
+        (
+            "![圖][x]\n\n[x]: https://x.example/first.png\n[x]: https://ok.example/1.png",
+            "https://x.example/first.png",
+        ),
+        # 一行行內程式碼裡有三個反引號，不是程式碼區塊的開頭，後面的圖照樣算
+        ("```js``` 是寫法\n\n![](https://x.example/d.png)", "https://x.example/d.png"),
+    ],
+)
+def test_tricky_image_syntax_is_still_caught(draft: str, url: str) -> None:
+    entries = check_images(draft, {"https://ok.example/1.png"}, file=FILE)
+    assert [(entry.status, entry.excerpt) for entry in entries] == [("fail", url)]

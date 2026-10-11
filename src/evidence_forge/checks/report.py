@@ -9,6 +9,7 @@
 """
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal, Self, get_args
 
@@ -57,9 +58,11 @@ class LocatedText(_Contract):
     location: Location
 
 
-def _pointer_token(key: str | int) -> str:
-    # RFC 6901：~ 寫成 ~0、/ 寫成 ~1（順序不能反）。
-    return str(key).replace("~", "~0").replace("/", "~1")
+def json_pointer(parts: Iterable[str | int]) -> str:
+    """一串鍵與索引組成 JSON pointer（RFC 6901）：~ 寫成 ~0、/ 寫成 ~1（順序不能反）。"""
+    return "".join(
+        "/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts
+    )
 
 
 def _as_text(value: object) -> str:
@@ -88,7 +91,7 @@ def collect_located(payload: object, key: str, file: str) -> list[LocatedText]:
         else:
             return
         for child_key, child in children:
-            child_pointer = f"{pointer}/{_pointer_token(child_key)}"
+            child_pointer = pointer + json_pointer([child_key])
             if child_key == key and isinstance(node, dict):
                 found.append(
                     LocatedText(

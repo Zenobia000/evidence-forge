@@ -149,7 +149,7 @@ def check_overlap(
             CheckEntry(
                 check="C3",
                 status="fail",
-                reason=f"這段有 {span.length} 個詞跟原文一字不差",
+                reason=f"這段 {span.length} 個詞都落在跟原文一字不差的片段裡（相鄰的片段已併成一段）",
                 location=Location(file=file, line=line, column=column),
                 excerpt=draft[start:end],
             )

@@ -79,3 +79,19 @@ def test_each_bad_citation_is_listed_separately() -> None:
     entries = check_citations(draft, SOURCES, [], file="drafts/draft.v1.md")
     assert [entry.excerpt for entry in entries] == ["[^X1]", "[^X2]"]
     assert all(entry.status == "fail" for entry in entries)
+
+
+def test_fact_whose_marker_was_dropped_in_the_draft_fails() -> None:
+    # 稿子只剩 S1 兩個字、沒有 [^S1]：不能因為標點被忽略就當成有附編號
+    draft = "成本降了九成 S1 晶片很強。\n"
+    facts = [_fact("成本降了九成[^S1]", 0)]
+    entries = check_citations(draft, SOURCES, facts, file="drafts/draft.v1.md")
+    assert [entry.status for entry in entries] == ["fail"]
+
+
+def test_fact_citing_a_different_source_than_the_draft_fails() -> None:
+    # 稿子引的是 S12，事實句說是 S1：S1 不能當成 S12 的前半段對上
+    draft = "成本降了九成[^S12]。\n"
+    facts = [_fact("成本降了九成[^S1]", 0)]
+    entries = check_citations(draft, {"S1", "S12"}, facts, file="drafts/draft.v1.md")
+    assert [entry.status for entry in entries] == ["fail"]

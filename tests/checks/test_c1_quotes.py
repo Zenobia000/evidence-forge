@@ -49,6 +49,10 @@ def _quote(text: str, index: int = 0) -> LocatedText:
         (SOURCE_MIXED, "做成 CLI，讓 PM 也能跑 coding agent"),
         # 中英之間的空白有無不同
         (SOURCE_MIXED, "讓PM也能跑coding agent"),
+        # 數字裡的小數點與負號照原文，周圍的標點與空白照樣忽略
+        ("成長了 3.5 倍，氣溫是 -5 度。", "成長了3.5倍、氣溫是-5度"),
+        # 範圍的橫線長短不同
+        ("從 2020–2021 年開始。", "從 2020-2021 年開始"),
     ],
 )
 def test_quote_found_after_normalising_passes(source: str, quote: str) -> None:
@@ -78,6 +82,10 @@ def test_quote_found_after_normalising_passes(source: str, quote: str) -> None:
         (SOURCE_MIXED, "讓 PM 也能跑 coding assistant"),
         # 完全捏造
         (SOURCE_MIXED, "Claude Code 是 OpenAI 做的"),
+        # 小數點不見了：3.5 倍變成 35 倍
+        ("成長了 3.5 倍。", "成長了 35 倍"),
+        # 負號不見了：-5 度變成 5 度
+        ("氣溫是 -5 度。", "氣溫是 5 度"),
     ],
 )
 def test_near_miss_or_fabricated_quote_fails(source: str, quote: str) -> None:

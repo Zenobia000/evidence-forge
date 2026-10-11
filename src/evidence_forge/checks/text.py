@@ -20,14 +20,30 @@ def _ignorable(char: str) -> bool:
     )
 
 
+# 寫在數字前面當負號用的橫線。
+_MINUS_SIGNS = frozenset("-‐‑‒–")
+
+
+def _inside_number(text: str, index: int) -> bool:
+    """這個標點是不是數字的一部分：3.5 的點、1,000 的逗號、2020-2021 的橫線、-5 的負號。"""
+    if index + 1 >= len(text) or not text[index + 1].isdigit():
+        return False
+    return (index > 0 and text[index - 1].isdigit()) or text[index] in _MINUS_SIGNS
+
+
 def normalize_for_match(text: str) -> str:
     """逐字比對前的正規化：全形半形統一（NFKC），拿掉所有空白、標點與 Markdown 標記符號。
 
     大小寫、數字、文字本身一律保留：換一個字、改一個數字、改大小寫都不算同一句。
+    數字裡的小數點、千分位、負號也保留，不然 3.5 會跟 35、-5 會跟 5 對上。
     空白整個拿掉（不是縮成一個），因為中文原文的斷行、中英之間有沒有空白都不該影響比對。
     """
+    chars = unicodedata.normalize("NFKC", text)
     return "".join(
-        char for char in unicodedata.normalize("NFKC", text) if not _ignorable(char)
+        # 各種橫線當負號或範圍時一律寫成 -，2020–2021 與 2020-2021 算同一句
+        "-" if char in _MINUS_SIGNS else char
+        for index, char in enumerate(chars)
+        if not _ignorable(char) or _inside_number(chars, index)
     )
 
 
@@ -56,7 +72,9 @@ def find_fences(text: str) -> list[Fence]:
     for number, line in enumerate(text.split("\n"), start=1):
         match = _FENCE.match(line)
         if opener is None:
-            if match:
+            # 反引號開頭的圍欄，後面的說明文字不能再有反引號（CommonMark）；
+            # 「```js``` 是寫法」是一行行內程式碼，不是圍欄。
+            if match and not (match.group(1)[0] == "`" and "`" in line[match.end() :]):
                 opener = (number, match.group(1))
             continue
         # 結尾圍欄：同一種字元、長度不短於開頭，後面只能有空白。

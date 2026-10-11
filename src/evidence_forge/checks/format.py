@@ -17,7 +17,7 @@ from typing import Any, cast
 from jsonschema import exceptions as jsonschema_exceptions
 from jsonschema import validators
 
-from evidence_forge.checks.report import CheckEntry, Location
+from evidence_forge.checks.report import CheckEntry, Location, json_pointer
 from evidence_forge.checks.text import find_fences, line_column, mask_code
 
 _FRONTMATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
@@ -37,7 +37,8 @@ _NOT_MARKDOWN = (
         "稿子裡有 MDX 的 import／export 敘述，不是標準 Markdown",
     ),
     (
-        re.compile(r"</?[A-Z][\w.]*(?=[\s/>])"),
+        # 只看行首：MDX 的元件是一個區塊；句子中間的 List<String> 是一般文字。
+        re.compile(r"^[ \t]*</?[A-Z][\w.]*(?=[\s/>])", re.MULTILINE),
         "稿子裡有 MDX／JSX 元件標籤，不是標準 Markdown",
     ),
 )
@@ -45,12 +46,6 @@ _NOT_MARKDOWN = (
 
 class SchemaError(ValueError):
     """skill 的 `schema.json` 本身寫錯了。這是設定錯誤，不是這次產出不合格。"""
-
-
-def _pointer(path: Any) -> str:
-    return "".join(
-        "/" + str(part).replace("~", "~0").replace("/", "~1") for part in path
-    )
 
 
 def check_schema(
@@ -68,7 +63,7 @@ def check_schema(
     errors = sorted(
         # payload 是 json.loads 讀進來的任意 JSON；jsonschema 的型別標註比實際能吃的窄。
         validator_class(dict(schema)).iter_errors(cast(Any, payload)),
-        key=lambda error: (_pointer(error.absolute_path), error.message),
+        key=lambda error: (json_pointer(error.absolute_path), error.message),
     )
     if not errors:
         return [CheckEntry(check="C5", status="pass", reason="產出符合 schema")]
@@ -77,7 +72,7 @@ def check_schema(
             check="C5",
             status="fail",
             reason=f"產出不符合 schema：{error.message}",
-            location=Location(file=file, pointer=_pointer(error.absolute_path)),
+            location=Location(file=file, pointer=json_pointer(error.absolute_path)),
         )
         for error in errors
     ]
@@ -92,20 +87,22 @@ def _fail(
 
 def check_markdown(draft: str, *, file: str) -> list[CheckEntry]:
     """稿子不是標準 Markdown 的地方各一條 fail；沒問題就一條 pass。"""
-    if not draft.strip():
+    # frontmatter 不算內文：換成空白（保留換行，行號照樣對得上），之後只看內文。
+    frontmatter = _FRONTMATTER.match(draft)
+    body = draft
+    if frontmatter:
+        body = (
+            re.sub(r"[^\n]", " ", draft[: frontmatter.end()])
+            + draft[frontmatter.end() :]
+        )
+    content_lines = [
+        number for number, line in enumerate(body.split("\n"), start=1) if line.strip()
+    ]
+    if not content_lines:
         return [_fail("稿子是空的", file)]
 
-    frontmatter = _FRONTMATTER.match(draft)
-    body_first_line = draft.count("\n", 0, frontmatter.end()) + 1 if frontmatter else 1
-    lines = draft.split("\n")
-    content_lines = [
-        number
-        for number, line in enumerate(lines, start=1)
-        if number >= body_first_line and line.strip()
-    ]
-
     failures: list[CheckEntry] = []
-    for fence in find_fences(draft):
+    for fence in find_fences(body):
         if fence.close_line is None:
             failures.append(
                 _fail(
@@ -121,7 +118,7 @@ def check_markdown(draft: str, *, file: str) -> list[CheckEntry]:
         ):
             return [_fail("整份稿子包在程式碼區塊裡", file, fence.open_line, 1)]
 
-    masked = mask_code(draft)
+    masked = mask_code(body)
     flagged_lines: set[int] = set()
     for pattern, reason in _NOT_MARKDOWN:
         for match in pattern.finditer(masked):
