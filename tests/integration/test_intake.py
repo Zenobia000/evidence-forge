@@ -4,6 +4,8 @@
 """
 
 import json
+import multiprocessing
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -269,6 +271,43 @@ def test_同素材同目標_已有未丟棄的工單_回傳那張_不另開(data
     again = _submit(data, PastedText("同一篇文章"), goal="  給 PM 看的觀點文  ")
 
     assert (again.created, again.job.id) == (False, first.job.id)
+    assert len(_jobs(data)) == 1
+
+
+def _submit_in_child(root: str, start: "multiprocessing.synchronize.Barrier") -> None:
+    start.wait()
+    _submit(DataDir(Path(root)), PastedText("同一篇文章"))
+
+
+@pytest.mark.promise("FR-IN-01")
+def test_同素材同目標_兩個程序同時投入_只開一張(
+    data: DataDir, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # UI 的送出被連按兩下、或 UI 與 `ef new` 同時投入：兩個程序都掃描完才開單的話，
+    # 會開出兩張、各花一次錢。這裡把「掃描完到開單」的空檔拉長，讓兩邊一定重疊
+    from evidence_forge.runner import intake as intake_module
+
+    scan = intake_module._open_job_for
+
+    def slow_scan(*args: object, **kwargs: object) -> object:
+        found = scan(*args, **kwargs)  # type: ignore[arg-type]
+        time.sleep(0.5)
+        return found
+
+    monkeypatch.setattr("evidence_forge.runner.intake._open_job_for", slow_scan)
+    # fork：子程序繼承上面換掉的掃描；兩個程序真的各自開檔、各自上鎖
+    context = multiprocessing.get_context("fork")
+    start = context.Barrier(2)
+    children = [
+        context.Process(target=_submit_in_child, args=(str(data.root), start))
+        for _ in range(2)
+    ]
+    for child in children:
+        child.start()
+    for child in children:
+        child.join(timeout=30)
+
+    assert [child.exitcode for child in children] == [0, 0]
     assert len(_jobs(data)) == 1
 
 

@@ -13,10 +13,13 @@
 工單的 `job.md` 與 `events.jsonl` 只有執行器寫，所以開單放在 runner。
 """
 
+import fcntl
 import hashlib
 import json
 import shutil
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePath
@@ -254,10 +257,46 @@ def open_job(
 
     item, item_dir = _write_item(data, material, now)
     item_path = item_dir.relative_to(data.root).as_posix()
-    existing = _open_job_for(data, item_path, chosen_goal)
-    if existing is not None:
-        return Intake(job=existing, created=False)
+    # 「找已有的工單 → 開資料夾 → 寫 job.md」整段鎖住：送出被連按兩下、或 UI 與 `ef new`
+    # 同時投入同一份素材時，後到的那個等前一個寫完 job.md 再掃描，拿到同一張
+    with _item_lock(data, item):
+        existing = _open_job_for(data, item_path, chosen_goal)
+        if existing is not None:
+            return Intake(job=existing, created=False)
+        job = _create_job(
+            data, recipe, item, item_path, material, chosen_goal, now, budget_usd, genre
+        )
+    return Intake(job=job, created=True)
 
+
+@contextmanager
+def _item_lock(data: DataDir, item: Item) -> Iterator[None]:
+    """以素材項目為單位的跨程序鎖（`flock`）；不同素材互不等待。
+
+    鎖檔放在 `run/locks/`（執行期暫存），不放進素材項目資料夾：素材項目只增不改。
+    程序結束（含當掉）時作業系統會放掉鎖，不會留下卡死的鎖。
+    """
+    path = data.run / "locks" / f"item-{item.id}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _create_job(
+    data: DataDir,
+    recipe: Recipe,
+    item: Item,
+    item_path: str,
+    material: _Material,
+    goal: str,
+    now: datetime,
+    budget_usd: float,
+    genre: str | None,
+) -> Job:
     assert item.content_hash is not None  # 讀得到的素材項目一定有
     job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
     # 素材複製一份進工單：之後 inbox 清掉也不影響（v0.3 §2.1）
@@ -266,7 +305,7 @@ def open_job(
         id=job_id,
         recipe=recipe.name,
         feed=FeedRef(connector=MANUAL_FEED, name=MANUAL_FEED, item=item_path),
-        goal=chosen_goal,
+        goal=goal,
         target_genre=genre,
         budget=Budget(usd=budget_usd),
         status="queued",
@@ -279,4 +318,4 @@ def open_job(
         ),
     )
     write_job(job_dir / "job.md", JobDocument(job=job))
-    return Intake(job=job, created=True)
+    return job
