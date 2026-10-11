@@ -7,6 +7,7 @@ from pathlib import Path
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 
+from evidence_forge.checks.report import CheckEntry
 from evidence_forge.models import Event
 from evidence_forge.paths import DataDir
 from evidence_forge.ui import present, reading
@@ -92,7 +93,7 @@ class DetailView:
     event_total: int = 0
 
 
-def _location_text(row: reading.CheckRow) -> str:
+def _location_text(row: CheckEntry) -> str:
     loc = row.location
     if loc is None or not loc.file:
         return ""
@@ -133,7 +134,7 @@ def _build_checks(view: DetailView, job_dir: Path) -> None:
         view.check_summary = "C1～C7 全部通過"
     else:
         view.check_groups = []
-    if read.checks.entries == [] or not view.check_groups:
+    if not view.check_groups:
         view.empty = ("檢查結果是空的", "檢查段有跑，但沒有留下任何一條結果。")
 
 

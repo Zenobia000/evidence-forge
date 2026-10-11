@@ -146,3 +146,19 @@ class Folder:
         path = self.data.job_dir(job_id) / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def checks(
+        self, job_id: str, entries: list[dict[str, Any]], version: int = 1
+    ) -> None:
+        """寫一份合格的 `checks/checks.vN.json`（欄位照 `checks.report.ChecksReport`）。"""
+        self.json_file(
+            job_id,
+            f"checks/checks.v{version}.json",
+            {
+                "stage": "verify",
+                "attempt": 1,
+                "files": ["drafts/draft.v1.md"],
+                "created_at": self.at(2).isoformat(),
+                "entries": entries,
+            },
+        )

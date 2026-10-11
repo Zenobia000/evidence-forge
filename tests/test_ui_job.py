@@ -228,24 +228,19 @@ def test_checks_tab_groups_fail_warn_pass_with_three_different_shapes(
         title="t",
         result={"outcome": "incomplete", "reason": "C3 照抄，修了 1 次仍沒過"},
     )
-    folder.json_file(
+    folder.checks(
         "j",
-        "checks/checks.v1.json",
-        {
-            "stage": "verify",
-            "attempt": 1,
-            "entries": [
-                {"check": "C1", "status": "pass", "reason": "7 條引句都在原文裡"},
-                {"check": "C7", "status": "warn", "reason": "結論沒有寫出判斷條件"},
-                {
-                    "check": "C3",
-                    "status": "fail",
-                    "reason": "重疊 62%，門檻 40%",
-                    "location": {"file": "drafts/draft.v1.md", "line": 12},
-                    "excerpt": "照抄的那一段",
-                },
-            ],
-        },
+        [
+            {"check": "C1", "status": "pass", "reason": "7 條引句都在原文裡"},
+            {"check": "C7", "status": "warn", "reason": "結論沒有寫出判斷條件"},
+            {
+                "check": "C3",
+                "status": "fail",
+                "reason": "重疊 62%，門檻 40%",
+                "location": {"file": "drafts/draft.v1.md", "line": 12},
+                "excerpt": "照抄的那一段",
+            },
+        ],
     )
     html = client_for(folder).get("/jobs/j").text  # 未完成 → 預設就是檢查結果
     body = panel(html)
@@ -267,11 +262,7 @@ def test_checks_tab_marks_attention_even_when_another_tab_is_open(
     folder: Folder,
 ) -> None:
     folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
-    folder.json_file(
-        "j",
-        "checks/checks.v1.json",
-        {"entries": [{"check": "C7", "status": "warn", "reason": "r"}]},
-    )
+    folder.checks("j", [{"check": "C7", "status": "warn", "reason": "r"}])
 
     html = client_for(folder).get("/jobs/j?tab=bill").text
 
@@ -282,11 +273,7 @@ def test_checks_tab_says_all_passed_when_nothing_needs_attention(
     folder: Folder,
 ) -> None:
     folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
-    folder.json_file(
-        "j",
-        "checks/checks.v1.json",
-        {"entries": [{"check": "C1", "status": "pass", "reason": "ok"}]},
-    )
+    folder.checks("j", [{"check": "C1", "status": "pass", "reason": "ok"}])
 
     body = panel(client_for(folder).get("/jobs/j?tab=checks").text)
 
@@ -411,6 +398,29 @@ def test_a_broken_checks_file_is_reported_not_hidden(folder: Folder) -> None:
 
     assert response.status_code == 200
     assert "讀不懂這一頁的資料" in response.text and "不是合法的 JSON" in response.text
+
+
+def test_a_checks_file_with_no_entries_says_so_instead_of_claiming_all_passed(
+    folder: Folder,
+) -> None:
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
+    folder.checks("j", [])
+
+    body = panel(client_for(folder).get("/jobs/j?tab=checks").text)
+
+    assert "檢查結果是空的" in body and "全部通過" not in body
+
+
+def test_a_checks_file_that_breaks_the_contract_is_reported_with_the_field(
+    folder: Folder,
+) -> None:
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
+    # C6 是軟檢查，契約不准 fail
+    folder.checks("j", [{"check": "C6", "status": "fail", "reason": "r"}])
+
+    response = client_for(folder).get("/jobs/j?tab=checks")
+
+    assert "讀不懂這一頁的資料" in response.text and "格式讀不懂" in response.text
 
 
 @pytest.mark.promise("FR-UI-01")
