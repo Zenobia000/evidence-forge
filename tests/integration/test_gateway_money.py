@@ -25,9 +25,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
 from evidence_forge.gateway import ledger
+from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
+from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.gateway.config import Fault
 from evidence_forge.gateway.ledger import append_intake
+from evidence_forge.gateway.prices import load_prices
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
@@ -605,16 +608,9 @@ def test_關後端連線時出錯_帳本照樣有這一行(
     assert entry.cost_usd > 0
 
 
-@pytest.mark.promise("NFR-COST-01", "NFR-PAR-02")
-@pytest.mark.parametrize("tier", ["local", "strong"])
-def test_結算時寫帳本失敗_預留與_GPU_照樣放掉_下一個請求不卡(
-    gateway: Callable[..., AbstractContextManager[Gateway]],
-    data: DataDir,
-    monkeypatch: pytest.MonkeyPatch,
-    tier: str,
-) -> None:
-    # 帳本寫不進去（例如磁碟滿）：預留沒退，工單預算與本月額度就一直被佔著；
-    # 本機等級的 GPU 不放，之後所有本機請求都排隊排到逾時
+@pytest.fixture
+def ledger_fails_once(monkeypatch: pytest.MonkeyPatch) -> list[LedgerEntry]:
+    """帳本第一次寫不進去（例如磁碟滿），之後恢復；回傳那一筆沒寫進去的。"""
     write = ledger.append
     failed: list[LedgerEntry] = []
 
@@ -625,24 +621,90 @@ def test_結算時寫帳本失敗_預留與_GPU_照樣放掉_下一個請求不�
         write(job_dir, entry)
 
     monkeypatch.setattr(ledger, "append", disk_full_once)
+    return failed
+
+
+def _post_settle_fails(url: str, key: JobKey, raw: bytes) -> None:
+    try:
+        _post(url, key, raw)
+    except httpx.HTTPError:
+        pass  # 結算丟例外，這個回應可能沒有正常收尾
+
+
+@pytest.mark.promise("NFR-COST-01", "NFR-PAR-02")
+@pytest.mark.parametrize("tier", ["local", "strong"])
+def test_結算時寫帳本失敗_預留與_GPU_照樣放掉_下一個請求不卡(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    ledger_fails_once: list[LedgerEntry],
+    tier: str,
+) -> None:
+    # 帳本寫不進去（例如磁碟滿）：預留沒退，工單預算與本月額度就一直被佔著；
+    # 本機等級的 GPU 不放，之後所有本機請求都排隊排到逾時
     # 預算只夠預留一次 strong（約 US$0.16）：第一次的預留沒退，第二次就預留不到
     job_id = _job(data, budget_usd=0.2)
     key = JobKey(job_id, "echo", 1)
     with gateway(_active(key)) as gw:
-        try:
-            _post(gw.url, key, _body(tier, "one"))
-        except httpx.HTTPError:
-            pass  # 結算丟例外，這個回應可能沒有正常收尾
+        _post_settle_fails(gw.url, key, _body(tier, "one"))
         second = _post(gw.url, key, _body(tier, "two"))
     # 失敗的是第一次呼叫的結算，不是別的地方
-    assert [entry.status for entry in failed] == ["ok"]
+    assert [entry.status for entry in ledger_fails_once] == ["ok"]
     assert second.status_code == 200
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_結算時寫帳本失敗_這次實際花掉的錢照樣算進工單預算(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+    ledger_fails_once: list[LedgerEntry],
+) -> None:
+    # 錢已經付給後端，帳本卻沒有這一行：預留整個放掉的話，寫不進帳本的這段期間上限完全擋不住
+    expensive = _sse("好", input_tokens=1000, output_tokens=15000)
+    anthropic.replies = [lambda: Response(expensive, media_type="text/event-stream")]
+    job_id = _job(data, budget_usd=0.2)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        _post_settle_fails(gw.url, key, _body("strong", "one"))
+        second = _post(gw.url, key, _body("strong", "two"))
+    # 第一次實際花了 1000×$2 + 15000×$10（每百萬 token）＝ US$0.152，剩 0.048，不夠再預留一次 strong
+    assert [entry.cost_usd for entry in ledger_fails_once] == [0.152]
+    assert second.status_code == 400
+    assert second.json()["error"]["type"] == "budget_exceeded"
+    assert len(anthropic.received) == 1
+
+
+@pytest.mark.promise("FR-LG-01", "NFR-COST-01")
+def test_回應原文存不進_blobs_帳本照樣記這一行_金額照算(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 原文是事後查帳用的，帳本那一行才是錢：原文存不進去不能連帳都不記
+    put = BlobStore.put
+
+    def no_room_for_responses(self: BlobStore, content: bytes) -> str:
+        if content == SSE:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return put(self, content)
+
+    monkeypatch.setattr(BlobStore, "put", no_room_for_responses)
+    job_id = _job(data)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key)) as gw:
+        response = _post(gw.url, key, _body("strong"))
+    assert response.content == SSE
+    [entry] = _ledger(data, job_id)
+    assert (entry.status, entry.cost_usd, entry.response_hash) == ("ok", 0.004, None)
 
 
 # --- HTTP 200 但不是一則完整的訊息 ------------------------------------------------
 
-# 一次 strong 呼叫至少預留 16000 個輸出 token × $10／百萬 ＝ US$0.16（models.yaml 的 max_tokens）
-STRONG_RESERVATION_FLOOR_USD = 0.16
+# 一次 strong 呼叫至少預留 max_tokens 個輸出 token 的錢（models.yaml、prices.yaml；現在是 US$0.16）
+_STRONG = load_aliases()["strong"]
+STRONG_RESERVATION_FLOOR_USD = float(
+    _STRONG.max_tokens * load_prices()[_STRONG.model].output / 1_000_000
+)
 
 
 def _overloaded_midstream(with_event_line: bool) -> Callable[[], Response]:

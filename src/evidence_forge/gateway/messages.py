@@ -24,6 +24,7 @@
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -49,6 +50,8 @@ from evidence_forge.ledger_models import LedgerEntry, LedgerStatus
 from evidence_forge.gateway.prices import Price, cost_micros, reservation_micros
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import JobKey
+
+_log = logging.getLogger(__name__)
 
 _ERROR_TYPES = {
     400: "invalid_request_error",
@@ -215,10 +218,13 @@ def add_message_routes(
             ),
         )
 
-    def release(call: _Call) -> None:
-        """放掉預留、GPU、等待狀態。可以重複呼叫；收尾一律經過 `finish`。"""
+    def release(call: _Call, unbooked: int = 0) -> None:
+        """放掉預留、GPU、等待狀態。可以重複呼叫；收尾一律經過 `finish`。
+
+        `unbooked` 是帳本沒寫進去的實際金額，交給預算照樣算進上限（`BudgetGuard.release`）。
+        """
         if call.reservation is not None:
-            guard.release(call.reservation)
+            guard.release(call.reservation, unbooked_micros=unbooked)
             call.reservation = None
         if call.semaphore is not None:
             call.semaphore.release()
@@ -236,21 +242,35 @@ def add_message_routes(
         """收尾：先記一行帳，再放掉預留與 GPU。只做一次；這裡沒有 await，取消打不斷。
 
         記帳丟例外（例如磁碟滿）也一定放資源：不然這筆預留一直佔著工單預算與本月額度，
-        本機等級的 GPU 也不放，之後的本機請求全部排隊到逾時。`response` 有給就存進 `blobs/`。
+        本機等級的 GPU 也不放，之後的本機請求全部排隊到逾時。可是錢已經花了：
+        這次的實際金額（`cost`）留給預算照樣算進上限，寫不進帳本的期間上限才擋得住。
+        `response` 有給就存進 `blobs/`。
         """
         if call.finished:
             return
         call.finished = True
+        unbooked = cost
         try:
-            record(
-                call,
-                status,
-                response_hash=blobs.put(response) if response is not None else None,
-                usage=usage,
-                cost=cost,
-            )
+            record(call, status, response_hash=keep(response), usage=usage, cost=cost)
+            unbooked = 0
         finally:
-            release(call)
+            release(call, unbooked)
+
+    def keep(response: bytes | None) -> str | None:
+        """回應原文存進 `blobs/`，回傳 hash；存不進去就記一筆警告、回傳 None。
+
+        原文是事後查帳用的，帳本那一行才是錢：不能因為原文存不進去就連帳都不記。
+        沒有 `response_hash` 的那一行不會被回放。
+        """
+        if response is None:
+            return None
+        try:
+            return blobs.put(response)
+        except OSError:
+            _log.warning(
+                "回應原文存不進 blobs/，帳本這一行不帶 response_hash", exc_info=True
+            )
+            return None
 
     def fail(
         call: _Call, status: LedgerStatus, http_status: int, message: str
@@ -290,10 +310,13 @@ def add_message_routes(
         media_type: str = "text/event-stream",
     ) -> _Relay:
         async def close() -> None:
-            # generator 沒開始跑就被取消時，它的 finally 不會執行；這裡補記
-            settle(call, success)
-            if call.upstream is not None:
-                await call.upstream.aclose()
+            # generator 沒開始跑就被取消時，它的 finally 不會執行；這裡補記。
+            # 補記丟例外（寫不進帳本）也要關後端連線
+            try:
+                settle(call, success)
+            finally:
+                if call.upstream is not None:
+                    await call.upstream.aclose()
 
         return _Relay(
             body(call, source, success),
@@ -364,7 +387,8 @@ def add_message_routes(
         if recorded_blobs is not None:
             hashes = recorded.get((key.stage, key.attempt, call.request_hash), [])
             return recorded_blobs.get(hashes[nth]) if nth < len(hashes) else None
-        # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過，那一次的回應就不回放
+        # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過：那一次的回應不在清單裡，
+        # 同一個請求後面的回應往前遞補。回放的仍然都是這個請求真的拿到過的回應
         entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
         # 只認真的轉送拿到的成功回應；cache_hit 那幾行是回放，不能再算成一份
         hashes = ledger.responses_by_call(entries, ("ok",)).get(
