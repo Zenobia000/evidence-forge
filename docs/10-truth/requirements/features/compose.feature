@@ -13,7 +13,7 @@ Feature: 二創
   @sad-path
   Scenario: 照抄原文會被擋下並自動修
     Given 稿子裡有一段跟原文的逐字重疊超過門檻
-    When 檢查段完成
+    When 二創段完成，執行器直接跑硬檢查
     Then C3 不通過
     And 執行器帶著檢查結果回二創段重寫一次
     And 新稿子是新版本，舊版保留

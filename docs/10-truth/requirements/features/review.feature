@@ -49,6 +49,7 @@ Feature: 待審、退件與看板
       | gpu           | 等 GPU     |
       | rate_limit    | 等限流     |
       | model         | 等模型回應 |
+      | tool          | 執行工具中 |
 
   Scenario: 所有結果都進同一個待審清單
     Given 三張工單分別是完成、預算用完、Ollama 沒開而失敗
