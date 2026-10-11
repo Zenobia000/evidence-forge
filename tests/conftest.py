@@ -15,9 +15,7 @@ _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
 @pytest.fixture(autouse=True)
-def _record_promises(
-    request: pytest.FixtureRequest, record_property: Any
-) -> None:
+def _record_promises(request: pytest.FixtureRequest, record_property: Any) -> None:
     for marker in request.node.iter_markers("promise"):
         for promise_id in marker.args:
             record_property("promise", promise_id)

@@ -75,9 +75,7 @@ def open_job(
     if not goal.strip():
         raise ValueError("要寫目標（S0.3 還沒有配方的預設目標）")
     item, item_dir = _write_item(data, text, now)
-    job_id, job_dir = _new_job_dir(
-        data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}"
-    )
+    job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
     # 素材複製一份進工單：之後 inbox 清掉也不影響（v0.3 §2.1）
     write_once(job_dir / "input" / "content.md", text)
     job = Job(
@@ -95,6 +93,8 @@ def open_job(
     write_job(job_dir / "job.md", JobDocument(job=job))
     events.append(
         job_dir,
-        Event(ts=now, kind="status", from_status=None, to_status="queued", message="開單"),
+        Event(
+            ts=now, kind="status", from_status=None, to_status="queued", message="開單"
+        ),
     )
     return job

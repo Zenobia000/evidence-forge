@@ -28,7 +28,9 @@ class GatewayConfig:
     backend_timeout_s: float = 600.0
 
 
-def config_from_env(data: DataDir, env: Mapping[str, str] | None = None) -> GatewayConfig:
+def config_from_env(
+    data: DataDir, env: Mapping[str, str] | None = None
+) -> GatewayConfig:
     """`ef serve` 用：從環境變數讀模式、錄音位置與 Ollama 位址。"""
     environ = os.environ if env is None else env
     mode = environ.get("EF_GATEWAY_MODE", "live").strip() or "live"

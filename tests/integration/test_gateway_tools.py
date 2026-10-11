@@ -59,7 +59,9 @@ def env(
     stages = ActiveStages()
     stages.activate(KEY)
     # 工具端點不碰模型；錄音是空的，任何模型請求都會被拒
-    config = GatewayConfig(data=data, mode="replay", replay_dir=tmp_path / "no-recording")
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=tmp_path / "no-recording"
+    )
     app = create_app(config, stages)
     with serve(app) as url:
         yield Env(url=url, data=data, stages=stages)
@@ -97,7 +99,9 @@ def test_寫這一段這一次以外的地方一律拒絕(env: Env, path: str) -
     response = env.call("write_file", KEY, path=path, content="注入")
     assert response.status_code == 403
     assert not (env.job_dir / path).is_file() or path == "job.md"
-    assert (env.job_dir / "job.md").read_text(encoding="utf-8").endswith("running\n---\n")
+    assert (
+        (env.job_dir / "job.md").read_text(encoding="utf-8").endswith("running\n---\n")
+    )
 
 
 @pytest.mark.promise("NFR-SEC-02")
@@ -123,7 +127,9 @@ def test_經過符號連結寫出去拒絕(env: Env, tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     os.symlink(outside, env.job_dir / "stages" / "echo" / "2" / "link")
-    response = env.call("write_file", KEY, path="stages/echo/2/link/x.md", content="注入")
+    response = env.call(
+        "write_file", KEY, path="stages/echo/2/link/x.md", content="注入"
+    )
     assert response.status_code == 403
     assert list(outside.iterdir()) == []
 

@@ -85,7 +85,11 @@ def test_子程序的_stdin_是_dev_null(tmp_path: Path) -> None:
 def test_子程序拿不到雲端金鑰_只有白名單與_Pi_需要的變數(tmp_path: Path) -> None:
     report = _run(
         tmp_path,
-        {"PATH": "/usr/bin:/bin", "ANTHROPIC_API_KEY": "sk-ant-canary", "HOME": "/root"},
+        {
+            "PATH": "/usr/bin:/bin",
+            "ANTHROPIC_API_KEY": "sk-ant-canary",
+            "HOME": "/root",
+        },
     )
     env = report["env"]
     assert isinstance(env, dict)

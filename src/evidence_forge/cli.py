@@ -38,12 +38,19 @@ def _new(args: argparse.Namespace) -> int:
     recipes = _recipes(_harness(args.harness))
     recipe = recipes.get(args.recipe)
     if recipe is None:
-        print(f"沒有配方 {args.recipe}（有：{', '.join(sorted(recipes))}）", file=sys.stderr)
+        print(
+            f"沒有配方 {args.recipe}（有：{', '.join(sorted(recipes))}）",
+            file=sys.stderr,
+        )
         return 2
     data = resolve_data_dir()
     data.ensure()
     job = open_job(
-        data, recipe, text=args.text, goal=args.goal, now=taipei_now(),
+        data,
+        recipe,
+        text=args.text,
+        goal=args.goal,
+        now=taipei_now(),
         budget_usd=args.budget_usd,
     )
     print(job.id)
@@ -59,7 +66,10 @@ def _serve(args: argparse.Namespace) -> int:
     stages = ActiveStages()
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(config, stages), host="127.0.0.1", port=args.port, log_level="warning"
+            create_app(config, stages),
+            host="127.0.0.1",
+            port=args.port,
+            log_level="warning",
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
@@ -69,7 +79,10 @@ def _serve(args: argparse.Namespace) -> int:
             print(f"閘道沒有啟動（埠 {args.port} 被佔用？）", file=sys.stderr)
             return 1
         time.sleep(0.05)
-    print(f"閘道 http://127.0.0.1:{args.port}（{config.mode}）；資料目錄 {data.root}", flush=True)
+    print(
+        f"閘道 http://127.0.0.1:{args.port}（{config.mode}）；資料目錄 {data.root}",
+        flush=True,
+    )
     runner = Runner(
         data=data,
         harness=harness,
@@ -101,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("--text", required=True, help="文章內容")
     new.add_argument("--goal", required=True, help="這張工單的目標")
     new.add_argument("--recipe", default="echo", help="配方名稱（預設 echo）")
-    new.add_argument("--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）")
+    new.add_argument(
+        "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"
+    )
     new.add_argument("--harness", help="harness 資料夾（預設 repo 的 harness/）")
     new.set_defaults(handler=_new)
 

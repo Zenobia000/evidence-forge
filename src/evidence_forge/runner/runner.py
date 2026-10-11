@@ -52,7 +52,9 @@ def stage_prompt(recipe: Recipe, stage: RecipeStage, attempt: int, goal: str) ->
     )
 
 
-def validate_outputs(stage_dir: Path, stage: RecipeStage, schema_path: Path) -> list[str]:
+def validate_outputs(
+    stage_dir: Path, stage: RecipeStage, schema_path: Path
+) -> list[str]:
     """檢查這一段宣告的產出：每個檔都要在、不能是空的；`.json` 檔要符合 skill 的 schema。
 
     回傳問題清單，空的表示合格。schema.json 驗的是這一段的 JSON 產出。
@@ -126,10 +128,18 @@ class Runner:
         )
         return updated
 
-    def _stage_event(self, job_dir: Path, stage: str, attempt: int, message: str) -> None:
+    def _stage_event(
+        self, job_dir: Path, stage: str, attempt: int, message: str
+    ) -> None:
         events.append(
             job_dir,
-            Event(ts=self.clock(), kind="stage", stage=stage, attempt=attempt, message=message),
+            Event(
+                ts=self.clock(),
+                kind="stage",
+                stage=stage,
+                attempt=attempt,
+                message=message,
+            ),
         )
 
     # --- 掃描與執行 ---------------------------------------------------------
@@ -156,8 +166,13 @@ class Runner:
             # 開單時配方還在、之後被刪了；直接以失敗進待審，不卡住佇列
             doc = self._set(job_dir, doc, "running", "開始")
             self._set(
-                job_dir, doc, "review", "配方不存在",
-                result=JobResult(outcome="failed", reason=f"找不到配方 {doc.job.recipe}"),
+                job_dir,
+                doc,
+                "review",
+                "配方不存在",
+                result=JobResult(
+                    outcome="failed", reason=f"找不到配方 {doc.job.recipe}"
+                ),
             )
             return job_id
 
@@ -165,19 +180,29 @@ class Runner:
         attempt = 1
         for index, stage in enumerate(recipe.stages, start=1):
             progress = StageProgress(
-                id=stage.id, index=index, total=len(recipe.stages),
-                attempt=attempt, started_at=self.clock(),
+                id=stage.id,
+                index=index,
+                total=len(recipe.stages),
+                attempt=attempt,
+                started_at=self.clock(),
             )
-            doc = self._set(job_dir, doc, "running", f"開始 {stage.id} 段", stage=progress)
+            doc = self._set(
+                job_dir, doc, "running", f"開始 {stage.id} 段", stage=progress
+            )
             problems = self._run_stage(job_dir, recipe, stage, attempt, doc.job.goal)
             if problems:
                 reason = f"{stage.id} 段第 {attempt} 次失敗：" + "；".join(problems)
                 self._set(
-                    job_dir, doc, "review", reason,
+                    job_dir,
+                    doc,
+                    "review",
+                    reason,
                     result=JobResult(outcome="failed", reason=reason),
                 )
                 return job_id
-        self._set(job_dir, doc, "review", "全部段完成", result=JobResult(outcome="complete"))
+        self._set(
+            job_dir, doc, "review", "全部段完成", result=JobResult(outcome="complete")
+        )
         return job_id
 
     def _run_stage(
@@ -204,7 +229,9 @@ class Runner:
         try:
             result = pi_launch.run_pi(
                 command,
-                log_path=self.data.run / "pi-logs" / f"{key.job_id}-{stage.id}-{attempt}.jsonl",
+                log_path=self.data.run
+                / "pi-logs"
+                / f"{key.job_id}-{stage.id}-{attempt}.jsonl",
                 timeout_s=self.pi_timeout_s,
             )
         finally:
@@ -213,8 +240,12 @@ class Runner:
             self._stage_event(job_dir, stage.id, attempt, "Pi 逾時")
             return [f"Pi 超過 {self.pi_timeout_s:.0f} 秒沒結束，已停止"]
         if result.returncode != 0:
-            self._stage_event(job_dir, stage.id, attempt, f"Pi 結束碼 {result.returncode}")
-            return [f"Pi 結束碼 {result.returncode}：{result.stderr_tail.strip()[-500:]}"]
+            self._stage_event(
+                job_dir, stage.id, attempt, f"Pi 結束碼 {result.returncode}"
+            )
+            return [
+                f"Pi 結束碼 {result.returncode}：{result.stderr_tail.strip()[-500:]}"
+            ]
         problems = validate_outputs(stage_dir, stage, skill_dir / "schema.json")
         self._stage_event(
             job_dir, stage.id, attempt, "產出合格" if not problems else "產出不合格"

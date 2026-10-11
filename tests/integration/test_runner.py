@@ -63,16 +63,21 @@ assert status == 200, status
 event(type="tool_execution_end", toolName="read_file", isError=False)
 """
 
-WELL_BEHAVED = FAKE_PI_HEAD + """
+WELL_BEHAVED = (
+    FAKE_PI_HEAD
+    + """
 summary = {"summary": "這是一段測試用的摘要。"}
 status, _ = call("/tools/write_file", {"path": "stages/echo/1/summary.json",
     "content": json.dumps(summary, ensure_ascii=False)})
 assert status == 200, status
 event(type="agent_end")
 """
+)
 
 # 原文裡的提示注入得逞時，agent 會試著寫審稿決定與狀態檔
-INJECTED = FAKE_PI_HEAD + """
+INJECTED = (
+    FAKE_PI_HEAD
+    + """
 results = {}
 for path in ["review/decision.v1.json", "job.md", "events.jsonl", "ledger.jsonl"]:
     status, _ = call("/tools/write_file", {"path": path, "content": '{"action": "approve"}'})
@@ -81,17 +86,24 @@ call("/tools/write_file", {"path": "stages/echo/1/summary.json",
     "content": json.dumps({"summary": "照常完成"})})
 event(type="agent_end", rejected=results)
 """
+)
 
-BAD_OUTPUT = FAKE_PI_HEAD + """
+BAD_OUTPUT = (
+    FAKE_PI_HEAD
+    + """
 call("/tools/write_file", {"path": "stages/echo/1/summary.json",
     "content": json.dumps({"summery": "欄位名打錯"})})
 event(type="agent_end")
 """
+)
 
-CRASHES = FAKE_PI_HEAD + """
+CRASHES = (
+    FAKE_PI_HEAD
+    + """
 print("boom", file=sys.stderr)
 sys.exit(3)
 """
+)
 
 SSE = (
     b'event: message_start\ndata: {"type":"message_start","message":{"usage":'
@@ -201,7 +213,11 @@ def test_狀態轉換依序寫進事件紀錄(world_for: Callable[[str], World])
         for event in _events(world.data, job_id)
         if event.kind == "status"
     ]
-    assert transitions == [(None, "queued"), ("queued", "running"), ("running", "review")]
+    assert transitions == [
+        (None, "queued"),
+        ("queued", "running"),
+        ("running", "review"),
+    ]
 
 
 def test_沒有排隊中的工單就什麼都不做(world_for: Callable[[str], World]) -> None:
@@ -282,7 +298,9 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
     assert len(recorded.backend_calls) == 1
     recording = tmp_path / "recording"
     shutil.copytree(recorded.data.blobs, recording / "blobs")
-    shutil.copy(recorded.data.job_dir(first) / "ledger.jsonl", recording / "ledger.jsonl")
+    shutil.copy(
+        recorded.data.job_dir(first) / "ledger.jsonl", recording / "ledger.jsonl"
+    )
 
     # 第二次：全新的資料目錄、重播模式，後端位址指到一個沒人聽的埠
     data = DataDir(tmp_path / "replayed")
@@ -292,7 +310,9 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
         data=data, mode="replay", replay_dir=recording, ollama_url="http://127.0.0.1:9"
     )
     with serve(create_app(config, stages)) as gateway_url:
-        runner = replace(recorded.runner, data=data, stages=stages, gateway_url=gateway_url)
+        runner = replace(
+            recorded.runner, data=data, stages=stages, gateway_url=gateway_url
+        )
         job_id = open_job(
             data,
             runner.recipes["echo"],
@@ -305,5 +325,7 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
     job = read_job(data.job_dir(job_id) / "job.md").job
     assert job.result is not None and job.result.outcome == "complete"
     assert len(recorded.backend_calls) == 1
-    lines = (data.job_dir(job_id) / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = (
+        (data.job_dir(job_id) / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     assert [json.loads(line)["status"] for line in lines] == ["cache_hit"]
