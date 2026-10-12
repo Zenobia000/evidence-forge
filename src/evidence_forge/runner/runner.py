@@ -54,6 +54,7 @@ from evidence_forge.runner import (
     hard_checks,
     pi_launch,
     provenance,
+    sources,
     stage_inputs,
 )
 from evidence_forge.transitions import transition
@@ -75,21 +76,32 @@ def stage_prompt(
     goal: str,
     fix: str = "",
     upstream: Sequence[str] = (),
+    sources: Mapping[str, Path] | None = None,
 ) -> str:
     """這一段給 agent 的任務說明。只放段、次、目標、檔名，不放工單 id 與時間：
     同樣的素材與目標送出的請求要逐位元組相同，快取與重播才對得上。
 
     `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
     `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
+    `sources` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列，
+    只有種子時一個字都不多（整理段、補料段與 echo 的請求跟以前一樣）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
+    cited = (
+        "來源（引用編號：正文）："
+        + "、".join(f"{sid} {path.as_posix()}" for sid, path in sources.items())
+        + "\n"
+        if sources is not None and len(sources) > 1
+        else ""
+    )
     prompt = (
         f"配方「{recipe.name}」的「{stage.id}」段，第 {attempt} 次。\n"
         f"目標：{goal}\n"
         f"素材在 input/content.md。\n"
         f"{earlier}"
+        f"{cited}"
         f"照系統提示裡的 skill 完成這一段，用 write_file 寫出：{outputs}"
     )
     return f"{prompt}\n\n{fix}" if fix else prompt
@@ -689,6 +701,7 @@ class Runner:
                 doc.job.goal,
                 self._fix(job_dir, stage, progress),
                 upstream_outputs(job_dir, recipe, stage),
+                sources.job_sources(job_dir),
             ),
             base_env=self._base_env(),
             web_search=stage.tavily_credits > 0,
@@ -745,6 +758,15 @@ class Runner:
                 reason = f"{stage.id} 段第 {attempt} 次的產出沒辦法驗：{exc}"
                 self._stage_event(job_dir, stage.id, attempt, reason)
                 return _Tried(stop=JobResult(outcome="failed", reason=reason))
+            if not problems and sources.collects_sources(stage):
+                # 補料段：照 sources.json 放來源正文；網址這一次沒抓過就算不合格（#70）
+                problems = sources.place_sources(
+                    self.data,
+                    job_dir,
+                    stage,
+                    attempt,
+                    seed_url=sources.seed_url(self.data, doc.job.feed.item),
+                )
             error = pi_error(result.events)
             if problems and error is not None:
                 # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡

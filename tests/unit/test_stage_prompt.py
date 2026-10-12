@@ -46,3 +46,32 @@ def test_第一段沒有前面的產出_任務說明跟以前逐位元組相同(
         "素材在 input/content.md。\n"
         "照系統提示裡的 skill 完成這一段，用 write_file 寫出：stages/digest/1/claims.json"
     )
+
+
+def test_補料段放了來源之後_任務說明列出每個引用編號與正文的位置(
+    tmp_path: Path,
+) -> None:
+    # #70：二創要綜合多個來源，執行器告訴它有哪些來源、各自叫什麼編號
+    prompt = stage_prompt(
+        RECIPE,
+        RECIPE.stages[1],
+        1,
+        "寫一篇",
+        sources={
+            "S1": Path("input/content.md"),
+            "S2": Path("input/sources/S2.md"),
+            "S3": Path("input/sources/S3.md"),
+        },
+    )
+    assert (
+        "來源（引用編號：正文）：S1 input/content.md、S2 input/sources/S2.md、"
+        "S3 input/sources/S3.md\n"
+    ) in prompt
+
+
+def test_只有種子一個來源時_任務說明不多一個字() -> None:
+    # 整理段、補料段、echo 都只有種子：錄好的請求不能因為這一行而對不上
+    only_seed = {"S1": Path("input/content.md")}
+    assert stage_prompt(
+        RECIPE, RECIPE.stages[0], 1, "寫一篇", sources=only_seed
+    ) == stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇")

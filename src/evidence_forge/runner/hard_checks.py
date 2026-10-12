@@ -4,7 +4,8 @@
 哪一段跑哪幾項，看這一段用的 skill：
 
 - `digest`（整理）：C1、C5。沒過算這段這次失敗，走重試與升級。
-- `compose`（二創）：C2～C5。沒過帶著結果回二創段修，最多 `auto_fix` 次。
+- `compose`（二創）：C2～C5。沒過帶著結果回二創段修，最多 `auto_fix` 次。C2 的引用編號、C3 比的正文
+  都是種子加補料段放的來源（`sources.job_sources`，#70）。
 - 其他 skill：不跑硬檢查，只驗 schema（`validate_outputs`）。
 
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
@@ -28,13 +29,13 @@ from evidence_forge.checks import (
 )
 from evidence_forge.models import RecipeStage
 from evidence_forge.paths import DataDir, JobDir
+from evidence_forge.runner import sources
 
 DIGEST_SKILL = "digest"
 COMPOSE_SKILL = "compose"
 
-# 原文在工單裡的位置與它的引用編號。補料段的來源（S0.8 之後）再接進來源清單
-ORIGINAL_SOURCE = Path("input/content.md")
-ORIGINAL_SOURCE_ID = "S1"
+# 原文（種子）在工單裡的位置。二創段的來源清單是種子加補料段放的來源（`sources.job_sources`）
+ORIGINAL_SOURCE = sources.SEED
 
 # 任務說明裡最多列幾條沒過的條目；全部都在 checks.vN.json
 _MAX_LISTED = 10
@@ -88,7 +89,7 @@ def run_hard_checks(
                 draft=draft,
                 output=output,
                 schema=schema,
-                sources={ORIGINAL_SOURCE_ID: ORIGINAL_SOURCE},
+                sources=sources.job_sources(job_dir),
                 thresholds=load_check_settings(data).c3,
             )
     except (ValueError, OSError) as exc:
