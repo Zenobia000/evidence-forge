@@ -21,7 +21,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from evidence_forge.gateway import ledger, scope, scripts
+from evidence_forge.convkey import ConversationKey
+from evidence_forge.gateway import chat_tools, ledger, scope, scripts
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
@@ -58,6 +59,7 @@ def create_app(
     fetcher: Fetcher | None = None,
     searcher: Searcher | None = None,
     script_timeout_s: float = scripts.DEFAULT_TIMEOUT_S,
+    desk: chat_tools.Desk | None = None,
 ) -> FastAPI:
     """`board` 要跟執行器共用（`ef serve`）；不傳就自己開一個，執行器讀不到。
 
@@ -115,6 +117,13 @@ def create_app(
             raise scope.ToolRejected(400, "請求內容要是 JSON") from None
         if not isinstance(body, dict):
             raise scope.ToolRejected(400, "請求內容要是 JSON 物件")
+        # 對話鑰匙只能用對話的工具；段的工具（讀寫檔、抓網頁、跑腳本）只給工單鑰匙（NFR-SEC-02）
+        if isinstance(key, ConversationKey):
+            if name not in chat_tools.CHAT_TOOLS:
+                raise scope.ToolRejected(403, f"對話不能用 {name}")
+            return await chat_tools.handle(config, desk, key, name, body)
+        if name in chat_tools.CHAT_TOOLS:
+            raise scope.ToolRejected(403, f"段不能用 {name}")
         job_dir = config.data.job_dir(key.job_id)
         if name == "read_file":
             return {"content": scope.read_file(job_dir, _string(body, "path"))}

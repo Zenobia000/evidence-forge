@@ -19,6 +19,7 @@ from pathlib import Path
 
 import uvicorn
 
+from evidence_forge.chat import serve as chat_serve
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import create_app
@@ -183,6 +184,11 @@ def _serve(args: argparse.Namespace) -> int:
         thread.join(timeout=10)
 
 
+def _chat(args: argparse.Namespace) -> int:
+    harness = _harness(args.harness)
+    return chat_serve.run(args, harness, _recipes(harness))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ef", description="Evidence Forge")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -215,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     serve.add_argument("--harness", help="harness 資料夾（預設 repo 的 harness/）")
     serve.set_defaults(handler=_serve)
+
+    chat_serve.add_parser(commands).set_defaults(handler=_chat)
 
     args = parser.parse_args(argv)
     try:

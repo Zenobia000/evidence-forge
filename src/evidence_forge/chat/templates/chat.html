@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evidence Forge 聊天（spike）</title>
+<style>
+  :root { --bg:#fafaf7; --fg:#1d1d1b; --muted:#6b6b66; --line:#deded8; --me:#e8f0fe; --bot:#fff; --note:#fff7e0; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.6 system-ui, "Noto Sans TC", sans-serif; background:var(--bg); color:var(--fg); display:grid; grid-template-columns: 240px 1fr 300px; height:100vh; }
+  aside, main, section { overflow:auto; }
+  aside { border-right:1px solid var(--line); padding:12px; }
+  aside a { display:block; padding:6px 8px; color:inherit; text-decoration:none; border-radius:6px; }
+  aside a.on { background:var(--me); }
+  main { display:flex; flex-direction:column; }
+  #log { flex:1; overflow:auto; padding:16px; }
+  .msg { max-width:760px; margin:0 0 10px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); white-space:pre-wrap; }
+  .user { background:var(--me); margin-left:auto; }
+  .assistant { background:var(--bot); }
+  .custom { background:var(--note); font-size:13px; }
+  .tool { color:var(--muted); font:12px/1.4 ui-monospace, monospace; margin:0 0 8px; }
+  form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
+  textarea { flex:1; font:inherit; padding:8px; min-height:44px; }
+  section { border-left:1px solid var(--line); padding:12px; font-size:13px; }
+  .job { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; background:#fff; }
+  #state { color:var(--muted); font-size:12px; padding:0 16px; }
+  button { font:inherit; }
+</style>
+</head>
+<body>
+<aside>
+  <form method="post" action="/new" style="padding:0;border:0"><button>＋ 新對話</button></form>
+  <h4>對話</h4>
+  {% for c in conversations %}
+    <a href="/c/{{ c.id }}" class="{{ 'on' if current and current.id == c.id else '' }}">{{ c.title }}<br><small>{{ c.created_at.strftime('%m-%d %H:%M') }}</small></a>
+  {% else %}
+    <p>還沒有對話。</p>
+  {% endfor %}
+</aside>
+<main>
+  {% if current %}
+  <div id="log"></div>
+  <div id="state">連線中…</div>
+  <form id="send">
+    <textarea id="text" placeholder="貼一個網址，或問問題"></textarea>
+    <button>送出</button>
+  </form>
+  {% else %}
+  <div id="log"><p>左邊開一個新對話。</p></div>
+  {% endif %}
+</main>
+<section>
+  <h4>工作</h4>
+  <div id="jobs"></div>
+  {% if current %}<p><button id="kill" type="button">殺掉這個對話的 Pi（測接回）</button></p>{% endif %}
+</section>
+{% if current %}
+<script>
+const cid = {{ current.id | tojson }};
+const log = document.getElementById("log");
+const state = document.getElementById("state");
+const jobsBox = document.getElementById("jobs");
+const jobs = new Map();
+let live = null;  // 正在串流的那一則助理訊息
+
+function textOf(content) {
+  if (typeof content === "string") return content;
+  return (content || []).map(b => b.type === "text" ? b.text : b.type === "toolCall" ? "" : "").join("");
+}
+function add(cls, text) {
+  const div = document.createElement("div");
+  div.className = cls;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+function render(m) {
+  if (m.role === "user") add("msg user", textOf(m.content));
+  else if (m.role === "assistant") {
+    const t = textOf(m.content);
+    if (t.trim()) add("msg assistant", t);
+    for (const b of m.content || []) if (b.type === "toolCall") add("tool", `→ ${b.name}(${JSON.stringify(b.arguments)})`);
+    if (m.errorMessage) add("tool", `模型出錯：${m.errorMessage}`);
+  } else if (m.role === "toolResult") add("tool", `← ${m.toolName}：${textOf(m.content).slice(0, 160)}`);
+  else if (m.role === "custom") add("msg custom", textOf(m.content));
+}
+function elapsed(iso) {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+const WAIT = { gpu: "等 GPU", rate_limit: "限流退避中", model: "等模型回應", tool: "執行工具" };
+function drawJobs() {
+  jobsBox.innerHTML = "";
+  for (const j of jobs.values()) {
+    const div = document.createElement("div");
+    div.className = "job";
+    let line = `${j.job_id}\n${j.status}`;
+    if (j.outcome) line += `（${j.outcome}${j.reason ? "：" + j.reason : ""}）`;
+    if (j.stage && j.status === "running") line += `\n第 ${j.stage.index}／${j.stage.total} 段 ${j.stage.id}，這段跑了 ${elapsed(j.stage.started_at)}`;
+    if (j.waiting && j.status === "running") line += `\n${WAIT[j.waiting.kind] || j.waiting.kind}${j.waiting.tool ? " " + j.waiting.tool : ""}`;
+    div.textContent = line;
+    div.style.whiteSpace = "pre-wrap";
+    jobsBox.appendChild(div);
+  }
+}
+setInterval(drawJobs, 1000);
+
+function onEvent(e) {
+  switch (e.type) {
+    case "agent_start": state.textContent = "回答中…"; break;
+    case "agent_settled": state.textContent = "閒置"; break;
+    case "message_start":
+      if (e.message.role === "assistant") live = add("msg assistant", "");
+      break;
+    case "message_update":
+      if (live && e.assistantMessageEvent.type === "text_delta") { live.textContent += e.assistantMessageEvent.delta; log.scrollTop = log.scrollHeight; }
+      break;
+    case "message_end":
+      if (e.message.role === "assistant") { if (live) live.remove(); live = null; render(e.message); }
+      else if (e.message.role !== "system") render(e.message);
+      break;
+    case "tool_execution_start": state.textContent = `執行工具 ${e.toolName}…`; break;
+    case "ef_job": jobs.set(e.job_id, e); drawJobs(); break;
+    case "ef_pi_start": state.textContent = `Pi 開了（${e.key}）`; break;
+    case "ef_pi_exit": state.textContent = `Pi 結束了（結束碼 ${e.returncode}）；下一次送訊息時接回`; break;
+  }
+}
+
+async function load() {
+  const r = await fetch(`/c/${cid}/history`);
+  const h = await r.json();
+  log.innerHTML = "";
+  for (const m of h.messages) render(m);
+  for (const j of h.jobs) jobs.set(j.job_id, j);
+  drawJobs();
+  state.textContent = "閒置";
+}
+const source = new EventSource(`/c/${cid}/events`);
+source.onmessage = (msg) => onEvent(JSON.parse(msg.data));
+source.onerror = () => { state.textContent = "串流斷了，瀏覽器會自己重連"; };
+load();
+
+document.getElementById("send").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const box = document.getElementById("text");
+  const text = box.value;
+  if (!text.trim()) return;
+  box.value = "";
+  const r = await fetch(`/c/${cid}/send`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+  if (!r.ok) add("tool", `沒送出：${(await r.json()).error}`);
+});
+document.getElementById("kill").addEventListener("click", async () => {
+  await fetch(`/c/${cid}/kill`, { method: "POST" });
+});
+</script>
+{% endif %}
+</body>
+</html>

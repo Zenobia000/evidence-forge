@@ -11,12 +11,12 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from evidence_forge.jobkey import JobKey
+from evidence_forge.convkey import Principal
 
 
 @dataclass(frozen=True)
 class _Entry:
-    key: JobKey
+    key: Principal
     skill_dir: Path | None
     escalated_from: str | None
 
@@ -29,7 +29,7 @@ class ActiveStages:
 
     def activate(
         self,
-        key: JobKey,
+        key: Principal,
         skill_dir: Path | None = None,
         escalated_from: str | None = None,
     ) -> None:
@@ -37,26 +37,26 @@ class ActiveStages:
         with self._lock:
             self._by_job[key.job_id] = _Entry(key, skill_dir, escalated_from)
 
-    def deactivate(self, key: JobKey) -> None:
+    def deactivate(self, key: Principal) -> None:
         with self._lock:
             entry = self._by_job.get(key.job_id)
             if entry is not None and entry.key == key:
                 del self._by_job[key.job_id]
 
-    def _entry(self, key: JobKey) -> _Entry | None:
+    def _entry(self, key: Principal) -> _Entry | None:
         with self._lock:
             entry = self._by_job.get(key.job_id)
             return entry if entry is not None and entry.key == key else None
 
-    def is_active(self, key: JobKey) -> bool:
+    def is_active(self, key: Principal) -> bool:
         return self._entry(key) is not None
 
-    def skill_dir(self, key: JobKey) -> Path | None:
+    def skill_dir(self, key: Principal) -> Path | None:
         """這把鑰匙登記的 skill 資料夾；鑰匙不在登記中或沒登記 skill 都是 None。"""
         entry = self._entry(key)
         return entry.skill_dir if entry is not None else None
 
-    def escalated_from(self, key: JobKey) -> str | None:
+    def escalated_from(self, key: Principal) -> str | None:
         """這一次是從哪一級升上來的；沒升級、或鑰匙不在登記中都是 None。"""
         entry = self._entry(key)
         return entry.escalated_from if entry is not None else None

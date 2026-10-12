@@ -70,6 +70,23 @@ class DataDir:
     def job_dir(self, job_id: str) -> Path:
         return self.jobs / job_id
 
+    @property
+    def conversations(self) -> Path:
+        """對話資料夾：`conversations/<對話 id>/`（#80 spike、ADR-0021 草稿）。"""
+        return self.root / "conversations"
+
+    def conversation_dir(self, conversation_id: str) -> Path:
+        return self.conversations / conversation_id
+
+    def owner_dir(self, owner_id: str) -> Path:
+        """帳本跟著誰：工單 id 是 `jobs/<id>/`，`conv:<id>` 是 `conversations/<id>/`。
+
+        閘道的帳本、預算、快取一律經過這裡找資料夾，對話與工單共用同一套規則。
+        """
+        if owner_id.startswith("conv:"):
+            return self.conversation_dir(owner_id[len("conv:") :])
+        return self.job_dir(owner_id)
+
     def ensure(self) -> None:
         """建出 `inbox/`、`jobs/`、`cache/`、`blobs/`；已存在就略過，可重複呼叫。"""
         for directory in (self.inbox, self.jobs, self.cache, self.blobs):

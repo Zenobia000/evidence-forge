@@ -80,6 +80,8 @@ class SpendTally:
 
     def _paths(self) -> list[Path]:
         paths = sorted(self._data.jobs.glob("*/ledger.jsonl"))
+        # 對話本身的模型呼叫也算進本月（#80 spike、chat.feature「對話本身的花費也入帳」）
+        paths += sorted(self._data.conversations.glob("*/ledger.jsonl"))
         if self._data.intake_ledger.is_file():
             paths.append(self._data.intake_ledger)
         return paths
@@ -122,10 +124,10 @@ class SpendTally:
         return sum(self._refresh(path).by_month.get(month, 0) for path in self._paths())
 
     def job_micros(self, job_id: str) -> int:
-        return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").total
+        return self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl").total
 
     def job_credits(self, job_id: str) -> int:
-        return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").credits
+        return self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl").credits
 
 
 def _credits(row: dict[str, object]) -> int:

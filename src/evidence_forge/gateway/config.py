@@ -13,7 +13,8 @@ from evidence_forge.gateway.aliases import Alias, load_aliases
 from evidence_forge.gateway.credentials import resolve_secrets_dir
 from evidence_forge.gateway.prices import Price, load_prices
 from evidence_forge.gateway.scope import ToolRejected
-from evidence_forge.jobkey import InvalidJobKey, JobKey
+from evidence_forge.convkey import Principal, parse_principal
+from evidence_forge.jobkey import InvalidJobKey
 from evidence_forge.paths import DataDir
 
 GatewayMode = Literal["live", "replay"]
@@ -126,10 +127,10 @@ def _monthly_cap(value: str) -> float:
     return cap
 
 
-def require_active_key(header: str | None, stages: ActiveStages) -> JobKey:
-    """讀出並確認工單鑰匙；不是正在跑的那一把就丟 `ToolRejected(403)`。"""
+def require_active_key(header: str | None, stages: ActiveStages) -> Principal:
+    """讀出並確認鑰匙（工單的一段一次，或對話的一次開 Pi）；不是登記中的那一把就丟 `ToolRejected(403)`。"""
     try:
-        key = JobKey.parse(header or "")
+        key = parse_principal(header or "")
     except InvalidJobKey as exc:
         raise ToolRejected(403, f"工單鑰匙不對：{exc}") from None
     if not stages.is_active(key):

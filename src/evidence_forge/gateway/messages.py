@@ -50,7 +50,8 @@ from evidence_forge.gateway.ledger import Usage
 from evidence_forge.ledger_models import LedgerEntry, LedgerStatus
 from evidence_forge.gateway.prices import Price, cost_micros, reservation_micros
 from evidence_forge.gateway.scope import ToolRejected
-from evidence_forge.jobkey import JobKey
+from evidence_forge.convkey import Principal, conversation_of
+from evidence_forge import conversations
 from evidence_forge.models import TIER_ORDER
 
 _log = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ class _Relay(StreamingResponse):
 class _Call:
     """一個請求從進來到寫完帳本的狀態。"""
 
-    key: JobKey
+    key: Principal
     tier: str
     alias: Alias
     request_hash: str
@@ -194,7 +195,7 @@ def add_message_routes(
             time.monotonic() - call.gpu_started if call.gpu_started is not None else 0.0
         )
         ledger.append(
-            config.data.job_dir(call.key.job_id),
+            config.data.owner_dir(call.key.job_id),
             LedgerEntry.model_validate(
                 {
                     "ts": config.clock(),
@@ -418,7 +419,7 @@ def add_message_routes(
             return replayable(recorded_blobs, hashes, nth)
         # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過：那一次的回應不在清單裡，
         # 同一個請求後面的回應往前遞補。回放的仍然都是這個請求真的拿到過的回應
-        entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
+        entries = ledger.read(config.data.owner_dir(key.job_id) / "ledger.jsonl")
         # 只認真的轉送拿到的成功回應；cache_hit 那幾行是回放，不能再算成一份
         hashes = ledger.responses_by_call(entries, ("ok",)).get(
             (key.stage, key.attempt, call.request_hash), []
@@ -426,6 +427,10 @@ def add_message_routes(
         return replayable(blobs, hashes, nth)
 
     def job_budget_micros(job_id: str) -> int:
+        conversation = conversation_of(job_id)
+        if conversation is not None:
+            # 對話的預算在對話資料夾的 conversation.json（#80 spike）
+            return usd_to_micros(conversations.budget_usd(config.data, conversation))
         try:
             budget = read_job(config.data.job_dir(job_id) / "job.md").job.budget
         except (OSError, ValueError):
