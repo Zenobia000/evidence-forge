@@ -136,6 +136,7 @@ class World:
         recipe: str = "echo",
         text: str | None = None,
         now: datetime = NOW,
+        budget_credits: int | None = None,
     ) -> str:
         return open_job(
             self.data,
@@ -144,6 +145,7 @@ class World:
             goal=GOAL,
             now=now,
             budget_usd=budget_usd,
+            budget_credits=budget_credits,
         ).job.id
 
     def read(self, job_id: str) -> Job:

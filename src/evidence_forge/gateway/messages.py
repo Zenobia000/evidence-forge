@@ -361,8 +361,8 @@ def add_message_routes(
             down(call, f"模型後端在串流裡回報錯誤：{reply.error}")
         if succeeded:
             status: LedgerStatus = success
-            # Pi 自己重試成功：先前的 5xx 或斷線是暫時的，執行器不該當成故障
-            board.recovered(call.key)
+            # Pi 自己重試成功：這個模型後端先前的 5xx 或斷線是暫時的，執行器不該當成故障
+            board.recovered(call.key, call.alias.backend)
         elif call.complete and call.status_code == 429:
             status = "rate_limited"
         elif call.timed_out:
@@ -395,15 +395,6 @@ def add_message_routes(
         waited = time.monotonic()
         await asyncio.sleep(delay)
         call.queue_s += time.monotonic() - waited
-
-    def backoff_delay(retry_after: str | None, attempt: int) -> float:
-        try:
-            delay = float(retry_after) if retry_after is not None else -1.0
-        except ValueError:
-            delay = -1.0
-        if delay < 0:
-            delay = config.backoff_base_s * (2**attempt)
-        return min(delay, config.backoff_max_s)
 
     def replayable(store: BlobStore, hashes: list[str], nth: int) -> bytes | None:
         """第 nth 份回應；不是一則完整的訊息就當作沒有。
@@ -482,7 +473,7 @@ def add_message_routes(
 
         if config.fault == "rate_limit":
             # 故障注入：第一次先當成收到 429，退避一次再照常（重播模式也一樣）
-            await back_off(call, backoff_delay(None, 0))
+            await back_off(call, config.backoff_delay(None, 0))
 
         # 故障注入蓋過存好的回應：重播模式下也要看得到故障（UAT、重試與升級的測試）
         if config.fault == "backend_down":
@@ -581,7 +572,7 @@ def add_message_routes(
                 await upstream.aread()
                 await upstream.aclose()
                 pending = None
-                await back_off(call, backoff_delay(retry_after, attempt))
+                await back_off(call, config.backoff_delay(retry_after, attempt))
             call.upstream = upstream
             call.status_code = upstream.status_code
             if upstream.status_code >= 500:

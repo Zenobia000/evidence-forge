@@ -313,8 +313,21 @@ class SearchRecord(_Contract):
     results: tuple[SearchResult, ...] = ()
     # 這次搜尋 Tavily 算了幾個 credits（快取命中與重播不再算）
     credits: NonNegativeInt = 0
-    # Tavily 原始回應本文在 blobs/ 的 hash
+    # Tavily 原始回應本文在 blobs/ 的 hash；存不進去是 None
     raw_hash: Sha256Hex | None = None
+
+
+class SearchFailure(_Contract):
+    """一次沒拿到結果的搜尋，閘道回給 agent 的錯誤（credits 用完、Tavily 出錯、逾時……）。
+
+    存進 `blobs/`，帳本那一行的 `response_hash` 指向它。agent 收到錯誤之後照樣往下走，
+    錯誤文字會進下一個模型請求；重播時照原樣回同一個狀態碼與訊息，之後的請求才對得上錄音。
+    """
+
+    # 閘道回的 HTTP 狀態碼
+    status: Annotated[int, Field(ge=400, le=599)]
+    # 給 agent 看的訊息（不含金鑰）
+    error: str
 
 
 # ---------------------------------------------------------------------------
