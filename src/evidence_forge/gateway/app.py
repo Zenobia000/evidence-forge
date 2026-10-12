@@ -85,7 +85,7 @@ def create_app(
         ts: datetime,
         latency_ms: int,
         request_hash: str,
-        response_hash: str,
+        response_hash: str | None,
     ) -> None:
         ledger.append(
             config.data.job_dir(key.job_id),
@@ -162,19 +162,14 @@ def create_app(
             if replayed is not None
             else None
         )
-        ledger.append(
-            config.data.job_dir(key.job_id),
-            LedgerEntry(
-                ts=ts,
-                job_id=key.job_id,
-                stage=key.stage,
-                attempt=key.attempt,
-                kind="fetch",
-                latency_ms=int((time.monotonic() - started) * 1000),
-                status=replayed.status if replayed is not None else "error",
-                request_hash=request_hash,
-                response_hash=response_hash,
-            ),
+        record(
+            key,
+            "fetch",
+            replayed.status if replayed is not None else "error",
+            ts=ts,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            request_hash=request_hash,
+            response_hash=response_hash,
         )
         if replayed is None:
             raise scope.ToolRejected(

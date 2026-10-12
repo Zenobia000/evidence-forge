@@ -336,3 +336,40 @@ def test_重播時同一段同一次抓同一個網址_第_n_次回放錄音裡�
 
     assert [body["status"] for body in replayed] == ["unavailable", "ok"]
     assert replayed[1]["text"] == live[1]["text"]
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_只差片段的網址命中快取_錄音與重播對得上(
+    env: Env,
+    fake_web: "FakeWeb",
+    tmp_path: Path,
+    serve: Callable[[Any], AbstractContextManager[str]],
+) -> None:
+    # 錄音：先抓 /p/1，再抓 /p/1#intro（# 不送給網站，命中剛才那一份快取）。
+    # 帳本的請求 hash 要照 agent 這次給的網址算，重播才對得上第二次
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+    urls = ["http://news.example/p/1", "http://news.example/p/1#intro"]
+    live = [env.call("fetch_url", url=url).json() for url in urls]
+    assert [body["cache_hit"] for body in live] == [False, True]
+    recording = _record(env, tmp_path)
+
+    data = DataDir(tmp_path / "replay-data")
+    data.ensure()
+    (data.job_dir(JOB) / "input").mkdir(parents=True)
+    stages = ActiveStages()
+    stages.activate(KEY)
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
+    )
+    with serve(create_app(config, stages)) as url:
+        replay = Env(url=url, data=data, skill_dir=env.skill_dir, stages=stages)
+        replayed = [replay.call("fetch_url", url=url) for url in urls]
+
+    assert [response.status_code for response in replayed] == [200, 200]
+    assert [response.json()["text"] for response in replayed] == [
+        body["text"] for body in live
+    ]
+    assert [e.request_hash for e in replay.ledger()] == [
+        e.request_hash for e in env.ledger()
+    ]

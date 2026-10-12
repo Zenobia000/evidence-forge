@@ -21,7 +21,6 @@ import json
 import os
 import re
 import ssl
-import threading
 import time
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -141,6 +140,9 @@ class FetchOutcome:
     latency_ms: int
     # 這次呼叫的時間（快取命中時跟 record.fetched_at 不同）
     ts: datetime
+    # 這次要求的網址（去掉前後空白）。快取命中時 record.url 是當初抓的那一個，
+    # 可能只差 # 之後的部分；帳本的請求 hash 照這一個算，重播才對得上
+    requested: str
 
     @property
     def cache_hit(self) -> bool:
@@ -148,7 +150,7 @@ class FetchOutcome:
 
     def store_blobs(self, blobs: BlobStore) -> tuple[str, str]:
         """把這次的請求與結果存進 `blobs/`，回傳兩者的 hash（帳本的 request_hash、response_hash）。"""
-        return blobs.put(request_bytes(self.record.url)), blobs.put(
+        return blobs.put(request_bytes(self.requested)), blobs.put(
             self.record.model_dump_json().encode("utf-8")
         )
 
@@ -175,6 +177,9 @@ class RecordedFetches:
     跟搜尋的重播同一套對法：同一段、同一次、第 n 次抓同一個網址（請求 hash，`request_bytes`）
     回放錄音裡的第 n 次；讀不到的網頁也照樣回放（同樣的原因）。agent 看到的工具結果跟錄音時
     一字不差，之後的模型請求才對得上錄音。回放不了的行（沒有 `response_hash`）也佔一個位置。
+
+    跟搜尋的重播一樣不加鎖：`get` 只在閘道的事件迴圈上呼叫（`app.py` 的 `_replay_fetch` 不進執行緒池），
+    同一時間只有一個呼叫在算第幾次。
     """
 
     def __init__(self, replay_dir: Path) -> None:
@@ -184,7 +189,6 @@ class RecordedFetches:
         ] = {}
         # 重播時同一張單、同一段、同一次、同一個網址已經回放過幾次
         self._seen: dict[tuple[str, str, int, str], int] = {}
-        self._lock = threading.Lock()
         for entry in ledger.read(replay_dir / "ledger.jsonl"):
             if entry.kind == "fetch":
                 self._recorded.setdefault(
@@ -193,9 +197,8 @@ class RecordedFetches:
 
     def get(self, key: JobKey, request_hash: str) -> Replayed | None:
         counter = (key.job_id, key.stage, key.attempt, request_hash)
-        with self._lock:
-            nth = self._seen.get(counter, 0)
-            self._seen[counter] = nth + 1
+        nth = self._seen.get(counter, 0)
+        self._seen[counter] = nth + 1
         found = self._recorded.get((key.stage, key.attempt, request_hash), [])
         if nth >= len(found):
             return None
@@ -347,7 +350,7 @@ class Fetcher:
         url = url.strip()
         cached = self._cached(url, now)
         if cached is not None:
-            return FetchOutcome(cached, "cache_hit", _elapsed_ms(started), now)
+            return FetchOutcome(cached, "cache_hit", _elapsed_ms(started), now, url)
         try:
             record = self._fetch_live(url, now)
             status: LedgerStatus = "ok"
@@ -360,7 +363,7 @@ class Fetcher:
                 fetched_at=now,
             )
             status = exc.status
-        return FetchOutcome(record, status, _elapsed_ms(started), now)
+        return FetchOutcome(record, status, _elapsed_ms(started), now, url)
 
     # --- 快取 ---------------------------------------------------------------
 
