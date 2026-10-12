@@ -117,3 +117,31 @@ def test_draft_problems_show_up_under_the_check_that_caught_them() -> None:
         "C4": {"fail"},
         "C5": {"pass"},
     }
+
+
+MULTI_SOURCE_DRAFT = (
+    "# 錢花在哪\n\n模型的帳單一年縮成一成[^S1]，人的時間卻沒變便宜。\n\n[^S1]: 原文\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("source_ids", "c2"),
+    [({"S1"}, "pass"), ({"S1", "S2"}, "fail")],
+    ids=["只有種子", "補料放了S2"],
+)
+def test_compose_needs_two_cited_sources_only_when_research_placed_some(
+    source_ids: set[str], c2: str
+) -> None:
+    # 只有種子一個來源的配方不受影響；補料段放了 S2 以後，正文只引 S1 就是沒有綜合
+    entries = compose_checks(
+        draft=MULTI_SOURCE_DRAFT,
+        draft_file="drafts/draft.v1.md",
+        output={"facts": [{"fact": "模型的帳單一年縮成一成[^S1]"}]},
+        output_file="facts.json",
+        schema=COMPOSE_SCHEMA,
+        source_text=SOURCE,
+        source_ids=source_ids,
+        asset_urls=frozenset(),
+        thresholds=THRESHOLDS,
+    )
+    assert _statuses(entries)["C2"] == {c2}

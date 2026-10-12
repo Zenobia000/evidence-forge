@@ -249,11 +249,27 @@ def test_C3_拿稿子比所有來源_照抄補料找到的那篇也擋(
 
 
 def test_引用編號對不到放進來的來源_C2_擋(world_for: Callable[[str], World]) -> None:
-    draft = DRAFT.replace("[^S2]", "[^S4]")
-    facts = [fact.replace("[^S2]", "[^S4]") for fact in FACTS]
-    world = world_for(_script(draft=draft, facts=facts))
+    # 正文照樣引用 S1、S2（綜合了兩個來源），只多一個對不到的 S4
+    draft = DRAFT.replace("我認為", "聽說還有店家跟進[^S4]。我認為")
+    world = world_for(_script(draft=draft))
     job_id = world.job(recipe="researched")
     world.runner.run_once()
 
     [report] = [r for r in _reports(world, job_id) if r.stage == "compose"]
     assert "C2" in report.failed_checks
+
+
+def test_補料放了來源_稿子正文只引用種子_C2_擋(
+    world_for: Callable[[str], World],
+) -> None:
+    # 「至少綜合兩個來源」不能只寫在提示裡（skill 規則 1）：只引 S1 的稿子要被 C2 擋下
+    draft = DRAFT.replace("[^S2]。", "[^S1]。")
+    facts = [fact.replace("[^S2]", "[^S1]") for fact in FACTS]
+    world = world_for(_script(draft=draft, facts=facts))
+    job_id = world.job(recipe="researched")
+    world.runner.run_once()
+
+    [report] = [r for r in _reports(world, job_id) if r.stage == "compose"]
+    assert report.failed_checks == ("C2",)
+    [failure] = [e for e in report.entries if e.status == "fail"]
+    assert "（S1）" in failure.reason

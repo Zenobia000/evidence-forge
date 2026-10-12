@@ -1,7 +1,10 @@
 """C2 引用完整（PRD §7）：
 
 1. 稿子裡每個引用編號都對得到來源清單；
-2. 二創產出列出的每一句事實句都附引用編號，而且那句（連同編號）真的在稿子裡。
+2. 二創產出列出的每一句事實句都附引用編號，而且那句（連同編號）真的在稿子裡；
+3. 呼叫端要求時（`min_sources_cited`），正文至少引用幾個不同的來源。二創段在補料段放了
+   外部來源時要求 2（`stages.compose_checks`，#70）：「綜合多個來源」只寫在提示裡擋不住
+   只引種子的稿子。註腳定義行不算引用：列了註腳、正文沒用到，等於沒用。
 
 引用編號寫成 GFM 註腳：`[^<來源 id>]`，例：`推論成本一年降了九成[^S1]。`
 註腳定義那一行（`[^S1]: …`）的編號也算，一樣要對得到來源。
@@ -16,7 +19,12 @@ import re
 from collections.abc import Collection, Sequence
 
 from evidence_forge.checks.report import CheckEntry, LocatedText, Location
-from evidence_forge.checks.text import line_column, mask_code, normalize_for_match
+from evidence_forge.checks.text import (
+    line_column,
+    mask_code,
+    mask_footnote_definitions,
+    normalize_for_match,
+)
 
 _CITATION = re.compile(r"\[\^([^\]\s]+)\]")
 
@@ -38,8 +46,10 @@ def check_citations(
     facts: Sequence[LocatedText],
     *,
     file: str,
+    min_sources_cited: int = 0,
 ) -> list[CheckEntry]:
-    """每個對不到來源的編號、每句沒附編號或不在稿子裡的事實句，各一條 fail。"""
+    """每個對不到來源的編號、每句沒附編號或不在稿子裡的事實句，各一條 fail；
+    正文引用的不同來源少於 `min_sources_cited` 個，再一條 fail。"""
     failures: list[CheckEntry] = []
 
     for match in _CITATION.finditer(mask_code(draft)):
@@ -71,6 +81,27 @@ def check_citations(
                 reason=reason,
                 location=fact.location,
                 excerpt=fact.text,
+            )
+        )
+
+    cited = sorted(
+        {
+            match.group(1)
+            for match in _CITATION.finditer(mask_footnote_definitions(mask_code(draft)))
+            if match.group(1) in source_ids
+        }
+    )
+    if len(cited) < min_sources_cited:
+        failures.append(
+            CheckEntry(
+                check="C2",
+                status="fail",
+                reason=(
+                    f"正文只引用了 {len(cited)} 個來源（{'、'.join(cited) or '沒有'}），"
+                    f"可用的來源有 {len(source_ids)} 個，"
+                    f"至少要引用 {min_sources_cited} 個不同的來源"
+                ),
+                location=Location(file=file),
             )
         )
 

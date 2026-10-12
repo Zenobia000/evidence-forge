@@ -2,6 +2,7 @@
 
 - 整理段之後：`digest_checks` 跑 C1、C5。沒過算這段這次失敗，走重試與升級。
 - 二創段之後：`compose_checks` 跑 C2～C5。沒過帶著結果回二創段修，到 `auto_fix` 上限。
+  補料段放了外部來源（來源不只種子）時，C2 另外要求正文至少引用兩個不同的來源（#70）。
 
 兩個都是純函式：檔案由執行器讀好傳進來，結果由執行器收進 `ChecksReport`、
 用 `write_checks_report` 寫出去。這裡不讀檔、不寫檔、不呼叫模型。
@@ -24,6 +25,8 @@ from evidence_forge.checks.report import CheckEntry, collect_located
 
 QUOTE_FIELD = "quote"
 FACT_FIELD = "fact"
+# 補料段放了外部來源時，二創稿正文至少要引用幾個不同的來源（#70）
+MIN_SOURCES_COMBINED = 2
 
 
 def digest_checks(
@@ -55,8 +58,16 @@ def compose_checks(
 ) -> list[CheckEntry]:
     """二創段的產出：C2 引用、C3 照抄、C4 圖、C5（JSON 符合 `compose` 的 schema、稿子是標準 Markdown）。"""
     facts = collect_located(output, FACT_FIELD, output_file)
+    # 只有種子一個來源（單篇流程、舊的配方）不要求；有 S2 以後，只引種子就是沒有綜合
+    min_sources_cited = MIN_SOURCES_COMBINED if len(source_ids) > 1 else 0
     return [
-        *check_citations(draft, source_ids, facts, file=draft_file),
+        *check_citations(
+            draft,
+            source_ids,
+            facts,
+            file=draft_file,
+            min_sources_cited=min_sources_cited,
+        ),
         *check_overlap(draft, source_text, thresholds, file=draft_file),
         *check_images(draft, asset_urls, file=draft_file),
         *check_schema(output, schema, file=output_file),
