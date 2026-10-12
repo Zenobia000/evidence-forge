@@ -95,7 +95,8 @@ def _missing(
         listed = {normalize_url(found.rstrip(").,")) for found in _URL.findall(entry)}
         if normalize_url(url) not in listed:
             missing.append(f"網址 {url.strip()}")
-    text = normalize_for_match(entry)
+    # 標題與作者只在網址以外的文字裡找：網址本身常含著標題的字（…/night-library），不能算數
+    text = normalize_for_match(_URL.sub(" ", entry))
     if not any(normalize_for_match(name) in text for name in _title_forms(title)):
         missing.append(f"標題「{title}」")
     if author and normalize_for_match(author) not in text:

@@ -190,3 +190,18 @@ def test_網頁標題後面的站名可以省略() -> None:
         original_author="王小明",
     )
     assert not _failed(found)
+
+
+def test_條目只列網址_標題剛好是網址的一部分_不算列了標題() -> None:
+    # 標題與作者要在網址以外的文字裡找：網址本身含著標題不算（#92 第二輪審查）
+    url = "https://example.com/night-library"
+    article = BODY + f"## 參考來源\n\n- {url}\n"
+    found = check_references(
+        article,
+        file=FILE,
+        original_url=url,
+        original_title="night-library",
+        original_author="example",
+    )
+    [failure] = _failed(found)
+    assert "標題" in failure.reason and "作者" in failure.reason
