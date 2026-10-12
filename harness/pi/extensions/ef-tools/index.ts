@@ -5,6 +5,7 @@
 // 閘道位址與鑰匙由執行器（runner/pi_launch.py）用環境變數 EF_GATEWAY_URL、EF_JOB_KEY 傳進來。
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerChatTools } from "./chat.ts";
 
 async function callGateway(tool: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const url = process.env.EF_GATEWAY_URL;
@@ -157,6 +158,12 @@ const runScript = defineTool({
 });
 
 export default function (pi: ExtensionAPI) {
+  // 對話的 Pi（#85、ADR-0021）只有對話的工具：不能讀寫檔、抓網頁、搜尋、跑腳本（NFR-SEC-02）。
+  // 閘道也會拒絕對話鑰匙打段的工具，這裡不註冊是讓模型根本看不到它們
+  if (process.env.EF_TOOLSET === "conversation") {
+    registerChatTools(pi, callGateway);
+    return;
+  }
   pi.registerTool(readFile);
   pi.registerTool(listFiles);
   pi.registerTool(writeFile);
