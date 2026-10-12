@@ -34,7 +34,7 @@ _HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.*?)[ \t#]*$")
 _NUMBERING = re.compile(r"^(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*")
 
 
-def _headings(markdown: str) -> list[tuple[int, str]]:
+def headings(markdown: str) -> list[tuple[int, str]]:
     """Markdown 的 ATX 標題：（行號, 去掉編號與粗體的標題文字）。程式碼區塊裡的不算。"""
     found: list[tuple[int, str]] = []
     for number, line in enumerate(mask_code(markdown).split("\n"), start=1):
@@ -53,11 +53,11 @@ def check_sections(
 
     `ordered` 時還要照 `required` 的順序出現。少一節或順序不對各一條 fail；都對就一條 pass。
     """
-    headings = _headings(markdown)
+    found = headings(markdown)
     failures: list[CheckEntry] = []
     previous: tuple[str, int] | None = None
     for title in required:
-        line = next((n for n, text in headings if text.startswith(title)), None)
+        line = next((n for n, text in found if text.startswith(title)), None)
         if line is None:
             failures.append(
                 CheckEntry(

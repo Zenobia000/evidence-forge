@@ -1,12 +1,12 @@
-"""交來源清單的段（補料段 #70、查證與找題材段 #78）：來源正文由執行器放進工單的 `input/sources/`，不由 agent 寫。
+"""交來源清單的段（查證與找題材段 #78）：來源正文由執行器放進工單的 `input/sources/`，不由 agent 寫。
 
 哪一段交來源清單，看它在配方裡宣告的產出有沒有 `sources.json`，不看 skill 的名稱（#78）。
 
-二創要綜合多個來源，C2、C3 也要拿稿子比每一個來源。來源正文要是 agent 自己寫的，
-它就能捏一份「來源」讓 C2、C3 過關；所以補料段只交一份清單（`sources.json`：
+重構段只讀分析報告與這些來源的正文寫文章（FR-RW-01）。來源正文要是 agent 自己寫的，
+它就能捏一份「來源」出來；所以查證段只交一份清單（`sources.json`：
 編號、網址、標題、為什麼挑它），正文由執行器從閘道的紀錄取：
 
-- agent 在補料段用 `fetch_url` 抓過的網頁，閘道都記在這張單的帳本（`kind: fetch`），
+- agent 在查證段用 `fetch_url` 抓過的網頁，閘道都記在這張單的帳本（`kind: fetch`），
   抓到的結果（`FetchRecord`，跟抓取快取存的是同一份）存在 `blobs/`。
 - 只認**這一段、這一次**讀得到的抓取：別張單抓過、留在共用快取裡的不算，
   前一次抓的也不算（這一次的 agent 沒讀過）。重播模式下閘道照樣記帳，所以重播也走同一條路。
@@ -16,11 +16,12 @@
   只要轉址後的網址是種子的、或正文跟種子相同，一樣擋。
 
 放好的檔（`input/sources/S<n>.md`）開頭幾行是編號、標題、網址、作者（有才寫）、抓取時間，
-接著是正文。種子（創作者丟進來的那一篇，`input/content.md`）永遠是 `S1`；補料找到的從 `S2` 起。
+接著是正文。種子（創作者丟進來的那一篇，`input/content.md`）永遠是 `S1`；查證找到的從 `S2` 起。
 跟其他參考資料一樣只增不改：重開時同一次重跑放的是同一份，沿用；內容不同就不合格。
+重構工單從分析工單把這些檔原樣帶過去（`stage_inputs.carried_files`）。
 
-每個來源也帶著稿子註腳要寫的出處（`Source`：標題＋網址；種子的出處看素材項目，PRD §6 第 7 點）。
-執行器把註腳整行寫進二創段的任務說明，C3 也只放過註腳裡跟出處相符的部分。
+原文的出處（`Original`：標題、作者、網址）看種子的素材項目（PRD §6 第 4 點）：重構工單裡沒有
+原文全文，任務說明的原文出處、文章結尾的出處檢查、跟原文比的重疊率都從素材項目拿。
 """
 
 import hashlib
@@ -53,21 +54,26 @@ _URL = "網址"
 
 @dataclass(frozen=True)
 class Source:
-    """這張單的一個來源：正文的位置（相對於工單資料夾），與稿子註腳要寫的出處。"""
+    """放好的一份來源：正文的位置（相對於工單資料夾），與檔頭的標題、網址。"""
 
     path: Path
     title: str
     url: str | None = None
 
-    def footnote(self, source_id: str) -> str:
-        """稿子結尾這個來源的註腳定義行：標題＋網址；沒有網址的種子（貼上的文字、上傳的檔）標「原文」。"""
-        where = f"，{self.url}" if self.url else "（原文）"
-        return f"[^{source_id}]: {self.title}{where}"
+
+@dataclass(frozen=True)
+class Original:
+    """原文（種子）的出處與正文。"""
+
+    title: str
+    text: str
+    url: str | None = None
+    author: str | None = None
 
     @property
-    def references(self) -> tuple[str, ...]:
-        """註腳裡照抄也不算照抄（C3）的出處：標題與網址。"""
-        return tuple(part for part in (self.title, self.url) if part)
+    def credit(self) -> str:
+        """給 agent 抄的出處：標題、作者（有才寫）、網址（有才寫），用「，」隔開。"""
+        return "，".join(part for part in (self.title, self.author, self.url) if part)
 
 
 def collects_sources(stage: RecipeStage) -> bool:
@@ -75,16 +81,9 @@ def collects_sources(stage: RecipeStage) -> bool:
     return SOURCES_FILE in stage.output
 
 
-def job_sources(job_dir: Path, seed: Item | None = None) -> dict[str, Source]:
-    """這張單的來源：引用編號 → 來源，種子在最前面，其餘照編號。
-
-    種子的出處看它的素材項目（`seed_item`）；讀不到時標題用原文的第一行、沒有網址。
-    補料段放的來源，出處是放的時候寫在檔頭的標題與網址（`render`）。
-    """
-    if seed is not None:
-        found = {SEED_ID: Source(SEED, seed.title, seed.url)}
-    else:
-        found = {SEED_ID: Source(SEED, _first_line(job_dir / SEED))}
+def placed_sources(job_dir: Path) -> dict[str, Source]:
+    """這張單放好的來源（`S2` 起，照編號）；出處是放的時候寫在檔頭的標題與網址（`render`）。"""
+    found: dict[str, Source] = {}
     directory = job_dir / SOURCES_DIR
     if directory.is_dir():
         numbered = sorted(
@@ -102,14 +101,36 @@ def job_sources(job_dir: Path, seed: Item | None = None) -> dict[str, Source]:
     return found
 
 
-def _first_line(path: Path) -> str:
+def source_body(path: Path) -> str:
+    """放好的來源檔去掉檔頭之後的正文。"""
+    parts = path.read_text(encoding="utf-8").split(_SEPARATOR, 1)
+    return parts[-1]
+
+
+def original(data: DataDir, job_dir: Path, item: str) -> Original | None:
+    """原文的出處與正文。正文先看工單的 `input/content.md`（分析工單），沒有就看素材項目的
+    `content.md`（重構工單不放原文全文）；兩邊都讀不到是 None。出處看素材項目，讀不到時標題用正文第一行。
+    """
+    text: str | None = None
+    for path in (job_dir / SEED, data.root / item / "content.md"):
+        try:
+            text = path.read_text(encoding="utf-8")
+            break
+        except (OSError, UnicodeDecodeError):
+            continue
+    if text is None:
+        return None
+    seed = seed_item(data, item)
+    if seed is None:
+        return Original(title=_first_line(text), text=text)
+    return Original(title=seed.title, text=text, url=seed.url, author=seed.author)
+
+
+def _first_line(text: str) -> str:
     """原文的第一行（去掉標題的 #），沒有就是「原文」。"""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        lines = []
     return next(
-        (t for line in lines if (t := line.strip().lstrip("#").strip())), "原文"
+        (t for line in text.splitlines() if (t := line.strip().lstrip("#").strip())),
+        "原文",
     )
 
 

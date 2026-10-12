@@ -9,13 +9,12 @@
 | :--- | :--- | :--- |
 | `report.md`（分析報告） | 五節依序、`sources.json` 合 schema、引用的編號在清單上 | 這段這次失敗，走重試與升級 |
 | `brief.md` | 六節都在、`brief.json` 合 schema | 這段這次失敗，走重試與升級 |
-| `draft.md`（二創稿，舊配方） | C2～C5 | 帶著結果回這一段修，最多 `auto_fix` 次 |
-| `claims.json`（整理，舊配方） | C1、C5 | 這段這次失敗，走重試與升級 |
+| `article.md`（重構的文章） | 標準 Markdown、結尾參考來源列了原文出處、`article.json` 合 schema；跟原文與每份來源的重疊率只顯示 | 帶著結果回這一段修，最多 `auto_fix` 次 |
 
 一段同時宣告好幾種時，照表的順序取第一個。都沒有的段不跑程式檢查，只驗 schema（`validate_outputs`）。
 `sources.json` 的網址是不是這一段真的抓過的，由 `sources.py` 查（看閘道的帳本）。
-二創段的 C2 引用編號、C3 比的正文都是種子加補料段放的來源（`sources.job_sources`，#70）；
-稿子註腳裡照抄的出處（標題、網址）C3 不算。
+重構段的原文出處與原文正文看種子的素材項目（重構工單裡沒有原文全文），來源正文是工單裡放好的
+`input/sources/S<n>.md`（從分析工單帶過來的）。
 
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
 `checks.json` 都不讀。檢查本身跑不動（原文是空的、schema 壞掉、路徑跑出工單資料夾）時丟
@@ -32,25 +31,20 @@ from pydantic import ValidationError
 from evidence_forge.checks import (
     ChecksReport,
     load_check_settings,
+    run_article_checks,
     run_brief_checks,
-    run_compose_checks,
-    run_digest_checks,
     run_report_checks,
     write_checks_report,
 )
-from evidence_forge.models import Item, RecipeStage
+from evidence_forge.models import RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
 
 # 產出檔名 → 檢查；順序就是一段宣告好幾種時的優先順序（見上表）
 REPORT_OUTPUT = "report.md"
 BRIEF_OUTPUT = "brief.md"
-DRAFT_OUTPUT = "draft.md"
-CLAIMS_OUTPUT = "claims.json"
-_CHECKED_OUTPUTS = (REPORT_OUTPUT, BRIEF_OUTPUT, DRAFT_OUTPUT, CLAIMS_OUTPUT)
-
-# 原文（種子）在工單裡的位置。二創段的來源清單是種子加補料段放的來源（`sources.job_sources`）
-ORIGINAL_SOURCE = sources.SEED
+ARTICLE_OUTPUT = "article.md"
+_CHECKED_OUTPUTS = (REPORT_OUTPUT, BRIEF_OUTPUT, ARTICLE_OUTPUT)
 
 # 任務說明裡最多列幾條沒過的條目；全部都在 checks.vN.json
 _MAX_LISTED = 10
@@ -70,8 +64,8 @@ def has_hard_checks(stage: RecipeStage) -> bool:
 
 
 def fixable(stage: RecipeStage) -> bool:
-    """沒過時回這一段修（二創稿），而不是算這次失敗。"""
-    return checked_output(stage) == DRAFT_OUTPUT
+    """沒過時回這一段修（重構的文章），而不是算這次失敗。"""
+    return checked_output(stage) == ARTICLE_OUTPUT
 
 
 def _output(stage: RecipeStage, suffix: str) -> str:
@@ -88,45 +82,41 @@ def run_hard_checks(
     attempt: int,
     schema: Path,
     clock: Callable[[], datetime],
-    seed: Item | None = None,
+    original: sources.Original | None = None,
 ) -> ChecksReport | None:
     """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。
 
-    `seed` 是種子的素材項目（`sources.seed_item`），二創段用它的標題、網址認出 S1 的註腳。
+    `original` 是原文的出處與正文（`sources.original`），重構段用它檢查結尾的出處、算重疊率。
     """
     checked = checked_output(stage)
     if checked is None:
         return None
     base = Path("stages") / stage.id / str(attempt)
+    document = base / checked
+    output = base / _output(stage, ".json")
+    files: tuple[Path, ...] = (document, output)
     try:
-        if checked == CLAIMS_OUTPUT:
-            output = base / CLAIMS_OUTPUT
-            files: tuple[Path, ...] = (output,)
-            entries = run_digest_checks(
-                job_dir, output=output, schema=schema, source=ORIGINAL_SOURCE
-            )
-        elif checked in (BRIEF_OUTPUT, REPORT_OUTPUT):
-            document = base / checked
-            output = base / _output(stage, ".json")
-            files = (document, output)
-            run = run_brief_checks if checked == BRIEF_OUTPUT else run_report_checks
-            entries = run(job_dir, document, output=output, schema=schema)
-        else:
-            draft = base / DRAFT_OUTPUT
-            output = base / _output(stage, ".json")
-            files = (draft, output)
-            found = sources.job_sources(job_dir, seed)
-            entries = run_compose_checks(
+        if checked == ARTICLE_OUTPUT:
+            if original is None:
+                raise ChecksUnavailable("讀不到原文（素材項目），沒辦法檢查出處與重疊率")
+            texts = {"原文": original.text}
+            for sid, source in sources.placed_sources(job_dir).items():
+                texts[sid] = sources.source_body(job_dir / source.path)
+            entries = run_article_checks(
                 job_dir,
-                draft=draft,
+                document,
                 output=output,
                 schema=schema,
-                sources={sid: source.path for sid, source in found.items()},
+                original_url=original.url,
+                original_title=original.title,
+                texts=texts,
                 thresholds=load_check_settings(data).c3,
-                footnotes={sid: source.references for sid, source in found.items()},
             )
+        else:
+            run = run_brief_checks if checked == BRIEF_OUTPUT else run_report_checks
+            entries = run(job_dir, document, output=output, schema=schema)
     except (ValueError, OSError) as exc:
-        # SchemaError、空的原文、跑出工單資料夾的路徑、壞掉的 checks.yaml 都在這裡
+        # SchemaError、跑出工單資料夾的路徑、壞掉的 checks.yaml 都在這裡
         raise ChecksUnavailable(str(exc)) from exc
     report = ChecksReport(
         stage=stage.id,
@@ -140,7 +130,7 @@ def run_hard_checks(
 
 
 def failures(report: ChecksReport) -> list[str]:
-    """沒過的條目，一條一行：「C1 理由（位置）：出問題的文字」。"""
+    """沒過的條目，一條一行：「C5 理由（位置）：出問題的文字」。"""
     lines: list[str] = []
     for entry in report.entries:
         if entry.status != "fail":
@@ -158,7 +148,7 @@ def failures(report: ChecksReport) -> list[str]:
 
 
 def fix_request(report: ChecksReport) -> str:
-    """回二創段修時接在任務說明後面的那一段。只放檢查結果，不放時間與版本號：
+    """回重構段修時接在任務說明後面的那一段。只放檢查結果，不放時間與版本號：
     重開時同一次的任務說明要逐位元組相同，快取才對得上。"""
     listed = failures(report)
     more = len(listed) - _MAX_LISTED

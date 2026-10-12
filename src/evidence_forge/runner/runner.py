@@ -84,41 +84,37 @@ def stage_prompt(
     goal: str,
     fix: str = "",
     upstream: Sequence[str] = (),
-    cited: Mapping[str, sources.Source] | None = None,
+    original: sources.Original | None = None,
+    *,
+    seed_in_job: bool = True,
+    feedback: str | None = None,
 ) -> str:
     """這一段給 agent 的任務說明。只放段、次、目標、檔名，不放工單 id 與時間：
     同樣的素材與目標送出的請求要逐位元組相同，快取與重播才對得上。
 
-    `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
-    `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
-    `cited` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列：每個來源的編號、
-    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時，種子有網址才多一行
-    原文出處（分析報告的來源清單要列，#78）；貼上的文字、上傳的檔案沒有網址，一個字都不多
-    （錄音的種子都是貼上的文字，錄好的請求照樣對得上）。
+    - `fix` 是回重構段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
+    - `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
+    - `original` 是原文的出處（`sources.original`）。原文有網址就多一行原文出處：分析報告的來源清單、
+      文章結尾的參考來源都要列（PRD §5、§6）。貼上的文字、上傳的檔案沒有網址，分析工單一個字都不多
+      （錄音的種子都是貼上的文字，錄好的請求照樣對得上）；重構工單讀不到原文（`seed_in_job` 是 False），
+      所以沒有網址也照樣給標題。
+    - `seed_in_job`：工單裡有原文全文（`input/content.md`）。重構工單沒有（FR-RW-01）。
+    - `feedback` 是再改時創作者對上一版的一句意見（FR-RW-03）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
+    material = "素材在 input/content.md。\n" if seed_in_job else ""
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
-    listed = ""
-    if cited is not None and len(cited) == 1:
-        seed = cited.get(sources.SEED_ID)
-        if seed is not None and seed.url:
-            # 只有種子、種子有網址：分析報告的來源清單要列原文出處（PRD §5），agent 讀不到素材項目
-            listed = f"原文出處：{seed.title}，{seed.url}\n"
-    elif cited is not None and len(cited) > 1:
-        paths = "、".join(
-            f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
-        )
-        footnotes = "".join(
-            f"{source.footnote(sid)}\n" for sid, source in cited.items()
-        )
-        listed = f"來源（引用編號：正文）：{paths}\n註腳（稿子結尾照抄）：\n{footnotes}"
+    credited = original is not None and (original.url or not seed_in_job)
+    credit = f"原文出處：{original.credit}\n" if original is not None and credited else ""
+    revise = f"創作者對上一版的意見：{feedback}\n" if feedback else ""
     prompt = (
         f"配方「{recipe.name}」的「{stage.id}」段，第 {attempt} 次。\n"
         f"目標：{goal}\n"
-        f"素材在 input/content.md。\n"
+        f"{material}"
         f"{earlier}"
-        f"{listed}"
+        f"{credit}"
+        f"{revise}"
         f"照系統提示裡的 skill 完成這一段，用 write_file 寫出：{outputs}"
     )
     return f"{prompt}\n\n{fix}" if fix else prompt
@@ -281,6 +277,15 @@ def _search_failure(blobs: BlobStore, digest: str | None) -> SearchFailure | Non
         return SearchFailure.model_validate_json(raw)
     except ValidationError:
         return None
+
+
+def writing_mark(job_dir: Path, job: Job, recipe: Recipe) -> str | None:
+    """寫文章的配方（有一段交 `article.md`）跑完時，要標在結果上的「未校準」；其他配方是 None。"""
+    writes = any(
+        hard_checks.checked_output(stage) == hard_checks.ARTICLE_OUTPUT
+        for stage in recipe.stages
+    )
+    return stage_inputs.uncalibrated(job_dir, job) if writes else None
 
 
 def pi_error(events: Sequence[Mapping[str, object]]) -> str | None:
@@ -629,15 +634,21 @@ class Runner:
                 self._set(job_dir, doc, "review", result.reason, result=result)
                 return
         notes = search_shortfalls(self.data, job_dir)
+        # 寫文章的配方：角色在目標文類還沒校準，結果上標「未校準」（ADR-0015 §3.6、FR-RW-02）
+        marks = [note] if (note := writing_mark(job_dir, doc.job, recipe)) else []
         if notes:
             # 搜尋額度用完或 Tavily 故障：那一段用已經找到的資料收尾、後面照跑，
             # 但這張單沒做完（NFR-COST-01、#70）
-            reason = "；".join(notes)
+            reason = "；".join([*notes, *marks])
             result = JobResult(outcome="incomplete", reason=reason)
             self._set(job_dir, doc, "review", reason, result=result)
             return
         self._set(
-            job_dir, doc, "review", "全部段完成", result=JobResult(outcome="complete")
+            job_dir,
+            doc,
+            "review",
+            "全部段完成",
+            result=JobResult(outcome="complete", reason="；".join(marks)),
         )
 
     def _set_aside(self, job_dir: Path, progress: StageProgress) -> None:
@@ -761,8 +772,9 @@ class Runner:
         stage_dir = job_dir / "stages" / stage.id / str(attempt)
         stage_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = self.harness.skill_dir(stage.skill)
-        # 種子的素材項目：任務說明的 S1 註腳、補料段認出種子、C3 認出註腳裡的出處都用它
+        # 種子的素材項目：查證段認出種子、任務說明的原文出處、重構段的出處檢查與重疊率都用它
         seed = sources.seed_item(self.data, doc.job.feed.item)
+        original = sources.original(self.data, job_dir, doc.job.feed.item)
         record = provenance.record_path(job_dir, stage.id, attempt)
         if not record.exists():
             # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06）。放在 stages/ 外，
@@ -790,7 +802,9 @@ class Runner:
                 doc.job.goal,
                 self._fix(job_dir, stage, progress),
                 upstream_outputs(job_dir, recipe, stage),
-                sources.job_sources(job_dir, seed),
+                original,
+                seed_in_job=(job_dir / sources.SEED).is_file(),
+                feedback=doc.job.feedback,
             ),
             base_env=self._base_env(),
             web_search=stage.tavily_credits > 0,
@@ -883,7 +897,7 @@ class Runner:
                 attempt,
                 self.harness.schema_file(stage.skill),
                 self.clock,
-                seed,
+                original,
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因進待審

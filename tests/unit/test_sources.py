@@ -114,32 +114,56 @@ def _place(data: DataDir, attempt: int = 1, seed: Item | None = None) -> list[st
 
 
 def _paths(job_dir: Path) -> dict[str, Path]:
-    return {sid: s.path for sid, s in sources.job_sources(job_dir).items()}
+    return {sid: s.path for sid, s in sources.placed_sources(job_dir).items()}
 
 
-def test_每個來源帶著註腳的出處_種子看素材項目_補料的看放進來的檔頭(
-    data: DataDir,
-) -> None:
-    _fetched(data, "https://b.example/short", final_url="https://b.example/long")
+def test_放好的來源帶著檔頭的出處_正文去掉檔頭(data: DataDir) -> None:
+    _fetched(
+        data,
+        "https://b.example/short",
+        final_url="https://b.example/long",
+        text="第二篇的正文。",
+    )
     _sources_json(data, _entry(2, "https://b.example/short"))
     assert _place(data) == []
     job_dir = data.job_dir(JOB)
 
-    found = sources.job_sources(job_dir, _seed())
+    [(sid, found)] = sources.placed_sources(job_dir).items()
 
-    # 種子的標題與網址照素材項目；補料的照實際抓到的（轉址後的網址）
-    assert (
-        found["S1"].footnote("S1")
-        == "[^S1]: 圖書館晚上開到幾點，https://seed.example/p"
-    )
-    assert found["S2"].footnote("S2") == "[^S2]: 標題，https://b.example/long"
-    assert found["S2"].references == ("標題", "https://b.example/long")
-    # 貼上的文字沒有網址；讀不到素材項目時用原文的第一行當標題
-    pasted = sources.job_sources(job_dir, _seed(url=None))["S1"]
-    assert pasted.footnote("S1") == "[^S1]: 圖書館晚上開到幾點（原文）"
-    assert (
-        sources.job_sources(job_dir)["S1"].footnote("S1") == "[^S1]: 夜間圖書館（原文）"
-    )
+    # 照實際抓到的（轉址後的網址）
+    assert (sid, found.title, found.url) == ("S2", "標題", "https://b.example/long")
+    assert sources.source_body(job_dir / found.path) == "第二篇的正文。\n"
+
+
+def _item(data: DataDir, item: Item, text: str = SEED_TEXT) -> str:
+    """把種子的素材項目寫進 inbox；回傳它在資料目錄裡的相對路徑。"""
+    directory = data.inbox / "manual" / item.id
+    directory.mkdir(parents=True)
+    (directory / "item.json").write_text(item.model_dump_json(), encoding="utf-8")
+    (directory / "content.md").write_text(text, encoding="utf-8")
+    return f"inbox/manual/{item.id}"
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_原文出處看素材項目_重構工單沒有原文全文時正文也從素材項目拿(
+    data: DataDir,
+) -> None:
+    seed = _seed().model_copy(update={"author": "王小明"})
+    item = _item(data, seed)
+    rewrite_job = data.job_dir("rewrite-1")
+    rewrite_job.mkdir(parents=True)
+
+    found = sources.original(data, rewrite_job, item)
+
+    assert found is not None
+    assert found.text == SEED_TEXT
+    assert found.credit == "圖書館晚上開到幾點，王小明，https://seed.example/p"
+
+
+def test_讀不到素材項目時_原文標題用正文第一行(data: DataDir) -> None:
+    found = sources.original(data, data.job_dir(JOB), "inbox/manual/missing")
+    assert found is not None and (found.title, found.url) == ("夜間圖書館", None)
+    assert sources.original(data, data.job_dir("nothing"), "inbox/x") is None
 
 
 def test_抓過的網頁照_sources_json_放進_input_sources_附網址與抓取時間(
@@ -165,7 +189,6 @@ def test_抓過的網頁照_sources_json_放進_input_sources_附網址與抓取
     assert "標題：第 3 篇" in second
     assert "作者" not in second
     assert _paths(job_dir) == {
-        "S1": Path("input/content.md"),
         "S2": Path("input/sources/S2.md"),
         "S3": Path("input/sources/S3.md"),
     }
@@ -184,7 +207,7 @@ def test_沒有抓過的網址_這一次不合格_一個檔都不放(data: DataD
     assert len(problems) == 1
     assert "S3" in problems[0] and "made-up.example" in problems[0]
     assert not (data.job_dir(JOB) / "input" / "sources").exists()
-    assert _paths(data.job_dir(JOB)) == {"S1": Path("input/content.md")}
+    assert _paths(data.job_dir(JOB)) == {}
 
 
 @pytest.mark.parametrize(

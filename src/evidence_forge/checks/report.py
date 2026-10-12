@@ -1,14 +1,14 @@
 """檢查結果的格式：`jobs/<id>/checks/checks.vN.json`（架構草案 v0.3 §2.1、§6）。
 
-一份檢查結果是「某段某次的產出」被 C1～C7 檢查後的所有條目。每一條附：
+一份檢查結果是「某段某次的產出」被檢查後的所有條目。每一條附：
 是哪一項檢查、`pass`／`fail`／`warn`、位置、理由，以及出問題的那段文字。
 
-硬檢查（C1～C5）由執行器直接呼叫本套件算出來；軟檢查（C6、C7）由 `verify` 段的模型判斷，
-執行器只收 C6、C7 的條目（見 `parse_soft_checks`），模型回報的 C1～C5 一律不收。
+現在用到的只有 C5（格式與出處，擋）與 C3（逐字重疊，只顯示），由執行器直接呼叫本套件算出來
+（ADR-0020 §3.4）。C1、C2、C4 已經退場；編號留在 `CheckId` 裡，舊工單的 `checks.vN.json` 還讀得出來。
+軟檢查 C6、C7 的格式（`parse_soft_checks`）是給還沒做的 `verify` 段，模型回報的 C1～C5 一律不收。
 欄位設定照 `models.py` 的共同規則：多出的欄位拒絕、不可變、時間帶時區。
 """
 
-import json
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal, Self, get_args
@@ -52,59 +52,11 @@ class Location(_Contract):
     pointer: str | None = None
 
 
-class LocatedText(_Contract):
-    """一段要檢查的文字與它的位置，例：一條引句、一句事實句。"""
-
-    text: str
-    location: Location
-
-
 def json_pointer(parts: Iterable[str | int]) -> str:
     """一串鍵與索引組成 JSON pointer（RFC 6901）：~ 寫成 ~0、/ 寫成 ~1（順序不能反）。"""
     return "".join(
         "/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts
     )
-
-
-def _as_text(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    if value is None:
-        return ""
-    return json.dumps(value, ensure_ascii=False)
-
-
-def collect_located(payload: object, key: str, file: str) -> list[LocatedText]:
-    """找出 JSON 產出裡所有叫 `key` 的欄位，附 JSON pointer 位置，照出現順序。
-
-    用來從整理段的產出拿引句（`quote`）、從二創段的產出拿事實句（`fact`），
-    不綁定 skill 的 schema 長什麼樣。欄位值不是字串時轉成文字照樣交出去
-    （null 是空字串），讓檢查判它不合格，不默默跳過。
-    """
-    found: list[LocatedText] = []
-
-    def walk(node: object, pointer: str) -> None:
-        children: list[tuple[str | int, object]]
-        if isinstance(node, dict):
-            children = list(node.items())
-        elif isinstance(node, list):
-            children = list(enumerate(node))
-        else:
-            return
-        for child_key, child in children:
-            child_pointer = pointer + json_pointer([child_key])
-            if child_key == key and isinstance(node, dict):
-                found.append(
-                    LocatedText(
-                        text=_as_text(child),
-                        location=Location(file=file, pointer=child_pointer),
-                    )
-                )
-            else:
-                walk(child, child_pointer)
-
-    walk(payload, "")
-    return found
 
 
 class CheckEntry(_Contract):

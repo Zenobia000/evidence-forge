@@ -7,14 +7,21 @@ from pathlib import Path
 
 import pytest
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from evidence_forge.budget import Budget
+from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.harness import Harness, default_harness
 from evidence_forge.models import FeedRef, Job
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.stage_inputs import (
     InputError,
+    carried_files,
     default_genre,
+    personas,
     prepare_inputs,
+    uncalibrated,
 )
 
 VOICE = """---
@@ -29,13 +36,17 @@ calibrated: true
 """
 
 
-def _job(genre: str | None) -> Job:
+def _job(
+    genre: str | None, *, persona: str | None = None, parent: str | None = None
+) -> Job:
     return Job(
         id="j1",
-        recipe="restructure",
+        recipe="rewrite",
         feed=FeedRef(connector="manual", name="manual", item="inbox/manual/x"),
         goal="寫一篇",
         target_genre=genre,
+        persona=persona,
+        parent=parent,
         budget=Budget(usd=0.5),
         status="queued",
     )
@@ -173,3 +184,154 @@ def test_harness_沒有文類資料夾也不出錯(tmp_path: Path) -> None:
 def test_作家的預設文類從_voice_md_的_frontmatter_讀(tmp_path: Path) -> None:
     assert default_genre(_data(tmp_path)) == "opinion"
     assert default_genre(DataDir(tmp_path / "empty")) is None
+
+
+# --- 角色、標題與金句規則、從上一張單接著做（#79、ADR-0019 §3.6） -----------------
+
+NOW = datetime(2026, 10, 13, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+
+def _checked(job_dir: Path, stage: str, attempt: int, files: dict[str, str], *, passed: bool) -> None:
+    """上一張單某段某次的產出，加上執行器替它寫的檢查結果。"""
+    base = job_dir / "stages" / stage / str(attempt)
+    base.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (base / name).write_text(text, encoding="utf-8")
+    write_checks_report(
+        job_dir,
+        ChecksReport(
+            stage=stage,
+            attempt=attempt,
+            files=tuple(f"stages/{stage}/{attempt}/{name}" for name in files),
+            created_at=NOW,
+            entries=(
+                CheckEntry(
+                    check="C5",
+                    status="pass" if passed else "fail",
+                    reason="測試",
+                ),
+            ),
+        ),
+    )
+
+
+def _analysis(data: DataDir) -> Path:
+    """一張跑完的分析工單：brief 一次過、查證第一次沒過第二次過、放了兩份來源。"""
+    parent = data.job_dir("analysis")
+    (parent / "input" / "sources").mkdir(parents=True)
+    (parent / "input" / "content.md").write_text("原文全文", encoding="utf-8")
+    for sid in ("S2", "S3"):
+        (parent / "input" / "sources" / f"{sid}.md").write_text(
+            f"{sid} 的正文", encoding="utf-8"
+        )
+    _checked(parent, "brief", 1, {"brief.md": "brief", "brief.json": "{}"}, passed=True)
+    _checked(parent, "investigate", 1, {"report.md": "沒過的報告"}, passed=False)
+    _checked(parent, "investigate", 2, {"report.md": "合格的報告"}, passed=True)
+    return parent
+
+
+def _rewrite_job_dir(data: DataDir, job_id: str = "j1") -> Path:
+    # 重構工單沒有原文全文：開單時不放 input/content.md
+    job_dir = data.job_dir(job_id)
+    (job_dir / "input").mkdir(parents=True)
+    return job_dir
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_從分析工單開的重構_拿到合格的報告_brief_與來源正文_沒有原文全文(
+    tmp_path: Path,
+) -> None:
+    data = _data(tmp_path)
+    _analysis(data)
+    job_dir = _rewrite_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="analysis"))
+
+    inputs = job_dir / "input"
+    assert (inputs / "report.md").read_text(encoding="utf-8") == "合格的報告"
+    assert (inputs / "brief.md").read_text(encoding="utf-8") == "brief"
+    assert (inputs / "brief.json").is_file()
+    assert sorted(p.name for p in (inputs / "sources").iterdir()) == ["S2.md", "S3.md"]
+    assert not (inputs / "content.md").exists()
+    assert not (inputs / "article.md").exists()
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_再改從上一版重構工單開_拿到上一版文章_報告與來源跟著帶過來(
+    tmp_path: Path,
+) -> None:
+    data = _data(tmp_path)
+    _analysis(data)
+    v1 = _rewrite_job_dir(data, "v1")
+    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    _checked(v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True)
+    v2 = _rewrite_job_dir(data, "v2")
+
+    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1"))
+
+    inputs = v2 / "input"
+    assert (inputs / "article.md").read_text(encoding="utf-8") == "# 第一版"
+    assert (inputs / "report.md").read_text(encoding="utf-8") == "合格的報告"
+    assert sorted(p.name for p in (inputs / "sources").iterdir()) == ["S2.md", "S3.md"]
+    # 上一版自己的檔一個都不改
+    assert (v1 / "stages" / "rewrite" / "1" / "article.md").read_text(
+        encoding="utf-8"
+    ) == "# 第一版"
+
+
+def test_上一張單的產出沒過程式檢查_不帶過去(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    parent = data.job_dir("analysis")
+    _checked(parent, "investigate", 1, {"report.md": "沒過的報告"}, passed=False)
+    assert carried_files(parent) == {}
+
+
+def test_上一張單不存在_丟_InputError(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    job_dir = _rewrite_job_dir(data)
+    with pytest.raises(InputError, match="ghost"):
+        prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="ghost"))
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_用指定角色的聲音與文類風格(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    other = data.authors / "b2b"
+    (other / "genres").mkdir(parents=True)
+    (other / "voice.md").write_text("b2b 的聲音", encoding="utf-8")
+    (other / "genres" / "opinion.md").write_text("b2b 的觀點文", encoding="utf-8")
+    job_dir = _rewrite_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion", persona="b2b"))
+
+    author = job_dir / "input" / "author"
+    assert (author / "voice.md").read_text(encoding="utf-8") == "b2b 的聲音"
+    assert (author / "genre-style.md").read_text(encoding="utf-8") == "b2b 的觀點文"
+    assert personas(data) == ["b2b", "me"]
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_標題與金句規則從資料目錄放進工單(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    data.headline_rules.parent.mkdir(parents=True)
+    data.headline_rules.write_text("十四個技巧", encoding="utf-8")
+    job_dir = _rewrite_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+
+    assert (job_dir / "input" / "headline-punchline.md").read_text(
+        encoding="utf-8"
+    ) == "十四個技巧"
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_角色沒有目標文類的風格_標未校準_有而且校準過就不標(tmp_path: Path) -> None:
+    data = _data(tmp_path, styles={"opinion": "---\ncalibrated: true\n---\n風格"})
+    plain = _rewrite_job_dir(data, "a")
+    prepare_inputs(HARNESS, data, plain, _job("tutorial"))
+    styled = _rewrite_job_dir(data, "b")
+    prepare_inputs(HARNESS, data, styled, _job("opinion"))
+
+    note = uncalibrated(plain, _job("tutorial"))
+    assert note is not None and "未校準" in note and "tutorial" in note
+    assert uncalibrated(styled, _job("opinion")) is None

@@ -140,6 +140,12 @@ class Job(_Contract):
     goal: str
     # 目標文類（ADR-0015）；沒指定時由執行器依訂閱源或作家設定的預設補上。
     target_genre: str | None = None
+    # 角色（`$EF_DATA/authors/<角色>/`，ADR-0015、FR-RW-02）；舊的 job.md 沒有這欄，當成 `me`
+    persona: str | None = None
+    # 從哪一張工單接著做（`ef new --from`，ADR-0019 §3.6）：執行器開工前把那張單的產出放進 `input/`
+    parent: str | None = None
+    # 再改時創作者對上一版的一句意見（FR-RW-03）；寫進任務說明
+    feedback: str | None = None
     budget: Budget
     status: JobStatus
     stage: StageProgress | None = None
@@ -196,6 +202,9 @@ class Recipe(_Contract):
     on_feedback: str
     # 投入時沒填目標就用這一句（FR-IN-01）；沒寫的配方，投入時一定要填目標
     default_goal: str | None = None
+    # 要從上一張工單（`ef new --from`）拿的產出檔名，例：重構要分析的 `report.md`。
+    # 有寫的配方一定要 `--from`，而且上一張單要交得出這些檔；沒寫的配方不接 `--from`（ADR-0019 §3.6）
+    needs: tuple[str, ...] = ()
     # 每段最多試幾次（含升級前）
     max_attempts: PositiveInt = 2
     # 檢查沒過時，自動回寫作段修幾次
