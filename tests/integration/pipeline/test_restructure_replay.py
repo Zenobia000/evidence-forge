@@ -178,15 +178,26 @@ def test_沒指定目標文類_用作家的預設_沒有風格檔的文類標未
     assert 0 <= claims["genre"]["confidence"] <= 1
 
 
-@pytest.mark.promise("NFR-COST-07", "NFR-COST-01")
-def test_錄音的帳本_整理在本機不花錢_補料與二創在_strong_有花錢_沒有升級() -> None:
-    recorded = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.kind == "llm"]
+def _recorded_llm_calls() -> list[LedgerEntry]:
+    return [e for e in _ledger(RECORDING / "ledger.jsonl") if e.kind == "llm"]
+
+
+@pytest.mark.promise("NFR-COST-07")
+def test_錄音的帳本_整理在本機不花錢_沒有升級() -> None:
+    digest = [e for e in _recorded_llm_calls() if e.stage == "digest"]
+    assert digest
+    for entry in digest:
+        assert (entry.tier, entry.cost_usd, entry.escalated_from) == ("local", 0, None)
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_錄音的帳本_補料與二創暫用_strong_有花錢_沒有升級_只有補料段搜尋() -> None:
+    # 補料段用 strong 是暫時偏離 NFR-COST-07（創作者 2026-10-12 決定，S1 評估再比較本機），不標那一條
+    recorded = _recorded_llm_calls()
     assert {entry.stage for entry in recorded} == {"digest", "research", "compose"}
     for entry in recorded:
-        assert entry.escalated_from is None
-        if entry.stage == "digest":
-            assert (entry.tier, entry.cost_usd) == ("local", 0)
-        else:
+        if entry.stage != "digest":
+            assert entry.escalated_from is None
             assert entry.tier == "strong" and entry.cost_usd > 0
     searches = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.kind == "search"]
     assert searches and all(e.stage == "research" for e in searches)
