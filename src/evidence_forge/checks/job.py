@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from evidence_forge.checks.analysis import brief_checks, report_checks
 from evidence_forge.checks.assets import check_images, load_asset_urls
 from evidence_forge.checks.format import SchemaError, check_markdown
 from evidence_forge.checks.overlap import OverlapThresholds, check_overlap
@@ -166,4 +167,61 @@ def run_compose_checks(
         asset_urls=asset_urls,
         thresholds=thresholds,
         footnotes=footnotes,
+    )
+
+
+
+def _read_document(
+    job_dir: Path, document: Path, output: Path
+) -> tuple[str, object] | list[CheckEntry]:
+    """讀一份 Markdown 加一份 JSON 的產出（brief 段、查證與找題材段）。
+
+    讀不出來時回傳 fail 條目：兩份都讀，兩份的問題一次報，省一輪重試才發現。
+    """
+    problems: list[CheckEntry] = []
+    text, payload = "", None
+    try:
+        text = _read_text(_inside(job_dir, document))
+    except _Unreadable as exc:
+        problems.extend(_unreadable(("C5",), document.as_posix(), str(exc)))
+    try:
+        payload = _read_json(_inside(job_dir, output))
+    except _Unreadable as exc:
+        problems.extend(_unreadable(("C5",), output.as_posix(), str(exc)))
+    return problems or (text, payload)
+
+
+def run_brief_checks(
+    job_dir: Path, brief: Path, *, output: Path, schema: Path
+) -> list[CheckEntry]:
+    """brief 段某次嘗試的產出：`brief.md` 六節、`brief.json` 符合 schema。路徑都相對於 `job_dir`。"""
+    schema_doc = _load_schema(schema)
+    read = _read_document(job_dir, brief, output)
+    if isinstance(read, list):
+        return read
+    text, payload = read
+    return brief_checks(
+        brief=text,
+        brief_file=brief.as_posix(),
+        output=payload,
+        output_file=output.as_posix(),
+        schema=schema_doc,
+    )
+
+
+def run_report_checks(
+    job_dir: Path, report: Path, *, output: Path, schema: Path
+) -> list[CheckEntry]:
+    """查證與找題材段某次嘗試的產出：`report.md` 五節依序、`sources.json` 符合 schema 且引用對得上。"""
+    schema_doc = _load_schema(schema)
+    read = _read_document(job_dir, report, output)
+    if isinstance(read, list):
+        return read
+    text, payload = read
+    return report_checks(
+        report=text,
+        report_file=report.as_posix(),
+        output=payload,
+        output_file=output.as_posix(),
+        schema=schema_doc,
     )

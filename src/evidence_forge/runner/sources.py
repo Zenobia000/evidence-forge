@@ -1,4 +1,6 @@
-"""補料段的來源（#70）：來源正文由執行器放進工單的 `input/sources/`，不由 agent 寫。
+"""交來源清單的段（補料段 #70、查證與找題材段 #78）：來源正文由執行器放進工單的 `input/sources/`，不由 agent 寫。
+
+哪一段交來源清單，看它在配方裡宣告的產出有沒有 `sources.json`，不看 skill 的名稱（#78）。
 
 二創要綜合多個來源，C2、C3 也要拿稿子比每一個來源。來源正文要是 agent 自己寫的，
 它就能捏一份「來源」讓 C2、C3 過關；所以補料段只交一份清單（`sources.json`：
@@ -37,7 +39,8 @@ from evidence_forge.models import FetchRecord, Item, RecipeStage
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.stage_inputs import CONTENT, SOURCES_DIR, put_once
 
-RESEARCH_SKILL = "research"
+# 宣告這個產出的段交的是來源清單，執行器照它放正文
+SOURCES_FILE = "sources.json"
 SEED_ID = "S1"
 SEED = Path(CONTENT)
 
@@ -68,8 +71,8 @@ class Source:
 
 
 def collects_sources(stage: RecipeStage) -> bool:
-    """這一段交的是來源清單，執行器要照它放正文。"""
-    return stage.skill == RESEARCH_SKILL
+    """這一段交的是來源清單（宣告了 `sources.json`），執行器要照它放正文。"""
+    return SOURCES_FILE in stage.output
 
 
 def job_sources(job_dir: Path, seed: Item | None = None) -> dict[str, Source]:
@@ -195,11 +198,9 @@ def render(source_id: str, record: FetchRecord, title: str) -> str:
     return "\n".join(lines) + _SEPARATOR + record.text.strip() + "\n"
 
 
-def _listed(stage_dir: Path, stage: RecipeStage) -> list[dict[str, object]] | str:
+def _listed(stage_dir: Path) -> list[dict[str, object]] | str:
     """`sources.json` 裡的來源清單；讀不出來回傳原因。schema 已經驗過，這裡只防萬一。"""
-    name = next((n for n in stage.output if n.endswith(".json")), None)
-    if name is None:
-        return f"{stage.id} 段的配方沒有宣告 JSON 產出，沒有來源清單"
+    name = SOURCES_FILE
     try:
         document = json.loads((stage_dir / name).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -210,23 +211,32 @@ def _listed(stage_dir: Path, stage: RecipeStage) -> list[dict[str, object]] | st
     return listed
 
 
-def place_sources(
+@dataclass(frozen=True)
+class Placement:
+    """照一段一次的 `sources.json` 算好的放法：要放的檔（相對路徑 → 內容），或不能放的原因。"""
+
+    files: tuple[tuple[str, str], ...] = ()
+    problems: tuple[str, ...] = ()
+
+
+def plan_sources(
     data: DataDir,
     job_dir: Path,
     stage: RecipeStage,
     attempt: int,
     *,
     seed: Item | None,
-) -> list[str]:
-    """照補料段這一次的 `sources.json` 放來源正文；回傳問題清單，空的表示放好了。
+) -> Placement:
+    """照這一段這一次的 `sources.json` 算出要放的來源正文；有任何一筆不行就只回傳問題，一個都不放。
 
     `seed` 是種子的素材項目（`seed_item`），用它的網址認出種子；正文則跟工單的
     `input/content.md`（開單時從同一份素材複製進來，內容 hash 就是 `seed.content_hash`）比。
-    先全部檢查，全部沒問題才放：不會只放一半。
+    只算不寫：執行器等這一段的程式檢查也過了才 `put_sources`。檢查沒過就重試，
+    要是先放了，下一次換一份來源就放不進去（同一張單的來源只放一次）。
     """
-    listed = _listed(job_dir / "stages" / stage.id / str(attempt), stage)
+    listed = _listed(job_dir / "stages" / stage.id / str(attempt))
     if isinstance(listed, str):
-        return [listed]
+        return Placement(problems=(listed,))
     pages = fetched_pages(data, job_dir, stage.id, attempt)
     seed_urls = {_normalized(seed.url)} if seed is not None and seed.url else set()
     seed_text = _text_key((job_dir / SEED).read_text(encoding="utf-8"))
@@ -266,8 +276,26 @@ def place_sources(
             continue
         planned.append((relative, content))
     if problems:
-        return problems
-    for relative, content in planned:
-        # 跟其他參考資料同一套放法：暫存檔加 os.link，原子、已存在就沿用
+        return Placement(problems=tuple(problems))
+    return Placement(files=tuple(planned))
+
+
+def put_sources(job_dir: Path, placement: Placement) -> None:
+    """把算好的來源正文放進工單。跟其他參考資料同一套放法：暫存檔加 os.link，原子、已存在就沿用。"""
+    for relative, content in placement.files:
         put_once(job_dir, relative, content)
-    return []
+
+
+def place_sources(
+    data: DataDir,
+    job_dir: Path,
+    stage: RecipeStage,
+    attempt: int,
+    *,
+    seed: Item | None,
+) -> list[str]:
+    """算好就放（`plan_sources` 加 `put_sources`）；回傳問題清單，空的表示放好了。"""
+    placement = plan_sources(data, job_dir, stage, attempt, seed=seed)
+    if not placement.problems:
+        put_sources(job_dir, placement)
+    return list(placement.problems)

@@ -1,16 +1,25 @@
-"""執行器在段與段之間跑的硬檢查 C1～C5（FR-VF-01、架構草案 v0.3 §6、測試藍圖 SEAM-06）。
+"""執行器在段與段之間跑的程式檢查（PRD v3.0 §7、FR-VF-01、架構草案 v0.3 §6、測試藍圖 SEAM-06）。
 
 檢查交給 `checks/`，不交給模型：交給模型就等於由模型決定檢查做不做、結果怎麼回報。
-哪一段跑哪幾項，看這一段用的 skill：
+哪一段跑哪幾項，看這一段在配方裡宣告的**產出檔名**，不看 skill 的名稱（#78）：
+產出檔名是 skill 與執行器之間的約定（`report.md` 就是分析報告），skill 換名字、
+或新配方用別的 skill 交同一種產出，檢查照樣會跑，不會因為名字沒登記而默默漏掉。
 
-- `digest`（整理）：C1、C5。沒過算這段這次失敗，走重試與升級。
-- `compose`（二創）：C2～C5。沒過帶著結果回二創段修，最多 `auto_fix` 次。C2 的引用編號、C3 比的正文
-  都是種子加補料段放的來源（`sources.job_sources`，#70）；稿子註腳裡照抄的出處（標題、網址）C3 不算。
-- 其他 skill：不跑硬檢查，只驗 schema（`validate_outputs`）。
+| 宣告的產出 | 檢查 | 沒過 |
+| :--- | :--- | :--- |
+| `report.md`（分析報告） | 五節依序、`sources.json` 合 schema、引用的編號在清單上 | 這段這次失敗，走重試與升級 |
+| `brief.md` | 六節都在、`brief.json` 合 schema | 這段這次失敗，走重試與升級 |
+| `draft.md`（二創稿，舊配方） | C2～C5 | 帶著結果回這一段修，最多 `auto_fix` 次 |
+| `claims.json`（整理，舊配方） | C1、C5 | 這段這次失敗，走重試與升級 |
+
+一段同時宣告好幾種時，照表的順序取第一個。都沒有的段不跑程式檢查，只驗 schema（`validate_outputs`）。
+`sources.json` 的網址是不是這一段真的抓過的，由 `sources.py` 查（看閘道的帳本）。
+二創段的 C2 引用編號、C3 比的正文都是種子加補料段放的來源（`sources.job_sources`，#70）；
+稿子註腳裡照抄的出處（標題、網址）C3 不算。
 
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
 `checks.json` 都不讀。檢查本身跑不動（原文是空的、schema 壞掉、路徑跑出工單資料夾）時丟
-`ChecksUnavailable`：重跑模型修不好，執行器直接帶著原因送進待審。
+`ChecksUnavailable`：重跑模型修不好，執行器直接帶著原因結束這張單。
 """
 
 import json
@@ -23,16 +32,22 @@ from pydantic import ValidationError
 from evidence_forge.checks import (
     ChecksReport,
     load_check_settings,
+    run_brief_checks,
     run_compose_checks,
     run_digest_checks,
+    run_report_checks,
     write_checks_report,
 )
 from evidence_forge.models import Item, RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
 
-DIGEST_SKILL = "digest"
-COMPOSE_SKILL = "compose"
+# 產出檔名 → 檢查；順序就是一段宣告好幾種時的優先順序（見上表）
+REPORT_OUTPUT = "report.md"
+BRIEF_OUTPUT = "brief.md"
+DRAFT_OUTPUT = "draft.md"
+CLAIMS_OUTPUT = "claims.json"
+_CHECKED_OUTPUTS = (REPORT_OUTPUT, BRIEF_OUTPUT, DRAFT_OUTPUT, CLAIMS_OUTPUT)
 
 # 原文（種子）在工單裡的位置。二創段的來源清單是種子加補料段放的來源（`sources.job_sources`）
 ORIGINAL_SOURCE = sources.SEED
@@ -45,13 +60,18 @@ class ChecksUnavailable(Exception):
     """硬檢查跑不動：問題在執行器或 skill 的設定，不在這次產出。"""
 
 
+def checked_output(stage: RecipeStage) -> str | None:
+    """這一段要跑哪一組檢查：宣告的產出裡第一個認得的檔名；都不認得就是 None。"""
+    return next((name for name in _CHECKED_OUTPUTS if name in stage.output), None)
+
+
 def has_hard_checks(stage: RecipeStage) -> bool:
-    return stage.skill in (DIGEST_SKILL, COMPOSE_SKILL)
+    return checked_output(stage) is not None
 
 
 def fixable(stage: RecipeStage) -> bool:
-    """沒過時回這一段修（二創），而不是算這次失敗（整理）。"""
-    return stage.skill == COMPOSE_SKILL
+    """沒過時回這一段修（二創稿），而不是算這次失敗。"""
+    return checked_output(stage) == DRAFT_OUTPUT
 
 
 def _output(stage: RecipeStage, suffix: str) -> str:
@@ -74,18 +94,25 @@ def run_hard_checks(
 
     `seed` 是種子的素材項目（`sources.seed_item`），二創段用它的標題、網址認出 S1 的註腳。
     """
-    if not has_hard_checks(stage):
+    checked = checked_output(stage)
+    if checked is None:
         return None
     base = Path("stages") / stage.id / str(attempt)
     try:
-        if stage.skill == DIGEST_SKILL:
-            output = base / _output(stage, ".json")
+        if checked == CLAIMS_OUTPUT:
+            output = base / CLAIMS_OUTPUT
             files: tuple[Path, ...] = (output,)
             entries = run_digest_checks(
                 job_dir, output=output, schema=schema, source=ORIGINAL_SOURCE
             )
+        elif checked in (BRIEF_OUTPUT, REPORT_OUTPUT):
+            document = base / checked
+            output = base / _output(stage, ".json")
+            files = (document, output)
+            run = run_brief_checks if checked == BRIEF_OUTPUT else run_report_checks
+            entries = run(job_dir, document, output=output, schema=schema)
         else:
-            draft = base / _output(stage, ".md")
+            draft = base / DRAFT_OUTPUT
             output = base / _output(stage, ".json")
             files = (draft, output)
             found = sources.job_sources(job_dir, seed)

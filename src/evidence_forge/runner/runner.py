@@ -822,6 +822,7 @@ class Runner:
             reason = LIMIT_REASONS[limit]
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="incomplete", reason=reason))
+        placement: sources.Placement | None = None
         if result.timed_out:
             self._stage_event(job_dir, stage.id, attempt, "Pi 逾時")
             problems = [f"Pi 超過 {self.pi_timeout_s:.0f} 秒沒結束，已停止"]
@@ -842,14 +843,16 @@ class Runner:
                 self._stage_event(job_dir, stage.id, attempt, reason)
                 return _Tried(stop=JobResult(outcome="failed", reason=reason))
             if not problems and sources.collects_sources(stage):
-                # 補料段：照 sources.json 放來源正文；網址這一次沒抓過就算不合格（#70）
-                problems = sources.place_sources(
+                # 交來源清單的段：照 sources.json 算好要放的來源正文；網址這一次沒抓過就算不合格（#70）。
+                # 等程式檢查也過了才放（見下面），檢查沒過重試時才換得了來源
+                placement = sources.plan_sources(
                     self.data,
                     job_dir,
                     stage,
                     attempt,
                     seed=seed,
                 )
+                problems = list(placement.problems)
             error = pi_error(result.events)
             if problems and error is not None:
                 # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡
@@ -882,6 +885,8 @@ class Runner:
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))
         if report is None or report.passed:
+            if placement is not None:
+                sources.put_sources(job_dir, placement)
             self._stage_event(job_dir, stage.id, attempt, "產出合格")
             return _Tried()
         self._stage_event(
