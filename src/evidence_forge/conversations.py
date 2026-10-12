@@ -1,0 +1,140 @@
+"""對話資料夾（ADR-0021 §3.2）。
+
+```
+$EF_DATA/conversations/<對話 id>/
+  conversation.json   對話的設定：標題、建立時間、預算、開過幾次 Pi（只有聊天主機寫）
+  jobs.jsonl          這個對話開過的工單，一行一張（只有閘道寫，只增不改）
+  ledger.jsonl        對話本身的模型呼叫（只有閘道寫，只增不改）
+  pi-session/         Pi 的對話紀錄（只有 Pi 寫；`--session-dir`，session id 就是對話 id）
+```
+
+工單本身仍在 `jobs/<工單 id>/`，不搬進對話資料夾：執行器、帳單與既有工具都照舊找得到。
+「這個對話讀得到哪張工單」的單一真相是 `jobs.jsonl`；對話的工具只碰得到列在這裡的工單。
+`job.md` 的 `conversation` 只記「是誰開的」，給投入去重用，不拿來判斷能不能讀。
+"""
+
+import json
+import os
+import secrets
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveInt,
+    ValidationError,
+)
+
+from evidence_forge.jobkey import check_name
+from evidence_forge.paths import DataDir
+
+DEFAULT_BUDGET_USD = 1.0
+
+
+class Conversation(BaseModel):
+    """`conversation.json`。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    created_at: AwareDatetime
+    # 對話本身的模型呼叫（追問、開工、讀報告）的美元上限；開出去的工單各自用工單的預算
+    budget_usd: NonNegativeFloat = DEFAULT_BUDGET_USD
+    # 開過幾次 Pi：每開一次加一，對話鑰匙是 conv:<id>:<這個數>
+    launches: NonNegativeInt = 0
+
+
+class ConversationJob(BaseModel):
+    """`jobs.jsonl` 的一行：這個對話開了哪張工單。
+
+    每一版（補查、再改、換角色）都是一張新工單，用 `version` 與 `parent` 串起來：
+    `parent` 是上一版的工單 id，第一版是 None。這張票只開分析，所以一律寫第 1 版；
+    兩個欄位先定好，之後的重構不用改帳本格式。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: str
+    ts: AwareDatetime
+    version: PositiveInt = 1
+    parent: str | None = None
+
+
+def _folder(data: DataDir, conversation_id: str) -> Path:
+    # 對話 id 會拼進路徑，跟工單 id 同一套字元規則
+    check_name("對話 id", conversation_id)
+    return data.conversation_dir(conversation_id)
+
+
+def new_id(now: datetime) -> str:
+    """`c-<日期時間>-<隨機>`：照時間排得出先後，又不會兩個同時開的撞在一起。"""
+    return f"c-{now.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+
+
+def create(data: DataDir, now: datetime, title: str = "新對話") -> Conversation:
+    conversation = Conversation(id=new_id(now), title=title, created_at=now)
+    _folder(data, conversation.id).mkdir(parents=True, exist_ok=False)
+    save(data, conversation)
+    return conversation
+
+
+def save(data: DataDir, conversation: Conversation) -> None:
+    """先寫暫存檔再整個換上去：讀的人只會讀到舊版或新版。"""
+    path = _folder(data, conversation.id) / "conversation.json"
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    temporary.write_text(conversation.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def read(data: DataDir, conversation_id: str) -> Conversation:
+    path = _folder(data, conversation_id) / "conversation.json"
+    return Conversation.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def budget_usd(data: DataDir, conversation_id: str) -> float:
+    """對話的預算；讀不到就是 0（雲端呼叫一律不放行，跟工單讀不到 `job.md` 一樣）。"""
+    try:
+        return read(data, conversation_id).budget_usd
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _jobs_file(data: DataDir, conversation_id: str) -> Path:
+    return _folder(data, conversation_id) / "jobs.jsonl"
+
+
+def jobs(data: DataDir, conversation_id: str) -> list[ConversationJob]:
+    """這個對話開過的工單，照開的順序，同一張只算第一次。讀不懂的行跳過。"""
+    path = _jobs_file(data, conversation_id)
+    if not path.is_file():
+        return []
+    found: dict[str, ConversationJob] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = ConversationJob.model_validate_json(line)
+        except ValidationError:
+            continue
+        found.setdefault(row.job_id, row)
+    return list(found.values())
+
+
+def owns_job(data: DataDir, conversation_id: str, job_id: str) -> bool:
+    return any(row.job_id == job_id for row in jobs(data, conversation_id))
+
+
+def add_job(data: DataDir, conversation_id: str, row: ConversationJob) -> None:
+    """記下這個對話開了這張工單；已經記過就不再記（投入去重拿回同一張時）。"""
+    if owns_job(data, conversation_id, row.job_id):
+        return
+    path = _jobs_file(data, conversation_id)
+    line = json.dumps(row.model_dump(mode="json"), ensure_ascii=False)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")

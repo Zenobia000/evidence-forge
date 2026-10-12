@@ -8,7 +8,8 @@
      標成讀不到的素材項目、寫明原因，丟 `SourceUnreadable`，**不開工單**。
    - 檔案：只收 Markdown、純文字、PDF；PDF 抽不到文字就報錯。
 3. 同一個內容 hash 只建一份素材項目（`item.json`、`content.md`、`raw/` 原檔），重複投入沿用。
-4. 同一份素材、同樣的目標、**同一個對話**已有沒丟棄的工單，就回傳那一張，不另開；目標不同才開新的。
+4. 同一份素材、同一份配方、同樣的目標、**同一個對話**已有沒丟棄的工單，就回傳那一張，不另開；
+   其中一樣不同就開新的。
    兩個對話丟同一篇文章各開各的單（ADR-0021 §3.6）；命令列 `ef new` 沒有對話（None），
    只跟同樣沒有對話的工單去重。
 
@@ -200,9 +201,9 @@ def _publish_item(item_dir: Path, item: Item, material: _Material) -> None:
 
 
 def _open_job_for(
-    data: DataDir, item_path: str, goal: str, conversation: str | None
+    data: DataDir, item_path: str, recipe: str, goal: str, conversation: str | None
 ) -> Job | None:
-    """同一份素材、同樣目標、同一個對話、還沒丟棄的工單；沒有就是 None。"""
+    """同一份素材、同一份配方、同樣目標、同一個對話、還沒丟棄的工單；沒有就是 None。"""
     if not data.jobs.is_dir():
         return None
     for job_dir in sorted(data.jobs.iterdir()):
@@ -212,6 +213,7 @@ def _open_job_for(
             continue  # 正在建立或壞掉的工單不算
         if (
             job.feed.item == item_path
+            and job.recipe == recipe
             and job.status != "discarded"
             and job.goal.strip() == goal
             and job.conversation == conversation
@@ -280,7 +282,9 @@ def open_job(
     # 「找已有的工單 → 開資料夾 → 寫 job.md」整段鎖住：送出被連按兩下、或 UI 與 `ef new`
     # 同時投入同一份素材時，後到的那個等前一個寫完 job.md 再掃描，拿到同一張
     with _item_lock(data, item):
-        existing = _open_job_for(data, item_path, chosen_goal, conversation)
+        existing = _open_job_for(
+            data, item_path, recipe.name, chosen_goal, conversation
+        )
         if existing is not None:
             return Intake(job=existing, created=False)
         budget = Budget(

@@ -48,4 +48,3 @@ def test_帳本跟著擁有者走(tmp_path: Path) -> None:
     data = DataDir(tmp_path)
     assert data.owner_dir("conv:c1") == tmp_path / "conversations" / "c1"
     assert data.owner_dir("20261013-1") == tmp_path / "jobs" / "20261013-1"
-

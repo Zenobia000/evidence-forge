@@ -7,11 +7,12 @@
    **請求 hash 一律照 Pi 送來的原始本文算**，不是改寫後的本文：快取與重播的鍵要跟 Pi 的請求
    逐位元組對應（Pi 對同樣的輸入送出一樣的請求，#20），改了 `models.yaml` 也不影響對得上錄音。
    改寫後真的送出去的本文另外存進 `blobs/`，帳本不記它的 hash。
-3. 有存好的回應就回放，不轉送也不花錢：
+3. 有存好的回應就回放，不轉送也不花錢（對話本身的呼叫不走這一步，見下）：
    - 重播模式：只看錄音；沒錄過就報錯，從不轉送（NFR-COST-06）。
    - 一般模式：同一張單、同一段、同一次嘗試裡，第 n 次送出同一個請求，回放帳本裡第 n 份成功的回應
      （`cache_hit`，金額 0）。換了嘗試編號不會命中，重試才不會一直拿到同一份壞答案（NFR-COST-02）。
 4. 雲端模型先預留：工單剩下的預算或本月剩下的額度不夠，就回 `budget_exceeded`，不轉送（NFR-COST-01）。
+   對話鑰匙（`conv:<對話 id>:<第幾次開>`）用對話的預算與對話的帳本（ADR-0021 §3.3）。
 5. 本機模型一次只服務一個請求，其餘排隊；排隊時間記在 `queue_ms`（NFR-PAR-02）。
 6. 用 `models.yaml` 的值改寫 `model`、`max_tokens`、`thinking` 後轉送；雲端 429 退避重試，
    等待時間也算進 `queue_ms`（NFR-PAR-03）。Ollama 連不上就報錯，不改送付費模型（NFR-RUN-05）。
@@ -21,6 +22,10 @@
    狀態碼 200 但不是一則完整的訊息（串流裡有 error 事件、沒送到結尾、讀不到用量）記 `error`、
    照預留的金額入帳：不知道後端實際算了多少，而 `error` 的回應不會被回放。
    串流裡有 error 事件（後端過載時常見）跟 5xx 一樣算後端故障，告訴執行器（告示板）。
+
+對話不走第 3 步的一般模式快取（ADR-0021 §3.5）：對話的 Pi 每一輪都帶著整段紀錄，一模一樣的請求
+只會是同一輪重送，而創作者按「重新回答」要的正是不一樣的答案；回放要整份讀帳本，
+對話的帳本跨月一直長，每一輪都讀一次也划不來。重播模式（只看錄音）照舊適用。
 """
 
 import asyncio
@@ -50,7 +55,13 @@ from evidence_forge.gateway.ledger import Usage
 from evidence_forge.ledger_models import LedgerEntry, LedgerStatus
 from evidence_forge.gateway.prices import Price, cost_micros, reservation_micros
 from evidence_forge.gateway.scope import ToolRejected
-from evidence_forge.jobkey import JobKey
+from evidence_forge import conversations
+from evidence_forge.convkey import (
+    ConversationKey,
+    Principal,
+    conversation_of,
+    ledger_owner,
+)
 from evidence_forge.models import TIER_ORDER
 
 _log = logging.getLogger(__name__)
@@ -132,7 +143,7 @@ class _Relay(StreamingResponse):
 class _Call:
     """一個請求從進來到寫完帳本的狀態。"""
 
-    key: JobKey
+    key: Principal
     tier: str
     alias: Alias
     request_hash: str
@@ -194,11 +205,11 @@ def add_message_routes(
             time.monotonic() - call.gpu_started if call.gpu_started is not None else 0.0
         )
         ledger.append(
-            config.data.job_dir(call.key.job_id),
+            config.data.owner_dir(call.key.job_id),
             LedgerEntry.model_validate(
                 {
                     "ts": config.clock(),
-                    "job_id": call.key.job_id,
+                    **ledger_owner(call.key),
                     "stage": call.key.stage,
                     "attempt": call.key.attempt,
                     "kind": "llm",
@@ -416,6 +427,8 @@ def add_message_routes(
         if recorded_blobs is not None:
             hashes = recorded.get((key.stage, key.attempt, call.request_hash), [])
             return replayable(recorded_blobs, hashes, nth)
+        if isinstance(key, ConversationKey):
+            return None  # 對話不走一般模式的快取（見模組說明）
         # 讀不懂的行（寫到一半被砍的半行）`ledger.read` 會跳過：那一次的回應不在清單裡，
         # 同一個請求後面的回應往前遞補。回放的仍然都是這個請求真的拿到過的回應
         entries = ledger.read(config.data.job_dir(key.job_id) / "ledger.jsonl")
@@ -426,6 +439,10 @@ def add_message_routes(
         return replayable(blobs, hashes, nth)
 
     def job_budget_micros(job_id: str) -> int:
+        conversation = conversation_of(job_id)
+        if conversation is not None:
+            # 對話的預算在對話資料夾的 conversation.json（ADR-0021 §3.3）
+            return usd_to_micros(conversations.budget_usd(config.data, conversation))
         try:
             budget = read_job(config.data.job_dir(job_id) / "job.md").job.budget
         except (OSError, ValueError):

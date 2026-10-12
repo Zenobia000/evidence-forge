@@ -3,7 +3,9 @@
 兩道上限，預留時都要過：
 
 1. **這張工單**：`job.md` 的 `budget.usd` − 這張單帳本的總花費 − 這張單預留中的金額。
-2. **這個月**：月上限（設定值，預設 US$10，Q-30）− 本月所有工單帳本與投入帳本的花費 − 所有預留中的金額。
+   對話本身的呼叫換成對話的 `conversation.json` 的 `budget_usd` 與對話的帳本（ADR-0021 §3.3）。
+2. **這個月**：月上限（設定值，預設 US$10，Q-30）− 本月所有工單帳本、對話帳本與投入帳本的花費
+   − 所有預留中的金額。
    月份依 Asia/Taipei 的日曆月切。
 
 Tavily credits（`web_search`）另有一道：`job.md` 的 `budget.tavily_credits` − 這張單帳本的
@@ -80,6 +82,8 @@ class SpendTally:
 
     def _paths(self) -> list[Path]:
         paths = sorted(self._data.jobs.glob("*/ledger.jsonl"))
+        # 對話本身的模型呼叫也算進本月（ADR-0021 §3.3、chat.feature「對話本身的花費也入帳」）
+        paths += sorted(self._data.conversations.glob("*/ledger.jsonl"))
         if self._data.intake_ledger.is_file():
             paths.append(self._data.intake_ledger)
         return paths
@@ -122,10 +126,11 @@ class SpendTally:
         return sum(self._refresh(path).by_month.get(month, 0) for path in self._paths())
 
     def job_micros(self, job_id: str) -> int:
-        return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").total
+        """一張工單（或 `conv:<對話 id>` 一個對話）帳本的總花費。"""
+        return self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl").total
 
     def job_credits(self, job_id: str) -> int:
-        return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").credits
+        return self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl").credits
 
 
 def _credits(row: dict[str, object]) -> int:

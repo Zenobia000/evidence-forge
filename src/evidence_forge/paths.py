@@ -68,6 +68,9 @@ class DataDir:
         return self.root / "checks.yaml"
 
     def job_dir(self, job_id: str) -> Path:
+        # 冒號在 Windows 的磁碟上不能當檔名；`conv:<對話 id>` 要經 `owner_dir` 導到對話資料夾
+        if ":" in job_id:
+            raise ValueError(f"工單 id 不能有冒號：{job_id!r}")
         return self.jobs / job_id
 
     @property

@@ -4,13 +4,14 @@
 可能被殺掉再接回，所以鑰匙綁的是「這個對話第幾次開 Pi」：每接回一次編號加一，
 閘道只認最新登記的那一把，前一個沒死透的 Pi 拿舊鑰匙來一律拒絕（跟工單鑰匙同一張登記表 `ActiveStages`）。
 
-為了讓閘道的模型轉送、帳本、預算不分兩套，這把鑰匙對外跟工單鑰匙一樣有
+為了讓閘道的模型轉送、預留、告示板不分兩套，這把鑰匙對外跟工單鑰匙一樣有
 `job_id`、`stage`、`attempt` 三欄：
 
 - `job_id` 是 `conv:<對話 id>`：帶冒號，不可能跟工單 id 撞（工單 id 不准有冒號）。
+  它只在閘道的記憶體裡當擁有者 id（登記表、預留、告示板），**不拼進路徑、不寫進帳本的 `job_id`**：
+  路徑一律經 `DataDir.owner_dir` 導到 `conversations/<對話 id>/`，帳本那一行寫 `conversation_id`
+  （`ledger_owner`）。冒號在 Windows 的磁碟上不能當檔名，`DataDir.job_dir` 看到冒號就報錯。
 - `stage` 固定是 `chat`，`attempt` 是第幾次開 Pi。
-
-帳本記在對話資料夾（`DataDir.owner_dir`），不在 `jobs/` 底下。
 """
 
 import re
@@ -66,6 +67,16 @@ def parse_principal(text: str) -> Principal:
     if text.startswith(PREFIX):
         return ConversationKey.parse(text)
     return JobKey.parse(text)
+
+
+def ledger_owner(key: Principal) -> dict[str, str]:
+    """帳本那一行記誰的帳：工單寫 `job_id`，對話寫 `conversation_id`（ADR-0021 §3.3）。
+
+    `conv:<對話 id>` 只在閘道的記憶體裡當擁有者 id，不寫進帳本的 `job_id`、也不拼進任何路徑。
+    """
+    if isinstance(key, ConversationKey):
+        return {"conversation_id": key.conversation_id}
+    return {"job_id": key.job_id}
 
 
 def conversation_of(owner_id: str) -> str | None:

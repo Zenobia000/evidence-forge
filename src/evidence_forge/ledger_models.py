@@ -30,13 +30,15 @@ LedgerStatus = Literal[
 
 
 class LedgerEntry(BaseModel):
-    """工單的一次模型或工具呼叫：用量、花費、時間與結果。"""
+    """工單（或對話）的一次模型或工具呼叫：用量、花費、時間與結果。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # 是哪一張、哪一段、第幾次
+    # 是哪一張、哪一段、第幾次。對話本身的呼叫寫 `conversation_id`，`job_id` 留空，
+    # 段是 `chat`、次是第幾次開 Pi（ADR-0021 §3.3）；一行只屬於其中一個
     ts: AwareDatetime
-    job_id: str
+    job_id: str | None = None
+    conversation_id: str | None = None
     stage: str
     attempt: PositiveInt
     kind: LedgerKind
@@ -61,6 +63,14 @@ class LedgerEntry(BaseModel):
     # 對回 blobs/ 的原文；呼叫沒有拿到回應時 response_hash 是 None
     request_hash: Sha256Hex
     response_hash: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def _one_owner(self) -> Self:
+        if (self.job_id is None) == (self.conversation_id is None):
+            raise ValueError(
+                "一行帳只屬於一張工單（job_id）或一個對話（conversation_id）"
+            )
+        return self
 
     @model_validator(mode="after")
     def _model_calls_name_their_tier(self) -> Self:
