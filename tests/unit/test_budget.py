@@ -11,6 +11,7 @@ from evidence_forge.budget import micros_to_usd, usd_to_micros
 from evidence_forge.gateway.budget import (
     BudgetExceeded,
     BudgetGuard,
+    CreditGuard,
     SpendTally,
     taipei_month,
 )
@@ -215,3 +216,56 @@ def test_帳本寫不進去的花費只算進那個月的額度_工單預算一�
     with pytest.raises(BudgetExceeded) as refused:
         guard.reserve("a", job_budget_micros=1_000_000, micros=300_000)
     assert refused.value.limit == "job"
+
+
+# --- Tavily credits（web_search，#69） ----------------------------------------
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_credits_不夠就拒絕_剛好用完不算超過(data: DataDir) -> None:
+    _job_ledger(data, "a", _line(OCT, 0.0, credits=8))
+    guard = CreditGuard(data)
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("a", job_credits=10, credits=3)
+    assert refused.value.limit == "job"
+    assert "credits" in refused.value.message
+    guard.reserve("a", job_credits=10, credits=2)
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_credits_只算這張單_預留中的先算進去_結算後才放出來(data: DataDir) -> None:
+    _job_ledger(data, "b", _line(OCT, 0.0, credits=5))
+    guard = CreditGuard(data)
+    first = guard.reserve("a", job_credits=1, credits=1)
+    with pytest.raises(BudgetExceeded):
+        guard.reserve("a", job_credits=1, credits=1)
+    # 別張單的花費、別張單的預留不影響這張
+    guard.reserve("b", job_credits=6, credits=1)
+    # 結算：實際用掉 0（例如 Tavily 拒收），寫進帳本後放掉預留
+    _job_ledger(data, "a", _line(OCT, 0.0, credits=0))
+    guard.release(first)
+    guard.reserve("a", job_credits=1, credits=1)
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_credits_帳本寫不進去時_實際用掉的照樣算進這張單(data: DataDir) -> None:
+    guard = CreditGuard(data)
+    spent = guard.reserve("a", job_credits=2, credits=1)
+    guard.release(spent, unbooked_credits=1)
+    guard.release(spent, unbooked_credits=1)  # 重複呼叫無害
+    guard.reserve("a", job_credits=2, credits=1)
+    with pytest.raises(BudgetExceeded):
+        guard.reserve("a", job_credits=2, credits=1)
+
+
+def test_credits_欄位讀不懂的行跳過_美元加總不受影響(data: DataDir) -> None:
+    _job_ledger(
+        data,
+        "a",
+        _line(OCT, 0.5, credits=2),
+        _line(OCT, 0.25, credits="two"),
+        _line(OCT, 0.25),
+    )
+    tally = SpendTally(data)
+    assert tally.job_credits("a") == 2
+    assert tally.job_micros("a") == 1_000_000
