@@ -3,7 +3,8 @@
 - credits 用完（NFR-COST-01、`research.feature`〈搜尋額度用完就停〉）：這一段用已經找到的資料收尾，
   後面的段照跑，單子最後以「未完成：預算用完」進待審。
 - Tavily 故障（NFR-RUN-05）：這一段交不出合格產出才標失敗，不重試、不升級；
-  產出合格的話以產出為準，故障不會害一個收得了尾的段失敗。
+  產出合格的話以產出為準，故障不會害一個收得了尾的段失敗，但單子最後以未完成進待審
+  （跟 credits 用完一樣，#70）。同一次後來又搜成功、或只是查詢本身被 Tavily 退回（400），不算。
 
 假 Pi 直接打閘道的 `/tools/web_search`（跟 ef-tools 送的一樣），Tavily 是本機 stub。
 """
@@ -159,13 +160,49 @@ def test_Tavily_故障而這一段交不出合格產出_以失敗進待審_不�
     assert len(tavily.received) == 1
 
 
-@pytest.mark.promise("NFR-RUN-05")
-def test_Tavily_故障但這一段用手上的資料交出合格產出_算這段過了(
+@pytest.mark.promise("NFR-RUN-05", "NFR-COST-01")
+def test_Tavily_故障但這一段用手上的資料交出合格產出_這段算過_單子以未完成進待審(
     world_for: Callable[..., World], tavily: Tavily
 ) -> None:
+    # 段算過（後面照跑），但創作者要知道補料沒做完整：跟 credits 用完一樣標未完成（#70）
     tavily.replies = [status(500)] * 10
     world = world_for(
         _search_fails_then_writes({"summary": "沒搜到，用素材本身寫的摘要。"}),
+        recipes={"search": _recipe(_stage("research", credits=5), _stage("compose"))},
+    )
+    job_id = world.job(recipe="search")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "incomplete", job.result
+    assert job.result.reason.startswith("Tavily 故障"), job.result.reason
+    assert "HTTP 500" in job.result.reason and "research" in job.result.reason
+    assert {entry.stage for entry in world.ledger(job_id)} == {"research", "compose"}
+
+
+def _search_twice(first: str, second: str) -> str:
+    """補料段搜兩次（第一次的回應碼要是 first），再寫產出。"""
+    return (
+        FAKE_PI_LIB
+        + f"""
+status, body = call("/tools/web_search", {{"query": "一"}})
+assert status == {first}, (status, body)
+call("/tools/web_search", {{"query": "{second}"}})
+ask()
+write("summary.json", {{"summary": "好"}})
+event(type="agent_end")
+"""
+    )
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_Tavily_故障之後同一次又搜成功_不算補料沒做完整(
+    world_for: Callable[..., World], tavily: Tavily
+) -> None:
+    tavily.replies = [status(500)]
+    world = world_for(
+        _search_twice("502", "二"),
         recipes={"search": _recipe(_stage("research", credits=5))},
     )
     job_id = world.job(recipe="search")
@@ -174,3 +211,38 @@ def test_Tavily_故障但這一段用手上的資料交出合格產出_算這段
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+def test_查詢本身有問題的_400_不算_Tavily_故障(
+    world_for: Callable[..., World], tavily: Tavily
+) -> None:
+    tavily.replies = [status(400), status(400)]
+    world = world_for(
+        _search_twice("400", "也是壞查詢"),
+        recipes={"search": _recipe(_stage("research", credits=5))},
+    )
+    job_id = world.job(recipe="search")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+def test_後面的段自己沒做完_原因也帶上補料段的搜尋額度用完(
+    world_for: Callable[..., World],
+) -> None:
+    # 補料在本機（不花錢）、二創在 strong：二創被美元預算擋下，單子本來就是未完成
+    compose = _stage("compose").model_copy(
+        update={"tier": "strong", "escalate_to": None}
+    )
+    recipe = _recipe(_stage("research", credits=1), compose)
+    world = world_for(SEARCHES_TWICE, recipes={"search": recipe})
+    job_id = world.job(recipe="search", budget_usd=0.0001)
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "incomplete"
+    assert "預算用完（搜尋額度）" in job.result.reason, job.result.reason
+    assert not job.result.reason.startswith("預算用完（搜尋額度）")

@@ -74,7 +74,7 @@ _DETAIL_LIMIT = 200
 TAVILY = "tavily"
 # 閘道回這些狀態碼，表示 Tavily 那一端出了事：429 限流到重試用完、502 出錯／連不上／金鑰不能用、
 # 504 沒回應。重跑這一段或升級模型都修不好，所以也告訴執行器（模組說明第 7 點）
-_OUTAGE_STATUSES = frozenset({429, 502, 504})
+OUTAGE_STATUSES = frozenset({429, 502, 504})
 
 
 @dataclass(frozen=True)
@@ -233,7 +233,8 @@ class Searcher:
         self._blobs = BlobStore(config.data.blobs)
         self._guard = CreditGuard(config.data)
         # 錄音：（段, 次, 請求 hash）→ 照帳本順序的（狀態, 回應 hash）
-        self._recorded: dict[ledger.CallKey, list[tuple[LedgerStatus, str]]] = {}
+        # 回放不了的行（沒有 response_hash）也佔一個位置（None），後面的第 n 次才不會錯位
+        self._recorded: dict[ledger.CallKey, list[tuple[LedgerStatus, str | None]]] = {}
         # 重播時同一張單、同一段、同一次、同一個搜尋已經回放過幾次（第 n 次回放第 n 個）
         self._seen: dict[tuple[str, str, int, str], int] = {}
         self._recorded_blobs: BlobStore | None = None
@@ -242,8 +243,7 @@ class Searcher:
                 raise ValueError("重播模式要指定錄音的位置（replay_dir）")
             self._recorded_blobs = BlobStore(config.replay_dir / "blobs")
             for entry in ledger.read(config.replay_dir / "ledger.jsonl"):
-                # 沒有 response_hash 的那一行（結果存不進 blobs/）回放不了，不收
-                if entry.kind == "search" and entry.response_hash is not None:
+                if entry.kind == "search":
                     self._recorded.setdefault(
                         (entry.stage, entry.attempt, entry.request_hash), []
                     ).append((entry.status, entry.response_hash))
@@ -316,7 +316,7 @@ class Searcher:
 
     def _refuse(self, call: _Call, failure: SearchFailure) -> NoReturn:
         """把錯誤回給 agent（帳本要先記好）；Tavily 那一端的故障也告訴執行器。"""
-        if failure.status in _OUTAGE_STATUSES:
+        if failure.status in OUTAGE_STATUSES:
             self._board.report_outage(call.key, TAVILY, failure.error)
         raise ToolRejected(failure.status, failure.error)
 
@@ -407,7 +407,8 @@ class Searcher:
         if nth >= len(found):
             return None
         status, digest = found[nth]
-        raw = self._recorded_blobs.get(digest)
+        # 錄音時結果沒存進 blobs/ 的那一次：回放不了，照沒錄過報錯
+        raw = self._recorded_blobs.get(digest) if digest is not None else None
         if raw is None:
             return None
         try:

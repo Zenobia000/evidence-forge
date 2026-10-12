@@ -10,6 +10,8 @@ agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（
 - `input/author/genre-style.md`：作家在目標文類的風格；作家沒寫這一類就沒有這個檔（未校準）；
 - `input/conversions/<來源>--<目標>.md`：轉換說明，全部放進去，二創段照整理出的主文類挑。
 
+補料段找到的來源正文（`input/sources/`）不在這裡放：補料段結束後才知道有哪些，見 `sources.py`。
+
 整份參考資料只放一次（只增不改）：全部放完才寫 `input/.prepared.json`，有這份就整段跳過，
 所以重跑、退件重跑、當機重開都沿用第一次那一份，連「當時沒有的檔」也一起凍結；
 請求逐位元組不變，閘道的快取才對得上，不會重新付錢。每個檔先寫暫存檔再用 `os.link`
@@ -37,11 +39,13 @@ AUTHOR_DIR = "input/author/"
 VOICE = AUTHOR_DIR + "voice.md"
 GENRE_STYLE = AUTHOR_DIR + "genre-style.md"
 CONVERSIONS = "input/conversions/"
+# 補料段之後，執行器照 sources.json 放的來源正文（`sources.py`，#70）
+SOURCES_DIR = "input/sources/"
 # 參考資料放完的紀錄；不給 agent 讀，所以不在 PROVIDED 裡
 PREPARED = "input/.prepared.json"
 
 # agent 讀得到的工單路徑（`content.md` 由開單時寫進去）；結尾是 / 的表示整個資料夾
-PROVIDED = (CONTENT, GENRES, TARGET_GENRE, AUTHOR_DIR, CONVERSIONS)
+PROVIDED = (CONTENT, GENRES, TARGET_GENRE, AUTHOR_DIR, CONVERSIONS, SOURCES_DIR)
 
 
 class InputError(ValueError):
@@ -64,7 +68,8 @@ def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _put(job_dir: Path, relative: str, data: str | bytes) -> None:
+def put_once(job_dir: Path, relative: str, data: str | bytes) -> None:
+    """放一個檔進工單：先寫暫存檔再用 `os.link` 換成正式檔名；已經有了就沿用那一份。"""
     target = job_dir / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     # 固定的暫存檔名：上次當機留下的半截暫存檔，這次直接蓋掉
@@ -86,7 +91,7 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
     placed: list[str] = []
 
     def put(relative: str, content: str | bytes) -> None:
-        _put(job_dir, relative, content)
+        put_once(job_dir, relative, content)
         placed.append(relative)
 
     definitions = sorted(harness.genres.glob("*.md"))

@@ -6,6 +6,7 @@
 
 import json
 import os
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -104,9 +105,8 @@ def env(
     skill_dir = _skill(tmp_path / "harness")
     stages = ActiveStages()
     stages.activate(KEY, skill_dir=skill_dir)
-    config = GatewayConfig(
-        data=data, mode="replay", replay_dir=tmp_path / "none", clock=lambda: NOW
-    )
+    # 抓取要真的連（假的外網）：重播模式只回放錄音（見本檔最後的重播測試）
+    config = GatewayConfig(data=data, mode="live", clock=lambda: NOW)
     fetcher = Fetcher(
         data, resolver=fake_web.resolver, dial=fake_web.dial, clock=config.clock
     )
@@ -239,3 +239,137 @@ def test_run_script_拿不到閘道的環境變數(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake-xxxx")
     names = json.loads(env.call("run_script", script="env.py").json()["stdout"])
     assert "ANTHROPIC_API_KEY" not in names
+
+
+# --- 重播 -------------------------------------------------------------------
+
+
+def _record(env: Env, tmp_path: Path) -> Path:
+    """照錄音的做法：把工單的 ledger.jsonl 與它指到的 blobs/ 複製出來。"""
+    recording = tmp_path / "recording"
+    (recording / "blobs").mkdir(parents=True)
+    shutil.copy(env.job_dir / "ledger.jsonl", recording / "ledger.jsonl")
+    for entry in env.ledger():
+        for digest in (entry.request_hash, entry.response_hash):
+            if digest is not None:
+                shutil.copy(env.data.blobs / digest, recording / "blobs" / digest)
+    return recording
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_重播模式的_fetch_url_從錄音回放_不連網_沒錄過就報錯(
+    env: Env,
+    fake_web: "FakeWeb",
+    tmp_path: Path,
+    serve: Callable[[Any], AbstractContextManager[str]],
+) -> None:
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+    live = env.call("fetch_url", url="http://news.example/p/1").json()
+    blocked = env.call("fetch_url", url="http://169.254.169.254/latest/").json()
+    recording = _record(env, tmp_path)
+    requests = len(fake_web.requests)
+
+    # 重播用另一個資料目錄：沒有快取，只能靠錄音
+    data = DataDir(tmp_path / "replay-data")
+    data.ensure()
+    (data.job_dir(JOB) / "input").mkdir(parents=True)
+    stages = ActiveStages()
+    stages.activate(KEY)
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
+    )
+    fetcher = Fetcher(
+        data, resolver=fake_web.resolver, dial=fake_web.dial, clock=config.clock
+    )
+    with serve(create_app(config, stages, fetcher=fetcher)) as url:
+        replay = Env(url=url, data=data, skill_dir=env.skill_dir, stages=stages)
+        replayed = replay.call("fetch_url", url=" http://news.example/p/1 ").json()
+        unavailable = replay.call(
+            "fetch_url", url="http://169.254.169.254/latest/"
+        ).json()
+        missing = replay.call("fetch_url", url="http://news.example/p/2")
+
+    assert len(fake_web.requests) == requests
+    # 回給 agent 的內容跟錄音時一樣（抓取時間也一樣），之後的模型請求才對得上錄音
+    assert replayed == {**live, "cache_hit": True}
+    assert unavailable == {**blocked, "cache_hit": False}
+    assert missing.status_code == 500
+    assert "重播" in missing.json()["error"]
+    assert [(e.kind, e.status) for e in replay.ledger()] == [
+        ("fetch", "cache_hit"),
+        ("fetch", "error"),
+        ("fetch", "error"),
+    ]
+    assert replay.ledger()[0].response_hash == env.ledger()[0].response_hash
+    assert replay.ledger()[2].response_hash is None
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_重播時同一段同一次抓同一個網址_第_n_次回放錄音裡的第_n_次(
+    env: Env,
+    fake_web: "FakeWeb",
+    tmp_path: Path,
+    serve: Callable[[Any], AbstractContextManager[str]],
+) -> None:
+    # 錄音：第一次網站出錯（讀不到），agent 再抓一次就讀到了
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", 503)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+    live = [env.call("fetch_url", url="http://news.example/p/1").json() for _ in "12"]
+    assert [body["status"] for body in live] == ["unavailable", "ok"]
+    recording = _record(env, tmp_path)
+
+    data = DataDir(tmp_path / "replay-data")
+    data.ensure()
+    (data.job_dir(JOB) / "input").mkdir(parents=True)
+    stages = ActiveStages()
+    stages.activate(KEY)
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
+    )
+    with serve(create_app(config, stages)) as url:
+        replay = Env(url=url, data=data, skill_dir=env.skill_dir, stages=stages)
+        replayed = [
+            replay.call("fetch_url", url="http://news.example/p/1").json() for _ in "12"
+        ]
+
+    assert [body["status"] for body in replayed] == ["unavailable", "ok"]
+    assert replayed[1]["text"] == live[1]["text"]
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_只差片段的網址命中快取_錄音與重播對得上(
+    env: Env,
+    fake_web: "FakeWeb",
+    tmp_path: Path,
+    serve: Callable[[Any], AbstractContextManager[str]],
+) -> None:
+    # 錄音：先抓 /p/1，再抓 /p/1#intro（# 不送給網站，命中剛才那一份快取）。
+    # 帳本的請求 hash 要照 agent 這次給的網址算，重播才對得上第二次
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+    urls = ["http://news.example/p/1", "http://news.example/p/1#intro"]
+    live = [env.call("fetch_url", url=url).json() for url in urls]
+    assert [body["cache_hit"] for body in live] == [False, True]
+    recording = _record(env, tmp_path)
+
+    data = DataDir(tmp_path / "replay-data")
+    data.ensure()
+    (data.job_dir(JOB) / "input").mkdir(parents=True)
+    stages = ActiveStages()
+    stages.activate(KEY)
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
+    )
+    with serve(create_app(config, stages)) as url:
+        replay = Env(url=url, data=data, skill_dir=env.skill_dir, stages=stages)
+        replayed = [replay.call("fetch_url", url=url) for url in urls]
+
+    assert [response.status_code for response in replayed] == [200, 200]
+    assert [response.json()["text"] for response in replayed] == [
+        body["text"] for body in live
+    ]
+    assert [e.request_hash for e in replay.ledger()] == [
+        e.request_hash for e in env.ledger()
+    ]

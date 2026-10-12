@@ -9,6 +9,9 @@
 5. 403、付費牆、robots、內網位址、429 退避後仍然 429：標讀不到並寫原因，不換身分、不換網址再試。
 6. 讀得到的：原始本文存進 `blobs/`，抽出正文，寫一筆新的快取紀錄（舊的不覆寫）。
 
+重播模式（`EF_GATEWAY_MODE=replay`）不走上面這些：閘道的 `fetch_url` 只回放錄音（`RecordedFetches`）。
+投入時的抓取（`fetch_for_intake`）不受重播模式影響。
+
 刻意用 httpcore 而不是 httpx：httpcore 讓我們換掉連線層，而且不會讀環境變數裡的 proxy
 （走 proxy 的話，連線的是 proxy，位址檢查就形同虛設）。
 """
@@ -23,6 +26,7 @@ import zlib
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
@@ -40,6 +44,7 @@ from evidence_forge.gateway.url_guard import (
     system_resolver,
 )
 from evidence_forge.gateway import ledger
+from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import IntakeEntry, LedgerStatus
 from evidence_forge.models import FetchRecord
 from evidence_forge.paths import DataDir
@@ -135,6 +140,9 @@ class FetchOutcome:
     latency_ms: int
     # 這次呼叫的時間（快取命中時跟 record.fetched_at 不同）
     ts: datetime
+    # 這次要求的網址（去掉前後空白）。快取命中時 record.url 是當初抓的那一個，
+    # 可能只差 # 之後的部分；帳本的請求 hash 照這一個算，重播才對得上
+    requested: str
 
     @property
     def cache_hit(self) -> bool:
@@ -142,12 +150,68 @@ class FetchOutcome:
 
     def store_blobs(self, blobs: BlobStore) -> tuple[str, str]:
         """把這次的請求與結果存進 `blobs/`，回傳兩者的 hash（帳本的 request_hash、response_hash）。"""
-        request = json.dumps(
-            {"tool": "fetch_url", "url": self.record.url}, ensure_ascii=False
-        )
-        return blobs.put(request.encode("utf-8")), blobs.put(
+        return blobs.put(request_bytes(self.requested)), blobs.put(
             self.record.model_dump_json().encode("utf-8")
         )
+
+
+def request_bytes(url: str) -> bytes:
+    """一次抓取的請求本文（存進 `blobs/`）；它的 hash 是帳本的 `request_hash`，也是重播對錄音的鍵。"""
+    return json.dumps(
+        {"tool": "fetch_url", "url": url.strip()}, ensure_ascii=False
+    ).encode("utf-8")
+
+
+@dataclass(frozen=True)
+class Replayed:
+    """錄音裡的一次抓取：當時的結果，與帳本當時記的狀態。"""
+
+    record: FetchRecord
+    status: LedgerStatus
+
+
+class RecordedFetches:
+    """重播模式（`EF_GATEWAY_MODE=replay`）的 `fetch_url`：只看錄音，從不連網（NFR-COST-06）。
+
+    錄音是一張工單的 `ledger.jsonl`（`kind: fetch` 的行）加上它指到的 `blobs/`。
+    跟搜尋的重播同一套對法：同一段、同一次、第 n 次抓同一個網址（請求 hash，`request_bytes`）
+    回放錄音裡的第 n 次；讀不到的網頁也照樣回放（同樣的原因）。agent 看到的工具結果跟錄音時
+    一字不差，之後的模型請求才對得上錄音。回放不了的行（沒有 `response_hash`）也佔一個位置。
+
+    跟搜尋的重播一樣不加鎖：`get` 只在閘道的事件迴圈上呼叫（`app.py` 的 `_replay_fetch` 不進執行緒池），
+    同一時間只有一個呼叫在算第幾次。
+    """
+
+    def __init__(self, replay_dir: Path) -> None:
+        self._blobs = BlobStore(replay_dir / "blobs")
+        self._recorded: dict[
+            tuple[str, int, str], list[tuple[str | None, LedgerStatus]]
+        ] = {}
+        # 重播時同一張單、同一段、同一次、同一個網址已經回放過幾次
+        self._seen: dict[tuple[str, str, int, str], int] = {}
+        for entry in ledger.read(replay_dir / "ledger.jsonl"):
+            if entry.kind == "fetch":
+                self._recorded.setdefault(
+                    (entry.stage, entry.attempt, entry.request_hash), []
+                ).append((entry.response_hash, entry.status))
+
+    def get(self, key: JobKey, request_hash: str) -> Replayed | None:
+        counter = (key.job_id, key.stage, key.attempt, request_hash)
+        nth = self._seen.get(counter, 0)
+        self._seen[counter] = nth + 1
+        found = self._recorded.get((key.stage, key.attempt, request_hash), [])
+        if nth >= len(found):
+            return None
+        digest, status = found[nth]
+        raw = self._blobs.get(digest) if digest is not None else None
+        if raw is None:
+            return None
+        try:
+            record = FetchRecord.model_validate_json(raw)
+        except ValidationError:
+            return None
+        # 錄音時讀得到的（不論當時是真的抓還是快取命中），重播一律算快取命中
+        return Replayed(record, "cache_hit" if record.status == "ok" else status)
 
 
 def cache_key(url: str) -> str:
@@ -286,7 +350,7 @@ class Fetcher:
         url = url.strip()
         cached = self._cached(url, now)
         if cached is not None:
-            return FetchOutcome(cached, "cache_hit", _elapsed_ms(started), now)
+            return FetchOutcome(cached, "cache_hit", _elapsed_ms(started), now, url)
         try:
             record = self._fetch_live(url, now)
             status: LedgerStatus = "ok"
@@ -299,7 +363,7 @@ class Fetcher:
                 fetched_at=now,
             )
             status = exc.status
-        return FetchOutcome(record, status, _elapsed_ms(started), now)
+        return FetchOutcome(record, status, _elapsed_ms(started), now, url)
 
     # --- 快取 ---------------------------------------------------------------
 

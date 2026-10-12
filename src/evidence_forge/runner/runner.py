@@ -6,8 +6,9 @@
   產出不合 schema、整理段的 C1／C5 沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
   就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
   二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
-- 搜尋額度（Tavily credits）用完不擋下那一段：agent 用已經找到的資料收尾，後面的段照跑；
-  全部段跑完時看帳本有沒有被拒的搜尋，有就以 `incomplete`（預算用完）進待審，沒有才是 `complete`。
+- 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
+  後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
+  Tavily 故障之後沒再搜成功過，就以 `incomplete` 進待審，都沒有才是 `complete`。
 - 每一次（重試、升級、自動修）編號往上加，產出各自一個目錄；狀態寫在 `job.md` 的 `stage`，
   重開 `ef serve` 時從所在那段、同一次重跑，前面的請求命中閘道快取（NFR-RUN-04）。
   鑰匙跟當機前一樣，所以登記之前先殺掉前一個 `ef serve` 留下的 Pi（SEAM-12）。
@@ -31,14 +32,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import jsonschema
+from pydantic import ValidationError
 
 from evidence_forge.checks import ChecksReport, SchemaError
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.gateway import ledger
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import MODELS_YAML
+from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.budget import CREDITS_REASON, LIMIT_REASONS
+from evidence_forge.gateway.search import OUTAGE_STATUSES
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import (
@@ -48,6 +52,7 @@ from evidence_forge.models import (
     JobStatus,
     Recipe,
     RecipeStage,
+    SearchFailure,
     StageProgress,
     Waiting,
 )
@@ -57,6 +62,7 @@ from evidence_forge.runner import (
     hard_checks,
     pi_launch,
     provenance,
+    sources,
     stage_inputs,
 )
 from evidence_forge.transitions import transition
@@ -78,21 +84,35 @@ def stage_prompt(
     goal: str,
     fix: str = "",
     upstream: Sequence[str] = (),
+    cited: Mapping[str, sources.Source] | None = None,
 ) -> str:
     """這一段給 agent 的任務說明。只放段、次、目標、檔名，不放工單 id 與時間：
     同樣的素材與目標送出的請求要逐位元組相同，快取與重播才對得上。
 
     `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
     `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
+    `cited` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列：每個來源的編號、
+    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時一個字都不多
+    （整理段、補料段與 echo 的請求跟以前一樣）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
+    listed = ""
+    if cited is not None and len(cited) > 1:
+        paths = "、".join(
+            f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
+        )
+        footnotes = "".join(
+            f"{source.footnote(sid)}\n" for sid, source in cited.items()
+        )
+        listed = f"來源（引用編號：正文）：{paths}\n註腳（稿子結尾照抄）：\n{footnotes}"
     prompt = (
         f"配方「{recipe.name}」的「{stage.id}」段，第 {attempt} 次。\n"
         f"目標：{goal}\n"
         f"素材在 input/content.md。\n"
         f"{earlier}"
+        f"{listed}"
         f"照系統提示裡的 skill 完成這一段，用 write_file 寫出：{outputs}"
     )
     return f"{prompt}\n\n{fix}" if fix else prompt
@@ -203,21 +223,58 @@ def open_tool(log_path: Path) -> str | None:
 BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily"}
 
 
-def searches_refused(job_dir: Path) -> list[str]:
-    """哪幾段有搜尋因為 Tavily credits 不夠被拒（帳本裡 `search` 的 `budget_exceeded`），照先後排。
+def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
+    """補料沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
+
+    - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
+    - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
+      `OUTAGE_STATUSES`），而且那一段最後一次在故障之後沒有再搜成功過：產出就算合格，
+      也只是用手上的資料湊的（#70）。查詢本身被 Tavily 退回的 400 不算。
 
     看帳本而不是告示板：這件事到全部段跑完才用得上，中間可能重開過 `ef serve`（告示板會清空）；
-    重播時閘道也照錄音記同樣的一行，結果跟錄音時一樣。
+    重播時閘道也照錄音記同樣的行，結果跟錄音時一樣。
     """
-    stages: list[str] = []
-    for entry in ledger.read(job_dir / "ledger.jsonl"):
-        if (
-            entry.kind == "search"
-            and entry.status == "budget_exceeded"
-            and entry.stage not in stages
+    blobs = BlobStore(data.blobs)
+    refused: list[str] = []
+    entries = [e for e in ledger.read(job_dir / "ledger.jsonl") if e.kind == "search"]
+    last_attempt: dict[str, int] = {}
+    for entry in entries:
+        last_attempt[entry.stage] = max(last_attempt.get(entry.stage, 0), entry.attempt)
+    # 每一段最後一次：還沒恢復的 Tavily 故障（沒有就是 None）
+    outages: dict[str, str | None] = {}
+    for entry in entries:
+        if entry.status == "budget_exceeded" and entry.stage not in refused:
+            refused.append(entry.stage)
+        if entry.attempt != last_attempt[entry.stage]:
+            continue
+        if entry.status in ("ok", "cache_hit"):
+            outages[entry.stage] = None
+            continue
+        failure = _search_failure(blobs, entry.response_hash)
+        status = failure.status if failure is not None else None
+        if entry.status in ("rate_limited", "timeout") or (
+            entry.status == "error" and (status is None or status in OUTAGE_STATUSES)
         ):
-            stages.append(entry.stage)
-    return stages
+            outages[entry.stage] = (
+                failure.error if failure is not None else "原因沒有記下來"
+            )
+    notes: list[str] = []
+    if refused:
+        notes.append(f"{CREDITS_REASON}：{'、'.join(refused)} 段用已經找到的資料完成")
+    for stage_id, message in outages.items():
+        if message is not None:
+            notes.append(f"Tavily 故障（{message}）：{stage_id} 段用已經找到的資料完成")
+    return notes
+
+
+def _search_failure(blobs: BlobStore, digest: str | None) -> SearchFailure | None:
+    raw = blobs.get(digest) if digest is not None else None
+    if raw is None:
+        return None
+    try:
+        return SearchFailure.model_validate_json(raw)
+    except ValidationError:
+        return None
 
 
 def pi_error(events: Sequence[Mapping[str, object]]) -> str | None:
@@ -555,12 +612,21 @@ class Runner:
             resumed = None
             doc, result = self._run_stage(job_dir, doc, recipe, stage, progress)
             if result is not None:
+                if result.outcome == "incomplete":
+                    # 後面的段自己沒做完：補料沒做完整的事也一起寫，創作者才看得到全貌
+                    notes = search_shortfalls(self.data, job_dir)
+                    if notes:
+                        result = JobResult(
+                            outcome="incomplete",
+                            reason="；".join([result.reason, *notes])[:2000],
+                        )
                 self._set(job_dir, doc, "review", result.reason, result=result)
                 return
-        refused = searches_refused(job_dir)
-        if refused:
-            # 搜尋額度用完：那一段用已經找到的資料收尾、後面照跑，但這張單沒做完（NFR-COST-01）
-            reason = f"{CREDITS_REASON}：{'、'.join(refused)} 段用已經找到的資料完成"
+        notes = search_shortfalls(self.data, job_dir)
+        if notes:
+            # 搜尋額度用完或 Tavily 故障：那一段用已經找到的資料收尾、後面照跑，
+            # 但這張單沒做完（NFR-COST-01、#70）
+            reason = "；".join(notes)
             result = JobResult(outcome="incomplete", reason=reason)
             self._set(job_dir, doc, "review", reason, result=result)
             return
@@ -689,6 +755,8 @@ class Runner:
         stage_dir = job_dir / "stages" / stage.id / str(attempt)
         stage_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = self.harness.skill_dir(stage.skill)
+        # 種子的素材項目：任務說明的 S1 註腳、補料段認出種子、C3 認出註腳裡的出處都用它
+        seed = sources.seed_item(self.data, doc.job.feed.item)
         record = provenance.record_path(job_dir, stage.id, attempt)
         if not record.exists():
             # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06）。放在 stages/ 外，
@@ -716,6 +784,7 @@ class Runner:
                 doc.job.goal,
                 self._fix(job_dir, stage, progress),
                 upstream_outputs(job_dir, recipe, stage),
+                sources.job_sources(job_dir, seed),
             ),
             base_env=self._base_env(),
             web_search=stage.tavily_credits > 0,
@@ -772,6 +841,15 @@ class Runner:
                 reason = f"{stage.id} 段第 {attempt} 次的產出沒辦法驗：{exc}"
                 self._stage_event(job_dir, stage.id, attempt, reason)
                 return _Tried(stop=JobResult(outcome="failed", reason=reason))
+            if not problems and sources.collects_sources(stage):
+                # 補料段：照 sources.json 放來源正文；網址這一次沒抓過就算不合格（#70）
+                problems = sources.place_sources(
+                    self.data,
+                    job_dir,
+                    stage,
+                    attempt,
+                    seed=seed,
+                )
             error = pi_error(result.events)
             if problems and error is not None:
                 # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡
@@ -796,6 +874,7 @@ class Runner:
                 attempt,
                 self.harness.schema_file(stage.skill),
                 self.clock,
+                seed,
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因進待審

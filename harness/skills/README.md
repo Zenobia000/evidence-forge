@@ -12,6 +12,11 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 
 - `digest`：每條主張的 `quote` 是 `required`、`minLength: 1`，主張陣列 `minItems: 1`（每條主張附逐字引句）。
 - `compose`：每句事實句放在叫 `fact` 的欄位，`facts` 陣列 `minItems: 1`。
+- `research`：每個來源的 `id`（`S2` 起）、`url`（http 或 https）、`title`、`why` 是 `required`，不准多寫欄位；
+  `sources` 是 `minItems: 1`。SKILL.md 要求 3～5 篇，但額度用完時只找到 1 篇也算這一段完成，單子算不算未完成由執行器看帳本判斷。
+
+schema 寫不出來的硬性要求，寫成檢查：例如「補料段放了外部來源時，稿子正文至少引用兩個不同的來源」是 C2 的一部分
+（`checks/stages.py` 的 `compose_checks`），不是請模型遵守的一句提示。
 
 C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages.py`）。改了欄位名，C5 照樣過，C1、C2 卻會每次都過、沒人發現；所以有一條契約測試讀這兩份 schema，改名時先壞的是那條測試。
 
@@ -30,8 +35,16 @@ C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages
 | `input/author/voice.md` | 作家聲音 |
 | `input/author/genre-style.md` | 作家在目標文類的風格；沒有就是未校準 |
 | `input/conversions/<來源>--<目標>.md` | 轉換說明 |
+| `input/sources/S<n>.md` | 補料段找到的來源正文（`S2` 起；`S1` 是原文 `input/content.md`）。補料段結束後由執行器照 `sources.json` 從這一段真的抓過的網頁放（`src/evidence_forge/runner/sources.py`），agent 不能寫 |
 
 `SKILL.md` 只能提到上表的路徑與這一段的產出目錄（`stages/…`）。要多給 agent 一份東西，先改 `stage_inputs.py`，再寫進 `SKILL.md`。
+
+工具也是執行器給的：`read_file`、`list_files`、`write_file`、`fetch_url`、`run_script` 每一段都有；
+**`web_search` 只有配方裡那一段 `tavily_credits` 大於 0 才有**（執行器設 `EF_WEB_SEARCH=1`，ef-tools 才註冊）。
+所以這個欄位同時決定「能花多少搜尋額度」與「有沒有搜尋工具」；`SKILL.md` 要用 `web_search`，配方那一段就要給額度。
+額度是**這一段在整張單裡的總額，含重試**（工單的上限預設是各段加總，閘道只看整張單用了多少），
+所以要照「skill 一次最多搜幾次 × `max_attempts`」給，不是只給一次的量。
+其他段的工具清單維持原樣，請求逐位元組不變，錄音才對得上。
 
 ## 3. 腳本不寫檔，結果只印到 stdout
 

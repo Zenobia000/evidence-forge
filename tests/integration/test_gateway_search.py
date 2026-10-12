@@ -692,6 +692,37 @@ def test_錄音裡失敗的搜尋_重播時回一模一樣的錯誤(
     assert outage is None
 
 
+@pytest.mark.promise("NFR-COST-06")
+def test_錄音裡回放不了的那一行_重播時佔住它的位置_後面的第_n_次不錯位(
+    gateway: Start,
+    data: DataDir,
+    tmp_path: Path,
+    replaying: Replaying,
+) -> None:
+    recorded_job = _job(data, goal="錄音")
+    recorded_key = JobKey(recorded_job, "research", 1)
+    with gateway(_active(recorded_key)) as gw:
+        live = gw.search(recorded_key, query="同一個")
+    recording = _record(tmp_path, data, recorded_job)
+    # 同一個查詢在它前面還有一次，結果沒存進 blobs/（帳本那一行沒有 response_hash）
+    lines = (recording / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    lost = LedgerEntry.model_validate_json(lines[0]).model_copy(
+        update={"status": "error", "response_hash": None}
+    )
+    (recording / "ledger.jsonl").write_text(
+        "\n".join([lost.model_dump_json(), *lines]) + "\n", encoding="utf-8"
+    )
+
+    with replaying(recording) as replay:
+        first = replay.gateway.search(replay.key, query="同一個")
+        second = replay.gateway.search(replay.key, query="同一個")
+
+    # 第 1 次對到回放不了的那一行（報錯），第 2 次才是錄到結果的那一次
+    assert first.status_code == 500
+    assert second.status_code == 200
+    assert second.json()["results"] == live.json()["results"]
+
+
 # --- 金鑰不外洩 ---------------------------------------------------------------
 
 
@@ -718,3 +749,42 @@ def test_金鑰不出現在帳本_blobs_快取_回應與日誌裡(
     for path in data.root.rglob("*"):
         if path.is_file():
             assert FAKE_KEY.encode() not in path.read_bytes(), path
+
+
+def test_Tavily_的位址可以用環境變數換成本機的假後端(data: DataDir) -> None:
+    # 錄重播 fixture 時用（`tests/fixtures/web/`）：搜尋回的是為測試寫的文章，不是真的網路
+    from evidence_forge.gateway.config import config_from_env
+
+    custom = config_from_env(data, {"EF_TAVILY_URL": " http://127.0.0.1:8765/ "})
+    assert custom.tavily_url == "http://127.0.0.1:8765"
+    assert config_from_env(data, {}).tavily_url == "https://api.tavily.com"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://tavily.example.com",
+        "http://10.0.0.5:8765",
+        "ftp://127.0.0.1:8765",
+        "https://",
+    ],
+    ids=["外部主機用http", "內網位址用http", "不是http", "沒有主機"],
+)
+def test_Tavily_的位址_外部主機只准_https_金鑰不送去沒加密的地方(
+    data: DataDir, url: str
+) -> None:
+    from evidence_forge.gateway.config import config_from_env
+
+    with pytest.raises(ValueError, match="EF_TAVILY_URL"):
+        config_from_env(data, {"EF_TAVILY_URL": url})
+
+
+def test_Tavily_的位址_https_或本機的_http_可以(data: DataDir) -> None:
+    from evidence_forge.gateway.config import config_from_env
+
+    for url in (
+        "https://tavily.example.com",
+        "http://localhost:8765",
+        "http://127.0.0.1:8765",
+    ):
+        assert config_from_env(data, {"EF_TAVILY_URL": url}).tavily_url == url

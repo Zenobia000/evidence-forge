@@ -101,3 +101,31 @@ def test_citation_after_an_escaped_backtick_is_still_checked() -> None:
     # \` 是字面上的反引號，不開行內程式碼；[^S9] 照樣是引用編號
     entries = check_citations("事實\\` [^S9] `。", {"S1"}, [], file="draft.md")
     assert [entry.status for entry in entries] == ["fail"]
+
+
+# #70：補料段放了外部來源時，稿子至少要綜合兩個來源（只靠提示請模型做到不算數）
+ONLY_SEED_CITED = """# 推論變便宜了，工程師沒有
+
+推論成本一年降了九成[^S1]。人的時間沒有跟著變便宜[^S1]。
+
+[^S1]: 原文
+[^S2]: 補充來源，https://b.example/report
+"""
+
+
+def test_minimum_distinct_sources_counts_body_citations_not_footnote_definitions() -> (
+    None
+):
+    # 註腳定義行列了 S2，但正文只引用 S1：只用了一個來源
+    entries = check_citations(
+        ONLY_SEED_CITED, SOURCES, [], file="draft.md", min_sources_cited=2
+    )
+    assert [entry.status for entry in entries] == ["fail"]
+    assert "（S1）" in entries[0].reason
+    assert entries[0].location == Location(file="draft.md")
+
+
+def test_minimum_distinct_sources_passes_when_the_body_cites_two() -> None:
+    draft = ONLY_SEED_CITED.replace("變便宜[^S1]。\n", "變便宜[^S2]。\n")
+    entries = check_citations(draft, SOURCES, [], file="draft.md", min_sources_cited=2)
+    assert [entry.status for entry in entries] == ["pass"]

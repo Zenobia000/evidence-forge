@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research 段的產出 sources.json",
+  "description": "補料段挑中的來源清單（FR-RS-01、#70）。只有清單，沒有正文：正文由執行器從這一次真的抓過的網頁放進 input/sources/（runner/sources.py）。編號從 S2 依序（S1 是種子）。",
+  "type": "object",
+  "properties": {
+    "queries": {
+      "description": "這一段送出的搜尋查詢，照送出的順序",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "sources": {
+      "description": "SKILL.md 要求挑 3～5 篇；額度用完或抓不到時只找到 1 篇也算這一段完成，單子是否未完成由執行器看帳本判斷（search_shortfalls）",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^S([2-9]|[1-9][0-9]+)$" },
+          "url": { "description": "用 fetch_url 抓到正文的網址", "type": "string", "pattern": "^https?://" },
+          "title": { "type": "string", "minLength": 1 },
+          "author": { "description": "看得出作者才寫", "type": "string", "minLength": 1 },
+          "why": { "description": "回答哪個研究方向、補了種子沒有的什麼", "type": "string", "minLength": 1 }
+        },
+        "required": ["id", "url", "title", "why"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["queries", "sources"],
+  "additionalProperties": false
+}
