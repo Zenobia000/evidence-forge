@@ -65,6 +65,7 @@ def _run(job: Path, schema: Path, article: Path = ARTICLE_PATH) -> list[CheckEnt
         schema=schema,
         original_url=URL,
         original_title="推論變便宜了",
+        original_author=None,
         texts={"原文": "大型語言模型的推論成本，在過去一年降了九成。"},
         thresholds=THRESHOLDS,
     )

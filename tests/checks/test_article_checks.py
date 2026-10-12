@@ -40,6 +40,7 @@ def _check(article: str, **changes: object) -> list[CheckEntry]:
         "schema": SCHEMA,
         "original_url": URL,
         "original_title": TITLE,
+        "original_author": None,
         "texts": {"原文": "完全不同的原文。", "S2": "完全不同的來源。"},
         "thresholds": THRESHOLDS,
     }
@@ -47,8 +48,16 @@ def _check(article: str, **changes: object) -> list[CheckEntry]:
     return article_checks(**arguments)  # type: ignore[arg-type]
 
 
-def _references(article: str, url: str | None = URL) -> list[CheckEntry]:
-    return check_references(article, file=FILE, original_url=url, original_title=TITLE)
+def _references(
+    article: str, url: str | None = URL, author: str | None = None
+) -> list[CheckEntry]:
+    return check_references(
+        article,
+        file=FILE,
+        original_url=url,
+        original_title=TITLE,
+        original_author=author,
+    )
 
 
 def _failed(entries: list[CheckEntry]) -> list[CheckEntry]:
@@ -136,3 +145,48 @@ def test_網址寫法不同但是同一個網址_也認得() -> None:
     # 主機大小寫、結尾的 # 片段不算差別（跟分析報告的來源清單檢查用同一套比對）
     article = BODY + f"## 參考來源\n\n- {TITLE}，https://SEED.example/posts/night-library#top\n"
     assert not _failed(_references(article))
+
+
+# --- 同一筆參考條目要有標題、網址，素材有作者時也要有作者（rewrite.feature、PRD §6 第 4 點，#92 審查）
+
+
+def test_網址只是前綴相同的另一篇_不算列了原文() -> None:
+    article = BODY + f"## 參考來源\n\n- 〈{TITLE}〉，{URL}-2\n"
+    [failure] = _failed(_references(article))
+    assert URL in failure.reason
+
+
+def test_同一筆有網址但沒有原文標題_擋下() -> None:
+    article = BODY + f"## 參考來源\n\n- 原文，{URL}\n"
+    [failure] = _failed(_references(article))
+    assert "標題" in failure.reason
+
+
+def test_標題與網址分在兩筆_不算() -> None:
+    article = BODY + f"## 參考來源\n\n- 〈{TITLE}〉\n- {URL}\n"
+    assert _failed(_references(article))
+
+
+def test_素材有作者時_同一筆也要有作者() -> None:
+    without = BODY + f"## 參考來源\n\n- 〈{TITLE}〉，{URL}\n"
+    [failure] = _failed(_references(without, author="王小明"))
+    assert "作者" in failure.reason and "王小明" in failure.reason
+    assert not _failed(_references(BODY + REFERENCES, author="王小明"))
+
+
+def test_一筆可以跨行_縮排的續行算同一筆() -> None:
+    article = BODY + f"## 參考來源\n\n- 王小明，〈{TITLE}〉\n  {URL}\n"
+    assert not _failed(_references(article, author="王小明"))
+
+
+def test_網頁標題後面的站名可以省略() -> None:
+    # 素材項目的標題常是網頁的 <title>：「文章標題 | 站名」；照抄文章標題、站名另寫也算
+    article = BODY + f"## 參考來源\n\n- {TITLE}，王小明，某某部落格，{URL}\n"
+    found = check_references(
+        article,
+        file=FILE,
+        original_url=URL,
+        original_title=f"{TITLE} | 某某部落格",
+        original_author="王小明",
+    )
+    assert not _failed(found)

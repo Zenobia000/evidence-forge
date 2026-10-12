@@ -115,6 +115,7 @@ def run_hard_checks(
                 schema=schema,
                 original_url=original.url,
                 original_title=original.title,
+                original_author=original.author,
                 texts=texts,
                 thresholds=load_check_settings(data).c3,
             )

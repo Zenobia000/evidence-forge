@@ -170,6 +170,7 @@ def run_article_checks(
     schema: Path,
     original_url: str | None,
     original_title: str,
+    original_author: str | None,
     texts: Mapping[str, str],
     thresholds: OverlapThresholds,
 ) -> list[CheckEntry]:
@@ -188,6 +189,7 @@ def run_article_checks(
         schema=schema_doc,
         original_url=original_url,
         original_title=original_title,
+        original_author=original_author,
         texts=texts,
         thresholds=thresholds,
     )

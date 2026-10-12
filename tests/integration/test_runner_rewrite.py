@@ -33,10 +33,10 @@ ARTICLE = (
     "# 半夜的圖書館，替誰開燈\n\n"
     "我認為延長開放的價值不在借書量，在於給下班的人一個不用花錢的去處。\n\n"
     "## 參考來源\n\n"
-    f"- 〈夜間圖書館〉，{SEED_URL}\n"
+    f"- 王小明，〈夜間圖書館〉，{SEED_URL}\n"
     "- 〈加班的成本〉，https://b.example/2\n"
 )
-NO_ORIGINAL = ARTICLE.replace(f"- 〈夜間圖書館〉，{SEED_URL}\n", "")
+NO_ORIGINAL = ARTICLE.replace(f"- 王小明，〈夜間圖書館〉，{SEED_URL}\n", "")
 COPIED = ARTICLE.replace(
     "我認為延長開放的價值不在借書量，在於給下班的人一個不用花錢的去處。",
     "市立圖書館延長開放到半夜之後，晚上來的多半是下班的上班族與準備考試的學生。",
