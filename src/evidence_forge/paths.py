@@ -70,6 +70,24 @@ class DataDir:
     def job_dir(self, job_id: str) -> Path:
         return self.jobs / job_id
 
+    @property
+    def conversations(self) -> Path:
+        """對話資料夾的上層：`conversations/<對話 id>/`（ADR-0021）。"""
+        return self.root / "conversations"
+
+    def conversation_dir(self, conversation_id: str) -> Path:
+        return self.conversations / conversation_id
+
+    def owner_dir(self, owner_id: str) -> Path:
+        """帳本跟著誰：工單 id 是 `jobs/<id>/`，`conv:<對話 id>` 是 `conversations/<對話 id>/`。
+
+        閘道的帳本、預算、回放一律經過這裡找資料夾，對話與工單走同一套規則（ADR-0021 §3.3）。
+        前綴寫在這裡而不 import `convkey`：`paths` 是最底層，不依賴鑰匙的模組。
+        """
+        if owner_id.startswith("conv:"):
+            return self.conversation_dir(owner_id[len("conv:") :])
+        return self.job_dir(owner_id)
+
     def ensure(self) -> None:
         """建出 `inbox/`、`jobs/`、`cache/`、`blobs/`；已存在就略過，可重複呼叫。"""
         for directory in (self.inbox, self.jobs, self.cache, self.blobs):
