@@ -307,6 +307,19 @@ def test_Pi_接受了訊息_還沒開始回答前不閒置關掉(world: World) -
     wait_until(lambda: host.live_pid(cid) is None, what="答完之後閒置關掉")
 
 
+def test_通知處理完_它開的那一輪還沒開始前不閒置關掉(world: World) -> None:
+    # 通知指令回 handled 之後 1 秒才 agent_start；閒置 0.2 秒就關的話，這一輪回答會斷掉
+    host = world.host(world.harness(start_delay_s=1.0), idle_s=0.2)
+    cid = world.conversation()
+    job_id = world.job(cid)
+    world.finish(job_id)
+    host.job_changed(job_id)
+
+    wait_until(lambda: f"收到工單 {job_id}" in world.replies(cid), what="通知開的那一輪答完")
+    # 答完（agent_settled）就收回寬限，照常閒置關掉
+    wait_until(lambda: host.live_pid(cid) is None, what="答完之後閒置關掉")
+
+
 def test_Pi_卡住又有通知要補送_關機幾秒內結束_不留_Pi(world: World) -> None:
     host = world.host(world.harness(stuck=True))
     cid = world.conversation()

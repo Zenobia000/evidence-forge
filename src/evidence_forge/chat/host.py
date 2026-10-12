@@ -5,7 +5,8 @@
 - 接回的順序照 ADR-0021：先收掉舊的 Pi（連它的程序群組、撤銷它的鑰匙），`launches` 加一，才登記新鑰匙開新的。
 - 閒置 `idle_s` 秒（預設 10 分鐘）沒有任何動靜、也不在回答中，就關 stdin 請它收掉；下次有事再接回。
   「回答中」從送出 prompt 那一刻算起（Pi 接受了但 `agent_start` 還沒來也算），到 `agent_settled`、
-  被拒或只是被擴充指令處理掉為止。計時器只在「下一個會到期的時間」醒來，不輪詢。
+  被拒或只是被擴充指令處理掉為止。通知指令處理完之後再留 `NOTICE_GRACE_S`（30 秒）寬限，
+  給它用 triggerTurn 開的那一輪等 `agent_start`；`agent_settled` 一來就收回寬限。計時器只在「下一個會到期的時間」醒來，不輪詢。
 - 關掉時拿不到對話鎖（有人卡在寫給這個 Pi）就直接殺 Pi，卡住的寫入跟著失敗放手：關機不會卡住。
 - 創作者的訊息一律帶 `streamingBehavior: followUp`：Pi 正在回答時，沒帶的 prompt 會被拒（spike 實測）。
   以 `/` 開頭的字不送，免得被當成 Pi 的指令（例如假冒 `/ef-job-done`）。
@@ -81,6 +82,9 @@ SUBSCRIBER_BACKLOG = 2000
 MAX_NOTICE_RETRIES = 3
 # 關 Pi 時等對話鎖多久；等不到表示有人卡在寫給這個 Pi，直接殺
 STOP_LOCK_WAIT_S = 1.0
+# 通知指令處理完之後多久之內不准閒置關閉。ef-tools 用 triggerTurn 開的那一輪，在 agent_start 之前
+# 沒有任何訊號；同一張單已經通知過時根本不開新的一輪，Pi 也不會說。所以給寬限，不等一個可能不來的訊號
+NOTICE_GRACE_S = 30.0
 
 Event = dict[str, Any]
 
@@ -172,6 +176,8 @@ class _Live:
     busy: bool = False
     # 送出去、Pi 還沒開始也還沒拒絕的 prompt：這段時間也不能閒置關掉
     pending: int = 0
+    # 這個時間（monotonic）之前不准閒置關閉：通知指令處理完、它開的那一輪還沒 agent_start 的空檔
+    hold_until: float = 0.0
     stop_reason: str = "exited"
 
 
@@ -191,6 +197,7 @@ class ConversationHost:
         base_env: Mapping[str, str] | None = None,
         request_timeout_s: float = 30.0,
         notice_retry_s: float = 5.0,
+        notice_grace_s: float = NOTICE_GRACE_S,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._data = data
@@ -205,6 +212,7 @@ class ConversationHost:
         self._base_env = os.environ if base_env is None else base_env
         self._request_timeout_s = request_timeout_s
         self._notice_retry_s = notice_retry_s
+        self._notice_grace_s = notice_grace_s
         self._monotonic = monotonic
         # 保護下面幾個表；拿著它不做慢的事、不拿別的鎖
         self._lock = threading.Lock()
@@ -541,7 +549,8 @@ class ConversationHost:
         """閒置：沒在回答、沒有送出去還沒開始的 prompt、而且安靜夠久了。拿著 `_lock` 呼叫。"""
         if live.busy or live.pending > 0:
             return False
-        return self._monotonic() - live.last_active >= self._idle_s
+        now = self._monotonic()
+        return now >= live.hold_until and now - live.last_active >= self._idle_s
 
     def _settle_pending(self, live: _Live) -> None:
         with self._lock:
@@ -564,11 +573,18 @@ class ConversationHost:
                     # 答完了，排著的也都做完了：送出去的 prompt 全部算數
                     live.busy = False
                     live.pending = 0
+                    # 通知開的那一輪也做完了（或排著的都處理完、根本沒開）：寬限不用再留
+                    live.hold_until = 0.0
                 elif kind == "response":
                     notice = live.notice_ids.pop(str(record.get("id")), None)
                     if notice is not None:
                         # 擴充指令的回應在處理函式跑完之後才來
                         live.pending = max(0, live.pending - 1)
+                        if record.get("success"):
+                            # 它可能開了一輪（triggerTurn），agent_start 還沒到：寬限內不准閒置關閉
+                            live.hold_until = max(
+                                live.hold_until, self._monotonic() + self._notice_grace_s
+                            )
         if kind in ("agent_settled", "response"):
             # 閒置計時從答完、或指令處理完這一刻算起
             self._reaper_wake.set()
@@ -815,7 +831,7 @@ class ConversationHost:
                 for conversation_id, live in self._live.items():
                     if live.busy or live.pending > 0:
                         continue
-                    deadline = live.last_active + self._idle_s
+                    deadline = max(live.last_active + self._idle_s, live.hold_until)
                     if deadline <= now:
                         expired.append(conversation_id)
                     elif next_deadline is None or deadline < next_deadline:
