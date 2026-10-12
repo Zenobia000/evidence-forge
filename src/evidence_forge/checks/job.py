@@ -14,7 +14,7 @@
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -120,11 +120,13 @@ def run_compose_checks(
     schema: Path,
     sources: Mapping[str, Path],
     thresholds: OverlapThresholds,
+    footnotes: Mapping[str, Sequence[str]] | None = None,
 ) -> list[CheckEntry]:
     """二創段某次嘗試的產出：C2 引用、C3 照抄、C4 圖、C5 格式。
 
     `draft` 是稿子、`output` 是二創段的 JSON 產出（列出事實句），`sources` 是來源清單：
     引用編號 → 來源正文的路徑。都相對於 `job_dir`。C3 拿稿子跟所有來源比。
+    `footnotes` 是每個來源的出處（編號 → 標題、網址）：稿子註腳裡照抄的出處 C3 不算。
     """
     if not sources:
         raise ValueError("來源清單是空的：C2 對不到任何編號、C3 沒有原文可比")
@@ -143,7 +145,13 @@ def run_compose_checks(
         # JSON 壞了，稿子本身的問題（照抄、圖、格式）照樣查出來一起交回去，省一輪修正
         return [
             *_unreadable(("C2", "C5"), output_file, str(exc)),
-            *check_overlap(draft_text, source_text, thresholds, file=draft_file),
+            *check_overlap(
+                draft_text,
+                source_text,
+                thresholds,
+                file=draft_file,
+                footnotes=footnotes,
+            ),
             *check_images(draft_text, asset_urls, file=draft_file),
             *check_markdown(draft_text, file=draft_file),
         ]
@@ -157,4 +165,5 @@ def run_compose_checks(
         source_ids=frozenset(sources),
         asset_urls=asset_urls,
         thresholds=thresholds,
+        footnotes=footnotes,
     )

@@ -125,25 +125,40 @@ def test_long_copy_shorter_than_one_ngram_still_shows_where() -> None:
     assert located[0].location == Location(file=FILE, line=1, column=11)
 
 
-# #67：註腳定義行本來就該照抄來源標題，不算照抄
+# #67：註腳定義行本來就該照抄來源標題與網址，那部分不算照抄；註腳裡其他的字照常比對
 LONG_TITLE = (
     "The real cost of running agents is not the tokens: it is the hours engineers "
     "spend reading transcripts"
 )
+SOURCE_URL = "https://example.org/agents"
+FOOTNOTES = {"S1": (LONG_TITLE, SOURCE_URL)}
 DEFAULTS = OverlapThresholds(ngram_size=8, max_ngram_overlap=0.1, max_common_tokens=30)
+CLEAN_BODY = (
+    "# 我的看法\n\n"
+    "跑代理人最貴的不是模型費，是人去翻紀錄的時間[^S1]。我認為該先把紀錄整理好。\n\n"
+)
 
 
 def test_footnote_definition_with_a_long_source_title_is_not_counted() -> None:
-    draft = (
-        "# 我的看法\n\n"
-        "跑代理人最貴的不是模型費，是人去翻紀錄的時間[^S1]。我認為該先把紀錄整理好。\n\n"
-        f"[^S1]: {LONG_TITLE}（https://example.org/agents）\n"
-    )
+    draft = f"{CLEAN_BODY}[^S1]: {LONG_TITLE}，{SOURCE_URL}\n"
     source = f"# {LONG_TITLE}\n\n{SOURCE_EN}"
 
-    entries = check_overlap(draft, source, DEFAULTS, file=FILE)
+    entries = check_overlap(draft, source, DEFAULTS, file=FILE, footnotes=FOOTNOTES)
 
     assert [entry.status for entry in entries] == ["pass"]
+
+
+def test_copy_hidden_after_the_title_in_a_footnote_still_fails() -> None:
+    # 只遮標題與網址：註腳後面接一段照抄的原文，照樣算照抄
+    copied = SOURCE_EN.split(". ", 1)[1]
+    draft = f"{CLEAN_BODY}[^S1]: {LONG_TITLE}，{SOURCE_URL} {copied}\n"
+    source = f"# {LONG_TITLE}\n\n{SOURCE_EN}"
+
+    entries = check_overlap(draft, source, DEFAULTS, file=FILE, footnotes=FOOTNOTES)
+
+    assert {entry.status for entry in entries} == {"fail"}
+    located = [entry for entry in entries if entry.location is not None]
+    assert [entry.excerpt for entry in located] == [copied.rstrip(".")]
 
 
 def test_same_title_copied_into_the_body_still_fails() -> None:

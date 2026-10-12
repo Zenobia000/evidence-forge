@@ -13,7 +13,7 @@
   放在叫 `fact` 的欄位；引用編號寫成 `[^<來源 id>]`。
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from evidence_forge.checks.assets import check_images
@@ -55,8 +55,12 @@ def compose_checks(
     source_ids: Collection[str],
     asset_urls: Collection[str],
     thresholds: OverlapThresholds,
+    footnotes: Mapping[str, Sequence[str]] | None = None,
 ) -> list[CheckEntry]:
-    """二創段的產出：C2 引用、C3 照抄、C4 圖、C5（JSON 符合 `compose` 的 schema、稿子是標準 Markdown）。"""
+    """二創段的產出：C2 引用、C3 照抄、C4 圖、C5（JSON 符合 `compose` 的 schema、稿子是標準 Markdown）。
+
+    `footnotes` 是每個來源的出處（編號 → 標題、網址）：稿子註腳裡照抄的出處 C3 不算。
+    """
     facts = collect_located(output, FACT_FIELD, output_file)
     # 只有種子一個來源（單篇流程、舊的配方）不要求；有 S2 以後，只引種子就是沒有綜合
     min_sources_cited = MIN_SOURCES_COMBINED if len(source_ids) > 1 else 0
@@ -68,7 +72,9 @@ def compose_checks(
             file=draft_file,
             min_sources_cited=min_sources_cited,
         ),
-        *check_overlap(draft, source_text, thresholds, file=draft_file),
+        *check_overlap(
+            draft, source_text, thresholds, file=draft_file, footnotes=footnotes
+        ),
         *check_images(draft, asset_urls, file=draft_file),
         *check_schema(output, schema, file=output_file),
         *check_markdown(draft, file=draft_file),

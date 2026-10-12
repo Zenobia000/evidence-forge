@@ -13,6 +13,7 @@ Q-28 還沒定，S0.14 用實際稿子量，所以結果的理由會註明「門
 標點、空白、大小寫、全形半形都不算差別。
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
@@ -21,7 +22,7 @@ from evidence_forge.checks.report import CheckEntry, Location
 from evidence_forge.checks.text import (
     Token,
     line_column,
-    mask_footnote_definitions,
+    mask_footnote_sources,
     tokenize,
 )
 
@@ -119,13 +120,19 @@ def _copied_spans(lengths: list[int], minimum: int) -> list[_Span]:
 
 
 def check_overlap(
-    draft: str, source_text: str, thresholds: OverlapThresholds, *, file: str
+    draft: str,
+    source_text: str,
+    thresholds: OverlapThresholds,
+    *,
+    file: str,
+    footnotes: Mapping[str, Sequence[str]] | None = None,
 ) -> list[CheckEntry]:
     """沒超過門檻就一條 pass；超過就一條總結的 fail，加上每段重疊各一條 fail。
 
-    稿子的註腳定義行不算（它本來就照抄來源標題，#67）；遮成空白，位置照樣對得回稿子。
+    `footnotes` 是每個來源的出處（編號 → 標題、網址）。稿子的註腳定義行裡，跟那個來源出處相符的
+    部分不算（註腳本來就照抄標題，#67），其餘照常比對；遮成空白，位置照樣對得回稿子。
     """
-    draft_tokens: list[Token] = tokenize(mask_footnote_definitions(draft))
+    draft_tokens: list[Token] = tokenize(mask_footnote_sources(draft, footnotes or {}))
     lengths = _match_lengths(
         [token.text for token in tokenize(source_text)],
         [token.text for token in draft_tokens],
