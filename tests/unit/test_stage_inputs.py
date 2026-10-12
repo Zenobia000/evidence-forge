@@ -374,3 +374,18 @@ def test_換角色重寫不帶意見_不放上一版文章(tmp_path: Path) -> No
 
     assert not (fresh / "input" / "article.md").exists()
     assert (fresh / "input" / "report.md").is_file()
+
+
+def test_上一張工單的資料夾是指到_jobs_外面的連結_丟_InputError(tmp_path: Path) -> None:
+    # job.md 被改過、或資料夾被換成連結：開工前照樣擋，不從 jobs/ 以外的地方複製檔案
+    data = _data(tmp_path)
+    outside = tmp_path / "outside"
+    (outside / "input").mkdir(parents=True)
+    (outside / "input" / "report.md").write_text("外面的檔", encoding="utf-8")
+    data.jobs.mkdir(parents=True, exist_ok=True)
+    (data.jobs / "linked").symlink_to(outside)
+    job_dir = _rewrite_job_dir(data)
+
+    with pytest.raises(InputError, match="jobs"):
+        prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="linked"))
+    assert not (job_dir / "input" / "report.md").exists()

@@ -43,6 +43,9 @@ from evidence_forge.runner.stage_inputs import (
     default_genre,
     personas,
 )
+from evidence_forge.runner.stage_inputs import (
+    parent_dir as stage_parent_dir,
+)
 from evidence_forge.write_once import write_once
 
 MANUAL_FEED = "manual"
@@ -351,7 +354,8 @@ def open_job_from(
     """
     if not recipe.needs:
         raise ValueError(f"配方 {recipe.name} 不從上一張工單接著做，不能用 --from")
-    parent_dir = data.job_dir(parent_id)
+    # id 不合規則、或資料夾跑出 jobs/ 都在這裡擋下（InputError 是 ValueError）
+    parent_dir = stage_parent_dir(data, parent_id)
     try:
         parent = read_job(parent_dir / "job.md").job
     except (OSError, FrontmatterError, ValidationError):

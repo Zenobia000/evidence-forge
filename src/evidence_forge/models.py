@@ -27,6 +27,7 @@ from pydantic import (
 
 # 預算的格式在檔名含 budget 的模組（改它是 T3）；Job 用到它，這裡照舊 import 得到（明確轉出）。
 from evidence_forge.budget import Budget as Budget
+from evidence_forge.jobkey import check_name
 
 # 工單只有這五種狀態（NFR-RUN-02、ADR-0010）。
 JobStatus = Literal["queued", "running", "review", "approved", "discarded"]
@@ -152,6 +153,13 @@ class Job(_Contract):
     waiting: Waiting | None = None
     result: JobResult | None = None
     versions: Versions = Versions()
+
+    @model_validator(mode="after")
+    def _parent_is_a_job_id(self) -> Self:
+        # 會拿來拼 jobs/<id>/ 路徑：跟工單鑰匙同一條字元規則（#92 審查）
+        if self.parent is not None:
+            check_name("工單 id", self.parent)
+        return self
 
     @model_validator(mode="after")
     def _status_consistency(self) -> Self:

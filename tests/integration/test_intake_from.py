@@ -181,3 +181,41 @@ def test_要上一張單的配方不帶_from_就不開單_不要的配方不收_
 def test_投入新素材時指定的角色不存在_也不開單(data: DataDir) -> None:
     with pytest.raises(ValueError, match="ghost"):
         open_job(data, ANALYZE, PastedText("文章"), goal=None, now=NOW, persona="ghost")
+
+
+@pytest.mark.parametrize(
+    "parent",
+    ["../..", "..", "/etc", "../jobs/x", "a/b", "", "job id"],
+)
+def test_工單_id_不合規則_不開單_也不碰_jobs_以外的路徑(
+    data: DataDir, parent: str
+) -> None:
+    # P3 以後這個 id 會來自對話的模型：跟工單鑰匙用同一條字元規則（#92 審查）
+    before = sorted(data.jobs.iterdir())
+    with pytest.raises(ValueError, match="工單 id"):
+        _rewrite(data, parent)
+    assert sorted(data.jobs.iterdir()) == before
+
+
+def test_工單資料夾是指到_jobs_外面的連結_不開單(data: DataDir, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (data.jobs / "20990101-000000-deadbeef").symlink_to(outside)
+    with pytest.raises(ValueError, match="jobs"):
+        _rewrite(data, "20990101-000000-deadbeef")
+
+
+def test_job_md_的_parent_也套同一條規則() -> None:
+    from evidence_forge.budget import Budget
+    from evidence_forge.models import FeedRef, Job
+
+    with pytest.raises(ValueError, match="工單 id"):
+        Job(
+            id="j1",
+            recipe="rewrite",
+            feed=FeedRef(connector="manual", name="manual", item="inbox/manual/x"),
+            goal="寫",
+            parent="../escape",
+            budget=Budget(usd=0.5),
+            status="queued",
+        )

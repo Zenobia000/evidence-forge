@@ -36,6 +36,7 @@ from pydantic import ValidationError
 from evidence_forge.checks.report import ChecksReport
 from evidence_forge.documents import FrontmatterError, read_frontmatter
 from evidence_forge.harness import Harness
+from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.models import Job
 from evidence_forge.paths import DataDir
 from evidence_forge.write_once import write_once
@@ -125,6 +126,22 @@ def _passed_reports(job_dir: Path) -> list[ChecksReport]:
         if report.passed:
             found.append(report)
     return found
+
+
+def parent_dir(data: DataDir, job_id: str) -> Path:
+    """上一張工單（`--from`、`Job.parent`）的資料夾；id 不合規則或跑出 `jobs/` 就丟 `InputError`。
+
+    id 跟工單鑰匙用同一條字元規則（`jobkey.check_name`：沒有 `/`、`..`、空白）；
+    P3 以後這個 id 會來自對話的模型，所以解析出來的路徑（連結也照著走）還要確認在 `jobs/` 底下。
+    """
+    try:
+        check_name("工單 id", job_id)
+    except InvalidJobKey as exc:
+        raise InputError(str(exc)) from None
+    directory = data.job_dir(job_id)
+    if not directory.resolve().is_relative_to(data.jobs.resolve()):
+        raise InputError(f"工單 {job_id} 的資料夾不在 {data.jobs} 底下")
+    return directory
 
 
 def carried_files(parent_dir: Path) -> dict[str, Path]:
@@ -251,7 +268,7 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
         put(HEADLINE_RULES, data.headline_rules.read_bytes())
 
     if job.parent is not None:
-        parent = data.job_dir(job.parent)
+        parent = parent_dir(data, job.parent)
         if not parent.is_dir():
             raise InputError(f"找不到上一張工單 {job.parent}")
         for relative, source in carried_files(parent).items():
