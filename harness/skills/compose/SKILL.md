@@ -28,6 +28,7 @@ You write a new article for the author. The article someone else wrote (the seed
 - Write in the language of the voice file, for the reader named in the goal.
 - Every paragraph must contain something no source says: a comparison between sources, a synthesis, or the author's own judgement, clearly marked as the author's ("我認為", "我的推論是"). Opinions and inferences that are yours carry no citation marker.
 - Rebuild everything in your own words. Never copy a sentence from a source. Short names and terms are fine; a quoted phrase must stay under 20 characters. Do not repeat a source's typos or mistakes.
+- In the text, name a source by who wrote or published it or by what it studied. Never write a citation id (S1, S2) or the word "seed" in a sentence: the reader does not know those labels.
 - Citations: a fact taken from a source gets that source's marker, `[^S1]`, `[^S2]`, ... Mark each source once per paragraph, at the end of the sentence that carries its main fact; do not mark every sentence. Use only ids from the task's source line; never invent one.
 - End the draft with one footnote definition line per cited source, in id order: `[^S2]: <title>，<URL>` with the title and URL from the file's header. For `S1` use the seed's title and write `[^S1]: <title>（原文）`.
 - Standard Markdown only: headings, paragraphs, lists, tables. No HTML, no images, no code fences around the whole draft.
@@ -48,7 +49,7 @@ Use `write_file` for both, in the output directory named in the task:
    }
    ```
 
-   - `facts`: list **every** sentence in the draft that carries a citation marker, one per item, copied character for character from `draft.md` with its marker. An automatic check matches each one against the draft and checks that its marker points to a listed source.
+   - `facts`: list **every** sentence in the draft that carries a citation marker, one per item, copied character for character from `draft.md` with its marker. Only those: a sentence without a marker (your opinions, inferences, transitions) is never listed, and an item without a marker fails the check. An automatic check matches each one against the draft and checks that its marker points to a listed source.
    - `style_calibrated`: `true` only if `input/author/genre-style.md` exists and its frontmatter says `calibrated: true`. Otherwise `false`, and the draft is marked uncalibrated for review.
 
 If the task lists failed checks from an earlier attempt, read that attempt's files, fix every listed problem, and write both files again.
