@@ -7,6 +7,7 @@ from pathlib import Path
 
 from evidence_forge.models import Recipe, RecipeStage
 from evidence_forge.runner.runner import stage_prompt, upstream_outputs
+from evidence_forge.runner.sources import Source
 
 RECIPE = Recipe(
     name="restructure",
@@ -48,30 +49,60 @@ def test_第一段沒有前面的產出_任務說明跟以前逐位元組相同(
     )
 
 
-def test_補料段放了來源之後_任務說明列出每個引用編號與正文的位置(
+def test_補料段放了來源之後_任務說明列出每個引用編號_正文的位置與註腳(
     tmp_path: Path,
 ) -> None:
-    # #70：二創要綜合多個來源，執行器告訴它有哪些來源、各自叫什麼編號
+    # #70：二創要綜合多個來源，執行器告訴它有哪些來源、各自叫什麼編號；
+    # 註腳整行由執行器給（標題＋網址，種子也附出處，PRD §6 第 7 點），C3 才認得出照抄的是出處
     prompt = stage_prompt(
         RECIPE,
         RECIPE.stages[1],
         1,
         "寫一篇",
-        sources={
-            "S1": Path("input/content.md"),
-            "S2": Path("input/sources/S2.md"),
-            "S3": Path("input/sources/S3.md"),
+        cited={
+            "S1": Source(
+                Path("input/content.md"), "夜間圖書館", "https://seed.example/p"
+            ),
+            "S2": Source(
+                Path("input/sources/S2.md"), "加班的成本", "https://b.example/2"
+            ),
+            "S3": Source(
+                Path("input/sources/S3.md"), "第三空間", "https://c.example/3"
+            ),
         },
     )
     assert (
         "來源（引用編號：正文）：S1 input/content.md、S2 input/sources/S2.md、"
         "S3 input/sources/S3.md\n"
+        "註腳（稿子結尾照抄）：\n"
+        "[^S1]: 夜間圖書館，https://seed.example/p\n"
+        "[^S2]: 加班的成本，https://b.example/2\n"
+        "[^S3]: 第三空間，https://c.example/3\n"
+        "照系統提示裡的 skill"
     ) in prompt
+
+
+def test_種子是貼上的文字_沒有網址_註腳標原文() -> None:
+    prompt = stage_prompt(
+        RECIPE,
+        RECIPE.stages[1],
+        1,
+        "寫一篇",
+        cited={
+            "S1": Source(Path("input/content.md"), "夜間圖書館"),
+            "S2": Source(
+                Path("input/sources/S2.md"), "加班的成本", "https://b.example/2"
+            ),
+        },
+    )
+    assert "[^S1]: 夜間圖書館（原文）\n" in prompt
 
 
 def test_只有種子一個來源時_任務說明不多一個字() -> None:
     # 整理段、補料段、echo 都只有種子：錄好的請求不能因為這一行而對不上
-    only_seed = {"S1": Path("input/content.md")}
+    only_seed = {
+        "S1": Source(Path("input/content.md"), "夜間圖書館", "https://s.example")
+    }
     assert stage_prompt(
-        RECIPE, RECIPE.stages[0], 1, "寫一篇", sources=only_seed
+        RECIPE, RECIPE.stages[0], 1, "寫一篇", cited=only_seed
     ) == stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇")

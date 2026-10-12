@@ -16,11 +16,15 @@
 放好的檔（`input/sources/S<n>.md`）開頭幾行是編號、標題、網址、作者（有才寫）、抓取時間，
 接著是正文。種子（創作者丟進來的那一篇，`input/content.md`）永遠是 `S1`；補料找到的從 `S2` 起。
 跟其他參考資料一樣只增不改：重開時同一次重跑放的是同一份，沿用；內容不同就不合格。
+
+每個來源也帶著稿子註腳要寫的出處（`Source`：標題＋網址；種子的出處看素材項目，PRD §6 第 7 點）。
+執行器把註腳整行寫進二創段的任務說明，C3 也只放過註腳裡跟出處相符的部分。
 """
 
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -38,6 +42,29 @@ SEED_ID = "S1"
 SEED = Path(CONTENT)
 
 _PLACED = re.compile(r"^S([0-9]+)\.md$")
+# 放好的來源檔：檔頭與正文之間的分隔，與檔頭裡出處的欄位名（`render` 寫、`job_sources` 讀）
+_SEPARATOR = "\n\n---\n\n"
+_TITLE = "標題"
+_URL = "網址"
+
+
+@dataclass(frozen=True)
+class Source:
+    """這張單的一個來源：正文的位置（相對於工單資料夾），與稿子註腳要寫的出處。"""
+
+    path: Path
+    title: str
+    url: str | None = None
+
+    def footnote(self, source_id: str) -> str:
+        """稿子結尾這個來源的註腳定義行：標題＋網址；沒有網址的種子（貼上的文字、上傳的檔）標「原文」。"""
+        where = f"，{self.url}" if self.url else "（原文）"
+        return f"[^{source_id}]: {self.title}{where}"
+
+    @property
+    def references(self) -> tuple[str, ...]:
+        """註腳裡照抄也不算照抄（C3）的出處：標題與網址。"""
+        return tuple(part for part in (self.title, self.url) if part)
 
 
 def collects_sources(stage: RecipeStage) -> bool:
@@ -45,19 +72,49 @@ def collects_sources(stage: RecipeStage) -> bool:
     return stage.skill == RESEARCH_SKILL
 
 
-def job_sources(job_dir: Path) -> dict[str, Path]:
-    """這張單的來源：引用編號 → 正文的路徑（相對於工單資料夾），種子在最前面，其餘照編號。"""
-    found = {SEED_ID: SEED}
+def job_sources(job_dir: Path, seed: Item | None = None) -> dict[str, Source]:
+    """這張單的來源：引用編號 → 來源，種子在最前面，其餘照編號。
+
+    種子的出處看它的素材項目（`seed_item`）；讀不到時標題用原文的第一行、沒有網址。
+    補料段放的來源，出處是放的時候寫在檔頭的標題與網址（`render`）。
+    """
+    if seed is not None:
+        found = {SEED_ID: Source(SEED, seed.title, seed.url)}
+    else:
+        found = {SEED_ID: Source(SEED, _first_line(job_dir / SEED))}
     directory = job_dir / SOURCES_DIR
     if directory.is_dir():
         numbered = sorted(
-            (int(match.group(1)), path.name)
+            (int(match.group(1)), path)
             for path in directory.iterdir()
             if (match := _PLACED.match(path.name)) and path.is_file()
         )
-        for number, name in numbered:
-            found[f"S{number}"] = Path(SOURCES_DIR + name)
+        for number, path in numbered:
+            header = _header(path)
+            found[f"S{number}"] = Source(
+                Path(SOURCES_DIR + path.name),
+                header.get(_TITLE, path.stem),
+                header.get(_URL),
+            )
     return found
+
+
+def _first_line(path: Path) -> str:
+    """原文的第一行（去掉標題的 #），沒有就是「原文」。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    return next(
+        (t for line in lines if (t := line.strip().lstrip("#").strip())), "原文"
+    )
+
+
+def _header(path: Path) -> dict[str, str]:
+    """放好的來源檔的檔頭：欄位名 → 值（`render` 寫的那幾行）。"""
+    head = path.read_text(encoding="utf-8").split(_SEPARATOR, 1)[0]
+    pairs = (line.split("：", 1) for line in head.splitlines() if "：" in line)
+    return {name: value.strip() for name, value in pairs}
 
 
 def seed_item(data: DataDir, item: str) -> Item | None:
@@ -128,13 +185,14 @@ def render(source_id: str, record: FetchRecord, title: str) -> str:
     """`input/sources/S<n>.md` 的內容。標題用網頁自己的，網頁沒有才用 agent 寫的。"""
     lines = [
         f"來源編號：{source_id}",
-        f"標題：{record.title or title}",
-        f"網址：{record.final_url or record.url}",
+        # 檔頭一個欄位一行：標題裡的換行換成空白
+        f"{_TITLE}：{' '.join((record.title or title).split())}",
+        f"{_URL}：{record.final_url or record.url}",
     ]
     if record.author:
-        lines.append(f"作者：{record.author}")
+        lines.append(f"作者：{' '.join(record.author.split())}")
     lines.append(f"抓取時間：{record.fetched_at.isoformat()}")
-    return "\n".join(lines) + "\n\n---\n\n" + record.text.strip() + "\n"
+    return "\n".join(lines) + _SEPARATOR + record.text.strip() + "\n"
 
 
 def _listed(stage_dir: Path, stage: RecipeStage) -> list[dict[str, object]] | str:

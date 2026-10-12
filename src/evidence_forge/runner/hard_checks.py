@@ -5,7 +5,7 @@
 
 - `digest`（整理）：C1、C5。沒過算這段這次失敗，走重試與升級。
 - `compose`（二創）：C2～C5。沒過帶著結果回二創段修，最多 `auto_fix` 次。C2 的引用編號、C3 比的正文
-  都是種子加補料段放的來源（`sources.job_sources`，#70）。
+  都是種子加補料段放的來源（`sources.job_sources`，#70）；稿子註腳裡照抄的出處（標題、網址）C3 不算。
 - 其他 skill：不跑硬檢查，只驗 schema（`validate_outputs`）。
 
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
@@ -27,7 +27,7 @@ from evidence_forge.checks import (
     run_digest_checks,
     write_checks_report,
 )
-from evidence_forge.models import RecipeStage
+from evidence_forge.models import Item, RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
 
@@ -68,8 +68,12 @@ def run_hard_checks(
     attempt: int,
     schema: Path,
     clock: Callable[[], datetime],
+    seed: Item | None = None,
 ) -> ChecksReport | None:
-    """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。"""
+    """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。
+
+    `seed` 是種子的素材項目（`sources.seed_item`），二創段用它的標題、網址認出 S1 的註腳。
+    """
     if not has_hard_checks(stage):
         return None
     base = Path("stages") / stage.id / str(attempt)
@@ -84,13 +88,15 @@ def run_hard_checks(
             draft = base / _output(stage, ".md")
             output = base / _output(stage, ".json")
             files = (draft, output)
+            found = sources.job_sources(job_dir, seed)
             entries = run_compose_checks(
                 job_dir,
                 draft=draft,
                 output=output,
                 schema=schema,
-                sources=sources.job_sources(job_dir),
+                sources={sid: source.path for sid, source in found.items()},
                 thresholds=load_check_settings(data).c3,
+                footnotes={sid: source.references for sid, source in found.items()},
             )
     except (ValueError, OSError) as exc:
         # SchemaError、空的原文、跑出工單資料夾的路徑、壞掉的 checks.yaml 都在這裡

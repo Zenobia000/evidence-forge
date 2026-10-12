@@ -27,9 +27,11 @@ pytestmark = pytest.mark.promise("FR-RS-01", "FR-VF-01")
 
 # 原文（tests/fixtures/articles/tracer.md）裡真的有的一句
 REAL_QUOTE = "以前每天大約有兩成的麵包賣不掉"
+# 標題很長（超過 C3 最長共同片段的 30 個詞）：稿子的註腳照抄它，C3 只能靠出處認出來
+LONG_TITLE = "預約制麵包店一年後：東區一家社區麵包店改成全面預約制滿一年之後的報廢量營收與熟客變化紀錄"
 PAGES = {
     "https://bakery.example/preorder": (
-        "預約制麵包店一年後",
+        LONG_TITLE,
         "東區一家麵包店改成預約制滿一年，每天的報廢量從三十個降到八個。",
     ),
     "https://food.example/waste": (
@@ -64,7 +66,8 @@ DRAFT = (
     "# 麵包店的預約制\n\n"
     "改成預約之後，賣剩的麵包少了一半以上[^S1]。"
     "另一家店做滿一年，報廢從三十個降到八個[^S2]。我認為這值得更多店試試。\n\n"
-    "[^S1]: 原文\n[^S2]: 預約制麵包店一年後（https://bakery.example/preorder）\n"
+    "[^S1]: 巷口麵包店改成預約制之後（原文）\n"
+    f"[^S2]: {LONG_TITLE}，https://bakery.example/preorder\n"
 )
 FACTS = [
     "改成預約之後，賣剩的麵包少了一半以上[^S1]。",
@@ -205,6 +208,13 @@ def test_補料段抓過的網頁由執行器放進_input_sources_二創拿到�
         in compose[0]
     )
     assert all("來源（引用編號" not in p for p in prompts if p not in compose)
+    # 註腳整行由執行器給：種子是貼上的文字（標題取第一行、沒有網址），補料的是標題＋網址
+    assert (
+        "註腳（稿子結尾照抄）：\n"
+        "[^S1]: 巷口麵包店改成預約制之後（原文）\n"
+        f"[^S2]: {LONG_TITLE}，https://bakery.example/preorder\n"
+        "[^S3]: 烘焙業的剩食，https://food.example/waste\n"
+    ) in compose[0]
 
     [report] = [r for r in _reports(world, job_id) if r.stage == "compose"]
     assert report.passed, report

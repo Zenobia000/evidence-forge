@@ -49,7 +49,7 @@ def _seed(url: str | None = SEED_URL) -> Item:
         id="seed",
         feed="manual",
         url=url,
-        title="夜間圖書館",
+        title="圖書館晚上開到幾點",
         fetched_at=NOW,
         content_hash=hashlib.sha256(SEED_TEXT.encode("utf-8")).hexdigest(),
     )
@@ -113,6 +113,35 @@ def _place(data: DataDir, attempt: int = 1, seed: Item | None = None) -> list[st
     return sources.place_sources(data, data.job_dir(JOB), STAGE, attempt, seed=seed)
 
 
+def _paths(job_dir: Path) -> dict[str, Path]:
+    return {sid: s.path for sid, s in sources.job_sources(job_dir).items()}
+
+
+def test_每個來源帶著註腳的出處_種子看素材項目_補料的看放進來的檔頭(
+    data: DataDir,
+) -> None:
+    _fetched(data, "https://b.example/short", final_url="https://b.example/long")
+    _sources_json(data, _entry(2, "https://b.example/short"))
+    assert _place(data) == []
+    job_dir = data.job_dir(JOB)
+
+    found = sources.job_sources(job_dir, _seed())
+
+    # 種子的標題與網址照素材項目；補料的照實際抓到的（轉址後的網址）
+    assert (
+        found["S1"].footnote("S1")
+        == "[^S1]: 圖書館晚上開到幾點，https://seed.example/p"
+    )
+    assert found["S2"].footnote("S2") == "[^S2]: 標題，https://b.example/long"
+    assert found["S2"].references == ("標題", "https://b.example/long")
+    # 貼上的文字沒有網址；讀不到素材項目時用原文的第一行當標題
+    pasted = sources.job_sources(job_dir, _seed(url=None))["S1"]
+    assert pasted.footnote("S1") == "[^S1]: 圖書館晚上開到幾點（原文）"
+    assert (
+        sources.job_sources(job_dir)["S1"].footnote("S1") == "[^S1]: 夜間圖書館（原文）"
+    )
+
+
 def test_抓過的網頁照_sources_json_放進_input_sources_附網址與抓取時間(
     data: DataDir,
 ) -> None:
@@ -135,7 +164,7 @@ def test_抓過的網頁照_sources_json_放進_input_sources_附網址與抓取
     second = (job_dir / "input" / "sources" / "S3.md").read_text(encoding="utf-8")
     assert "標題：第 3 篇" in second
     assert "作者" not in second
-    assert sources.job_sources(job_dir) == {
+    assert _paths(job_dir) == {
         "S1": Path("input/content.md"),
         "S2": Path("input/sources/S2.md"),
         "S3": Path("input/sources/S3.md"),
@@ -155,7 +184,7 @@ def test_沒有抓過的網址_這一次不合格_一個檔都不放(data: DataD
     assert len(problems) == 1
     assert "S3" in problems[0] and "made-up.example" in problems[0]
     assert not (data.job_dir(JOB) / "input" / "sources").exists()
-    assert sources.job_sources(data.job_dir(JOB)) == {"S1": Path("input/content.md")}
+    assert _paths(data.job_dir(JOB)) == {"S1": Path("input/content.md")}
 
 
 @pytest.mark.parametrize(
