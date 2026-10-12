@@ -21,7 +21,7 @@ import hashlib
 import json
 import shutil
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -253,10 +253,13 @@ def open_job(
     budget_credits: int | None = None,
     genre: str | None = None,
     conversation: str | None = None,
+    before_create: Callable[[], None] | None = None,
 ) -> Intake:
     """投入一篇東西並開單（或回傳已有的那張）。
 
     `conversation` 是開單的對話 id，記進 `job.md`、也是去重的鍵的一部分；命令列不給。
+    `before_create` 在確定要開新單（去重沒拿到舊單）時、建資料夾之前呼叫，在同一把鎖裡；
+    它丟例外就不開單。閘道用它擋「這個對話已經有單在跑」，去重拿回舊單時不擋。
 
     `budget_credits` 是這張單的 Tavily credits 上限；沒給就用配方各段 `tavily_credits` 的總和
     （`recipe_credits`），配方沒有一段要搜尋就是 0。
@@ -287,6 +290,8 @@ def open_job(
         )
         if existing is not None:
             return Intake(job=existing, created=False)
+        if before_create is not None:
+            before_create()
         budget = Budget(
             usd=budget_usd,
             tavily_credits=(

@@ -11,11 +11,13 @@
 - 段的工具（讀寫檔、抓網頁、搜尋、跑腳本）拿對話鑰匙來一律 403；對話的工具拿段的鑰匙來也是（`app.py`）。
 - 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1）：
   對話的 agent 可以一直開單，每張單各有預算，不擋的話總花費只剩月上限管得到。
+  只擋「要開新單」：同一篇文章再丟一次（連按兩下）照樣拿回那一張，即使它還在跑。
 
 真正開單、讀結果的事交給 `Desk`（對話主機注入，知道配方與 harness）；閘道只管鑰匙、範圍與記帳。
 """
 
 import asyncio
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from starlette.concurrency import run_in_threadpool
@@ -41,10 +43,12 @@ class Desk(Protocol):
         url: str | None,
         text: str | None,
         goal: str | None,
+        before_create: Callable[[], None],
     ) -> dict[str, Any]:
         """開單（或拿回這個對話已有的那張）；回 `{"job_id", "created", "status", …}`。
         讀不到網址回 `{"status": "unavailable", "reason"}`，不開單。可以花幾秒抓網頁。
-        `conversation_id` 要傳給投入（`open_job(conversation=…)`）：去重的鍵含它。"""
+        `conversation_id` 與 `before_create` 原樣傳給投入（`open_job`）：去重的鍵含對話 id；
+        `before_create` 只在要開新單時呼叫，它丟的 `ToolRejected` 要原樣往外丟。"""
         ...
 
     def status(self, job_id: str) -> dict[str, Any]: ...
@@ -95,8 +99,9 @@ class ChatTools:
         conversation_id = key.conversation_id
         if not (data.conversation_dir(conversation_id) / "conversation.json").is_file():
             raise ToolRejected(403, f"沒有這個對話：{conversation_id}")
-        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
-        async with lock:
+
+        def room_for_new_job() -> None:
+            # 在投入的鎖裡、確定要開新單時才數：去重拿回舊單不受上限影響
             running = self._running_jobs(conversation_id)
             limit = self._config.chat_max_running_jobs
             if len(running) >= limit:
@@ -105,12 +110,16 @@ class ChatTools:
                     f"這個對話已經有 {len(running)} 張工單在跑（{'、'.join(running)}），"
                     f"同一時間最多 {limit} 張；等它跑完再開，或請創作者決定",
                 )
-            opened = await run_in_threadpool(
-                desk.open_analysis,
+
+        def open_and_record() -> dict[str, Any]:
+            # 開單與記進 jobs.jsonl 在同一個執行緒裡做完：請求中途被取消（關機、斷線）時，
+            # 不會留下開了單卻沒記在對話底下、也不算進「在跑」的工單
+            opened = desk.open_analysis(
                 conversation_id=conversation_id,
                 url=url,
                 text=text,
                 goal=goal,
+                before_create=room_for_new_job,
             )
             job_id = opened.get("job_id")
             if isinstance(job_id, str):
@@ -121,7 +130,11 @@ class ChatTools:
                         job_id=job_id, ts=self._config.clock()
                     ),
                 )
-        return opened
+            return opened
+
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            return await run_in_threadpool(open_and_record)
 
     def _running_jobs(self, conversation_id: str) -> list[str]:
         """這個對話還在排隊或在跑的工單。讀不到 `job.md` 的不算：執行器也跑不了它。"""

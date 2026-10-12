@@ -2,7 +2,8 @@
 
 兩種帳本，格式各一個模型：
 
-- `jobs/<id>/ledger.jsonl`（`LedgerEntry`）：工單的模型與工具呼叫。
+- `jobs/<id>/ledger.jsonl`（`LedgerEntry`）：工單的模型與工具呼叫。對話本身的模型呼叫也用
+  `LedgerEntry`，寫在 `conversations/<對話 id>/ledger.jsonl`，填 `conversation_id` 不填 `job_id`（ADR-0021）。
 - `$EF_DATA/ledger/intake.jsonl`（`IntakeEntry`）：投入時的抓取，那時還沒有工單。
 
 放在中立的模組、檔名含 ledger：改欄位的 PR 會被當成 T3；帳單與 UI 讀帳本時只 import 這裡，

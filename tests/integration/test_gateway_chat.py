@@ -76,6 +76,7 @@ class IntakeDesk:
         url: str | None,
         text: str | None,
         goal: str | None,
+        before_create: Callable[[], None],
     ) -> dict[str, Any]:
         self.opened.append({"conversation_id": conversation_id, "url": url})
         if url is not None:
@@ -87,6 +88,7 @@ class IntakeDesk:
             goal=goal,
             now=NOW,
             conversation=conversation_id,
+            before_create=before_create,
         )
         return {
             "job_id": intake.job.id,
@@ -246,12 +248,27 @@ def test_兩個對話丟同一篇文章_各開各的單_各自讀不到對方的
     assert env.call("read_report", env.other, job_id=mine).status_code == 403
 
 
-def test_同一個對話再丟同一篇_拿回同一張_jobs_jsonl_不重複記(env: Env) -> None:
+@pytest.mark.parametrize("finished", [True, False], ids=["跑完了", "還在跑"])
+def test_同一個對話再丟同一篇_拿回同一張_jobs_jsonl_不重複記(
+    env: Env, finished: bool
+) -> None:
     first = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
-    env.finish(first)
+    if finished:
+        env.finish(first)
+    # 還在跑也一樣拿回那一張：同時在跑的上限只擋「要開新單」，不擋去重（連按兩下）
     again = env.call("analyze", env.mine, text="# 一篇\n\n內容")
+    assert again.status_code == 200, again.text
     assert again.json()["job_id"] == first and again.json()["created"] is False
     assert len(conversations.jobs(env.data, env.mine.conversation_id)) == 1
+
+
+def test_沒有對話資料夾的鑰匙不能開單(env: Env) -> None:
+    ghost = ConversationKey("c-no-such-conversation", 1)
+    env.stages.activate(ghost)
+    response = env.call("analyze", ghost, text="# 一篇\n\n內容")
+    assert response.status_code == 403
+    assert env.desk.opened == []
+    assert not env.data.conversation_dir(ghost.conversation_id).exists()
 
 
 # --- 範圍 -------------------------------------------------------------------
@@ -372,6 +389,16 @@ def test_對話的模型呼叫記在對話的帳本_不在_jobs_底下(env: Env)
 def test_對話預算用完_不轉送(env: Env) -> None:
     conversation = conversations.read(env.data, env.mine.conversation_id)
     conversations.save(env.data, conversation.model_copy(update={"budget_usd": 0.0001}))
+    response = env.message(env.mine)
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "budget_exceeded"
+    assert env.backend.received == 0
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_讀不到_conversation_json_預算當成_0_不轉送(env: Env) -> None:
+    path = env.data.conversation_dir(env.mine.conversation_id) / "conversation.json"
+    path.write_text("{壞掉", encoding="utf-8")
     response = env.message(env.mine)
     assert response.status_code == 400
     assert response.json()["error"]["type"] == "budget_exceeded"

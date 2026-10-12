@@ -70,12 +70,13 @@ def test_命令列不會拿到對話開的單(data: DataDir) -> None:
     assert from_cli.job.id != from_chat.job.id
 
 
-def test_同一個對話_同素材同目標但配方不同_開新單(data: DataDir) -> None:
-    # 去重的鍵是「對話 + 素材 + 配方 + 目標」：不同配方的單不能互相頂替
-    first = _submit(data, "c-mine")
+@pytest.mark.parametrize("conversation", ["c-mine", None], ids=["對話", "命令列"])
+def test_同素材同目標但配方不同_開新單(data: DataDir, conversation: str | None) -> None:
+    # 去重的鍵是「對話 + 素材 + 配方 + 目標」：不同配方的單不能互相頂替，命令列也一樣
+    first = _submit(data, conversation)
     other_recipe = RECIPE.model_copy(update={"name": "other"})
     again = open_job(
-        data, other_recipe, ARTICLE, goal=None, now=NOW, conversation="c-mine"
+        data, other_recipe, ARTICLE, goal=None, now=NOW, conversation=conversation
     )
     assert again.created
     assert again.job.id != first.job.id
