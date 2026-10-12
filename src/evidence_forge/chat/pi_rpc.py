@@ -312,15 +312,22 @@ class PiProcess:
         process = self._process
         if process is None:
             return
-        with self._write_lock:
-            if process.stdin is not None:
-                try:
-                    process.stdin.close()
-                except OSError:
-                    pass
-        try:
-            process.wait(timeout=wait_s)
-        except subprocess.TimeoutExpired:
+        # 寫入鎖拿不到，表示有人卡在寫 stdin（Pi 不讀了）：不跟著等，直接殺。
+        # 殺掉之後那個寫入會丟 BrokenPipeError（變成 PiExited），鎖就放開了
+        if self._write_lock.acquire(timeout=wait_s):
+            try:
+                if process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
+            finally:
+                self._write_lock.release()
+            try:
+                process.wait(timeout=wait_s)
+            except subprocess.TimeoutExpired:
+                self.kill()
+        else:
             self.kill()
         self.join()
 

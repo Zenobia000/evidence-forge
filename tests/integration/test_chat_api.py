@@ -117,3 +117,37 @@ def test_只接受本機的請求_擋跨站與_DNS_rebinding(api: str) -> None:
     same = httpx.get(f"{api}/api/conversations", headers={"origin": "http://127.0.0.1:8790"})
     assert same.status_code == 200
     assert httpx.get(f"{api}/api/conversations/{cid}").json()["pi_running"] is False
+
+
+def test_跨站的_GET_也擋_它會開_Pi_花錢(api: str) -> None:
+    cid = httpx.post(f"{api}/api/conversations", json={}).json()["id"]
+    # 別的網站放一張 <img src=…/messages>：瀏覽器不帶 Origin，但會帶 Sec-Fetch-Site
+    sneaky = httpx.get(
+        f"{api}/api/conversations/{cid}/messages", headers={"sec-fetch-site": "cross-site"}
+    )
+    assert sneaky.status_code == 403
+    assert httpx.get(f"{api}/api/conversations/{cid}").json()["pi_running"] is False
+
+
+def test_Pi_開不起來回_503_說清楚(tmp_path: Path, serve: Any) -> None:
+    data = DataDir(tmp_path / "data")
+    data.ensure()
+    harness = fake_chat_harness(tmp_path / "harness")
+    harness.pi.pi_bin.unlink()
+    host = ConversationHost(
+        data=data,
+        harness=harness,
+        stages=ActiveStages(),
+        gateway_url="http://127.0.0.1:9",
+        recipes={},
+        clock=lambda: NOW,
+    )
+    host.start()
+    try:
+        with serve(create_app(host)) as url:
+            cid = httpx.post(f"{url}/api/conversations", json={}).json()["id"]
+            sent = httpx.post(f"{url}/api/conversations/{cid}/messages", json={"text": "嗨"})
+            assert sent.status_code == 503
+            assert "暫時打不開" in sent.json()["error"]
+    finally:
+        host.close()

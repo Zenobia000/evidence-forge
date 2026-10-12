@@ -178,10 +178,17 @@ class ConversationHost:
         pids = self._data.run / "chat-pids"
         if pids.is_dir():
             for record in sorted(pids.glob("*.pid")):
-                try:
-                    kill_leftover(self._data, record.stem)
-                except (RuntimeError, ValueError):
-                    _log.warning("對話 %s 前一次的 Pi 收不掉", record.stem, exc_info=True)
+                conversation_id = record.stem
+                with self._conversation_lock(conversation_id):
+                    with self._lock:
+                        mine = conversation_id in self._live
+                    if mine:
+                        # 這個主機自己開的（start 之前就有訊息送到）：不是孤兒
+                        continue
+                    try:
+                        kill_leftover(self._data, conversation_id)
+                    except (RuntimeError, ValueError):
+                        _log.warning("對話 %s 前一次的 Pi 收不掉", conversation_id, exc_info=True)
         for target, name in ((self._work, "chat-host-work"), (self._reap, "chat-host-idle")):
             thread = threading.Thread(target=target, name=name, daemon=True)
             thread.start()

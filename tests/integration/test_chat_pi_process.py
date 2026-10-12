@@ -157,3 +157,32 @@ def test_主機被硬殺留下的_Pi_下次開之前被殺掉_別人的程序不
         other.kill()
         other.wait()
     pi.join()
+
+
+def test_卡死的_Pi_寫到一半也關得掉(tmp_path: Path) -> None:
+    # 回歸（審查必修）：Pi 不讀 stdin 時，送大訊息的人卡在寫入、拿著寫入鎖；
+    # 關掉的人不能跟著卡住，要直接殺整個程序群組
+    world = Started(tmp_path, {"stuck": True})
+    pi = world.open()
+    pid = pi.pid
+    assert pid is not None
+    errors: list[BaseException] = []
+
+    def write_big() -> None:
+        try:
+            pi.send({"type": "prompt", "message": "長" * 1_000_000})
+        except BaseException as exc:
+            errors.append(exc)
+
+    writer = threading.Thread(target=write_big, daemon=True)
+    writer.start()
+    wait_until(lambda: pi._write_lock.locked(), what="寫入卡住")
+
+    stopper = threading.Thread(target=lambda: pi.stop(wait_s=0.3), daemon=True)
+    stopper.start()
+    stopper.join(10)
+    assert not stopper.is_alive()
+    assert not pid_alive(pid)
+    writer.join(5)
+    assert errors and isinstance(errors[0], PiExited)
+    assert not world.stages.is_active(pi.key)

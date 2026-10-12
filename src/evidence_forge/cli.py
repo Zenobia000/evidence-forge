@@ -212,11 +212,12 @@ def _serve(args: argparse.Namespace) -> int:
         if host is not None:
             # 對話的 Pi 跟段的 Pi 共用 $EF_DATA/run/pi-agent/ 的 models.json（指到閘道）
             prepare_agent_dir(harness.pi, data, gateway_url)
+            # 主機先收掉前一次留下的 Pi，API 才開門：不然第一句話開的 Pi 會被當成孤兒殺掉
+            host.start()
             chat_server = _start_server(chat_api.create_app(host), args.chat_port)
             if chat_server is None:
                 print(f"對話的 API 沒有啟動（埠 {args.chat_port} 被佔用？）", file=sys.stderr)
                 return 1
-            host.start()
             print(
                 f"對話 API http://127.0.0.1:{args.chat_port}/api/conversations；"
                 f"analyze 開 {args.chat_recipe}；閒置 {args.chat_idle_minutes:g} 分鐘關掉對話的 Pi",

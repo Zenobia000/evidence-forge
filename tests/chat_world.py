@@ -9,6 +9,7 @@
   沒有就放一則 `custom` 訊息（`message_end` 事件），再開一輪回答（正在回答就排在後面）。
 - `get_messages`：回完整紀錄；`slow_get_messages_s` 讓它晚一點回，後送的指令的回應會先到。
 - stdin 關掉就結束；`ignore_eof` 時不結束（模擬卡住的 Pi，給殺孤兒的測試）。
+- `stuck` 時根本不讀 stdin（模擬事件迴圈卡死的 Pi）。
 
 設定放在假 Pi 旁邊的 `fake-pi.json`（`fake_chat_harness(..., settings)`）：主機只把 PATH 等幾個
 環境變數交給 Pi，測試的設定不能從環境變數進去。
@@ -147,6 +148,11 @@ def handle(command):
         return
     respond(command, data={"disposition": start_or_queue({"kind": "user", "text": text})})
 
+
+if settings.get("stuck"):
+    # 卡住的 Pi：不讀 stdin，管線塞滿之後寫的人會卡住
+    while True:
+        time.sleep(1)
 
 for raw in sys.stdin.buffer:
     try:

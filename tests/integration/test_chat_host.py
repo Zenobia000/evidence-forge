@@ -331,6 +331,28 @@ def test_主機被硬殺_Pi_自己收掉不留孤兒_重開後補送這段期間
     assert host.live_pid(cid) is not None
 
 
+def test_啟動時殺的只有前一個主機留下的_不殺自己剛開的(world: World) -> None:
+    # 回歸：API 先起來、主機才 start，第一句話剛好在中間送到時，start 殺孤兒會把剛開的 Pi 殺掉
+    host = ConversationHost(
+        data=world.data,
+        harness=world.harness(),
+        stages=world.stages,
+        gateway_url="http://127.0.0.1:9",
+        recipes={"analyze": RECIPE},
+        clock=lambda: NOW,
+    )
+    world.hosts.append(host)
+    cid = world.conversation()
+    host.send(cid, "搶在 start 之前")
+    pid = host.live_pid(cid)
+    assert pid is not None
+
+    host.start()
+
+    assert pid_alive(pid)
+    wait_until(lambda: world.replies(cid) == ["回覆：搶在 start 之前"])
+
+
 def test_主機關機時收掉所有對話的_Pi(world: World) -> None:
     host = world.host()
     first, second = world.conversation(), world.conversation()

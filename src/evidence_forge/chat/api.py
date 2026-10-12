@@ -16,7 +16,7 @@
 
 **只給這台機器上的瀏覽器用。** 它會花錢（每句話都打模型），所以：
 - `Host` 標頭只准 127.0.0.1、localhost、[::1]：擋 DNS rebinding（別的網域解析到 127.0.0.1 來打）。
-- 帶了 `Origin` 的請求（瀏覽器跨站送的）也只准這幾個主機。
+- 帶了 `Origin` 的請求（瀏覽器跨站送的）也只准這幾個主機；`Sec-Fetch-Site` 不是同源就擋（跨站的 `<img>` 不帶 Origin）。
 - `POST` 一律要 `Content-Type: application/json`：別的網站不能用一個不需要預檢的表單偷送。
 """
 
@@ -35,6 +35,7 @@ from evidence_forge.chat.host import (
     PromptRejected,
 )
 from evidence_forge.chat.pi_rpc import PiExited
+from evidence_forge.gateway.active import StaleKey
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # SSE 沒事件時多久送一行註解，讓瀏覽器與中間的代理知道連線還活著
@@ -57,7 +58,8 @@ async def _call(work: Callable[[], Any]) -> Any:
         return _error(404, "沒有這個對話")
     except PromptRejected as exc:
         return _error(409, str(exc))
-    except (PiExited, TimeoutError) as exc:
+    except (PiExited, TimeoutError, StaleKey, OSError, RuntimeError) as exc:
+        # Pi 開不起來（執行檔不見、舊的殺不掉、鑰匙登記不上）、半路結束、沒回應：紀錄還在，可以重試
         return _error(503, f"這個對話暫時打不開：{exc}")
     except ValueError as exc:
         return _error(400, str(exc))
@@ -76,6 +78,10 @@ def create_app(host: ConversationHost) -> FastAPI:
             return _error(403, "只接受本機的請求")
         origin = request.headers.get("origin")
         if origin is not None and urlsplit(origin).hostname not in LOCAL_HOSTS:
+            return _error(403, "只接受本機網頁送來的請求")
+        # 別的網站放一張 <img> 指到這裡，瀏覽器不帶 Origin 但會帶 Sec-Fetch-Site。
+        # 讀紀錄也會開 Pi、補送通知（打模型），所以 GET 一樣擋
+        if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
             return _error(403, "只接受本機網頁送來的請求")
         if request.method == "POST":
             content_type = request.headers.get("content-type", "")
