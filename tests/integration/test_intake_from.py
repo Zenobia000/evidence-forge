@@ -37,7 +37,12 @@ def data(tmp_path: Path) -> DataDir:
 
 
 def _finish(
-    data: DataDir, job_id: str, stage: str, files: dict[str, str], *, passed: bool = True
+    data: DataDir,
+    job_id: str,
+    stage: str,
+    files: dict[str, str],
+    *,
+    passed: bool = True,
 ) -> None:
     """當成這張單跑完了：寫一份段產出與執行器的檢查結果，狀態改成結束。"""
     job_dir = data.job_dir(job_id)
@@ -53,7 +58,9 @@ def _finish(
             files=tuple(f"stages/{stage}/1/{name}" for name in files),
             created_at=NOW,
             entries=(
-                CheckEntry(check="C5", status="pass" if passed else "fail", reason="測試"),
+                CheckEntry(
+                    check="C5", status="pass" if passed else "fail", reason="測試"
+                ),
             ),
         ),
     )
@@ -68,11 +75,19 @@ def _analysis(data: DataDir, *, passed: bool = True) -> str:
     job_id = open_job(
         data, ANALYZE, PastedText("# 夜間圖書館\n\n原文全文。"), goal=None, now=NOW
     ).job.id
-    _finish(data, job_id, "investigate", {"report.md": "報告", "sources.json": "{}"}, passed=passed)
+    _finish(
+        data,
+        job_id,
+        "investigate",
+        {"report.md": "報告", "sources.json": "{}"},
+        passed=passed,
+    )
     return job_id
 
 
-def _rewrite(data: DataDir, parent: str, recipe: Recipe = REWRITE, **options: object) -> str:
+def _rewrite(
+    data: DataDir, parent: str, recipe: Recipe = REWRITE, **options: object
+) -> str:
     return open_job_from(data, recipe, parent, now=LATER, **options).id  # type: ignore[arg-type]
 
 
@@ -80,12 +95,18 @@ def _rewrite(data: DataDir, parent: str, recipe: Recipe = REWRITE, **options: ob
 def test_從分析工單開重構_帶角色文體目標_原文全文不進新工單(data: DataDir) -> None:
     parent = _analysis(data)
 
-    job_id = _rewrite(data, parent, persona="me", genre="tutorial", goal="寫給台灣 PM 看")
+    job_id = _rewrite(
+        data, parent, persona="me", genre="tutorial", goal="寫給台灣 PM 看"
+    )
 
     job = read_job(data.job_dir(job_id) / "job.md").job
     analysis = read_job(data.job_dir(parent) / "job.md").job
     assert (job.recipe, job.status, job.parent) == ("rewrite", "queued", parent)
-    assert (job.persona, job.target_genre, job.goal) == ("me", "tutorial", "寫給台灣 PM 看")
+    assert (job.persona, job.target_genre, job.goal) == (
+        "me",
+        "tutorial",
+        "寫給台灣 PM 看",
+    )
     assert job.feed == analysis.feed
     assert not (data.job_dir(job_id) / "input" / "content.md").exists()
 
@@ -102,7 +123,9 @@ def test_沒給目標與文體_用配方的預設目標與角色的預設文類(
 
 
 @pytest.mark.promise("FR-RW-03")
-def test_再改帶一句意見_沿用上一版的角色文體目標_每一版一張新工單(data: DataDir) -> None:
+def test_再改帶一句意見_沿用上一版的角色文體目標_每一版一張新工單(
+    data: DataDir,
+) -> None:
     v1 = _rewrite(data, _analysis(data), genre="tutorial", goal="寫給 PM")
     # v1 跑的時候執行器已經把分析報告放進它的 input/
     (data.job_dir(v1) / "input").mkdir(exist_ok=True)

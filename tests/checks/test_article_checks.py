@@ -48,9 +48,7 @@ def _check(article: str, **changes: object) -> list[CheckEntry]:
 
 
 def _references(article: str, url: str | None = URL) -> list[CheckEntry]:
-    return check_references(
-        article, file=FILE, original_url=url, original_title=TITLE
-    )
+    return check_references(article, file=FILE, original_url=url, original_title=TITLE)
 
 
 def _failed(entries: list[CheckEntry]) -> list[CheckEntry]:

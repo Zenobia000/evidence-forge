@@ -76,7 +76,10 @@ def test_原文有網址時_分析的每一段都拿得到原文出處() -> None
     # 分析報告的來源清單要列原文的網址（PRD §5），agent 只看得到 input/content.md 的正文
     linked = Original(title="夜間圖書館", text="正文", url="https://s.example/a")
     prompt = stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇", original=linked)
-    assert "素材在 input/content.md。\n原文出處：夜間圖書館，https://s.example/a\n" in prompt
+    assert (
+        "素材在 input/content.md。\n原文出處：夜間圖書館，https://s.example/a\n"
+        in prompt
+    )
 
 
 @pytest.mark.promise("FR-RW-01")

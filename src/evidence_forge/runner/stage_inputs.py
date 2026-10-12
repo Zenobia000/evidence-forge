@@ -150,7 +150,11 @@ def carried_files(parent_dir: Path) -> dict[str, Path]:
     sources = parent_dir / SOURCES_DIR
     if sources.is_dir():
         for path in sorted(sources.iterdir()):
-            if path.is_file() and path.name.endswith(".md") and not path.name.startswith("."):
+            if (
+                path.is_file()
+                and path.name.endswith(".md")
+                and not path.name.startswith(".")
+            ):
                 found[SOURCES_DIR + path.name] = path
     return found
 

@@ -255,6 +255,7 @@ def open_job(
     budget_usd: float = 0.5,
     budget_credits: int | None = None,
     genre: str | None = None,
+    persona: str | None = None,
 ) -> Intake:
     """投入一篇東西並開單（或回傳已有的那張）。
 
@@ -270,7 +271,7 @@ def open_job(
         )
     chosen_goal = effective_goal(recipe, goal)
     # 目標文類沒指定就用作家設定的預設文類，開單時記進 job.md（FR-CP-03、ADR-0015 §3.5）
-    genre = genre or default_genre(data)
+    genre = genre or default_genre(data, persona or AUTHOR)
     match source:
         case PastedText(text=text):
             material = _Material(text=text, title=_title(text))
@@ -296,7 +297,16 @@ def open_job(
             ),
         )
         job = _create_job(
-            data, recipe, item, item_path, material, chosen_goal, now, budget, genre
+            data,
+            recipe,
+            item,
+            item_path,
+            material,
+            chosen_goal,
+            now,
+            budget,
+            genre,
+            persona,
         )
     return Intake(job=job, created=True)
 
@@ -332,7 +342,9 @@ def open_job_from(
     except (OSError, FrontmatterError, ValidationError):
         raise ValueError(f"找不到工單 {parent_id}") from None
     if parent.status in ("queued", "running"):
-        raise ValueError(f"工單 {parent_id} 還沒跑完（{parent.status}），等它結束再接著做")
+        raise ValueError(
+            f"工單 {parent_id} 還沒跑完（{parent.status}），等它結束再接著做"
+        )
     carried = {Path(target).name for target in carried_files(parent_dir)}
     wanted = list(recipe.needs)
     if feedback is not None and feedback.strip():
@@ -357,7 +369,9 @@ def open_job_from(
         or effective_goal(recipe, None)
     )
     chosen_genre = (
-        genre or (parent.target_genre if same else None) or default_genre(data, chosen_persona)
+        genre
+        or (parent.target_genre if same else None)
+        or default_genre(data, chosen_persona)
     )
     item = Item.model_validate_json(
         (data.root / parent.feed.item / "item.json").read_bytes()
@@ -424,6 +438,7 @@ def _create_job(
     now: datetime,
     budget: Budget,
     genre: str | None,
+    persona: str | None,
 ) -> Job:
     assert item.content_hash is not None  # 讀得到的素材項目一定有
     job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
@@ -435,6 +450,7 @@ def _create_job(
         feed=FeedRef(connector=MANUAL_FEED, name=MANUAL_FEED, item=item_path),
         goal=goal,
         target_genre=genre,
+        persona=persona,
         budget=budget,
         status="queued",
     )

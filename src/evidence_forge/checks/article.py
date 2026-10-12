@@ -43,7 +43,10 @@ def split_references(article: str) -> tuple[str, str | None, int | None]:
 
 def _fail(reason: str, file: str, line: int | None = None) -> CheckEntry:
     return CheckEntry(
-        check="C5", status="fail", reason=reason, location=Location(file=file, line=line)
+        check="C5",
+        status="fail",
+        reason=reason,
+        location=Location(file=file, line=line),
     )
 
 
@@ -54,7 +57,9 @@ def check_references(
     _, references, line = split_references(article)
     if references is None:
         return [_fail(f"文章結尾沒有「{REFERENCES_HEADING}」一節", file)]
-    later = [number for number, _ in headings(article) if line is not None and number > line]
+    later = [
+        number for number, _ in headings(article) if line is not None and number > line
+    ]
     if later:
         return [
             _fail(

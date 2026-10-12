@@ -191,7 +191,9 @@ def test_作家的預設文類從_voice_md_的_frontmatter_讀(tmp_path: Path) -
 NOW = datetime(2026, 10, 13, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
 
 
-def _checked(job_dir: Path, stage: str, attempt: int, files: dict[str, str], *, passed: bool) -> None:
+def _checked(
+    job_dir: Path, stage: str, attempt: int, files: dict[str, str], *, passed: bool
+) -> None:
     """上一張單某段某次的產出，加上執行器替它寫的檢查結果。"""
     base = job_dir / "stages" / stage / str(attempt)
     base.mkdir(parents=True, exist_ok=True)
@@ -264,7 +266,9 @@ def test_再改從上一版重構工單開_拿到上一版文章_報告與來源
     _analysis(data)
     v1 = _rewrite_job_dir(data, "v1")
     prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
-    _checked(v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True)
+    _checked(
+        v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True
+    )
     v2 = _rewrite_job_dir(data, "v2")
 
     prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1"))

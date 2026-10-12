@@ -57,9 +57,7 @@ def _job(
     return job, schema
 
 
-def _run(
-    job: Path, schema: Path, article: Path = ARTICLE_PATH
-) -> list[CheckEntry]:
+def _run(job: Path, schema: Path, article: Path = ARTICLE_PATH) -> list[CheckEntry]:
     return run_article_checks(
         job,
         article,

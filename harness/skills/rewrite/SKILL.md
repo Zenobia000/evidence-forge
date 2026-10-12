@@ -18,7 +18,7 @@ You do not have the original's full text, and you must not try to get it. You wr
 5. `input/target-genre.md`: the target genre. Follow its skeleton (the numbered sections) and its default structure formula.
 6. `input/author/voice.md`: how this persona talks. Follow its tone, wording, rhythm, examples and its list of things not to do.
 7. Call `list_files` on `input/author/`. If `genre-style.md` is there, read `input/author/genre-style.md` and follow it: it is how this persona writes this genre. If it is not there, write with the genre skeleton and the voice only.
-8. `input/headline-punchline.md`, if `list_files` on `input/` shows it: the title and punchline rules. Use them for the title and the few lines readers will remember.
+8. `input/headline-punchline.md`: the title and punchline rules. If reading it fails, the creator has not set any; go on without them. Use them for the title and the few lines readers will remember.
 9. Call `list_files` on `input/conversions/`. If there is a file named `<the original's genre from input/brief.md>--<target genre id>.md`, read it and follow it.
 10. **Revision only:** if `input/article.md` is there, it is the previous version. Read it.
 
