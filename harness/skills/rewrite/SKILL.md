@@ -22,6 +22,8 @@ You do not have the original's full text, and you must not try to get it. You wr
 9. Call `list_files` on `input/conversions/`. If there is a file named `<the original's genre from input/brief.md>--<target genre id>.md`, read it and follow it.
 10. **Revision only:** if `input/article.md` is there, it is the previous version. Read it.
 
+Read only the files named above. Do not list or read anything else in the job folder: the other files are the runner's bookkeeping, not material.
+
 ## Plan before writing
 
 - Decide the one thing the article wants the reader to believe. It is the persona's own point, built from the report and the sources: where they agree, where they disagree, what one shows that the others miss. It is not the original's thesis reworded.
