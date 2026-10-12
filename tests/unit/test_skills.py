@@ -5,7 +5,7 @@
 - agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾（ADR-0018）：`SKILL.md` 提到的路徑
   都要是執行器真的放進工單的（`stage_inputs.PROVIDED`）或這一段的產出目錄。
 - skill 的腳本不准寫檔，結果只印到 stdout（PR #55 審查）。
-- 預設配方 `restructure`：整理用本機（NFR-COST-07）；二創 MVP 暫用本機，改回 `strong` 見 #63。
+- 預設配方 `restructure`：整理用本機（NFR-COST-07）；補料與二創用 `strong`（#70、#63），只有補料段有搜尋額度。
 """
 
 import json
@@ -161,13 +161,16 @@ def test_skill_的腳本不寫檔_結果只印到_stdout(script: Path) -> None:
     assert writes(script.read_text(encoding="utf-8")) == []
 
 
-@pytest.mark.promise("NFR-COST-07", "FR-RC-01")
-def test_預設配方_restructure_整理與二創都在本機_退件從二創重跑() -> None:
+@pytest.mark.promise("NFR-COST-07", "FR-RC-01", "FR-RS-01")
+def test_預設配方_restructure_整理在本機_補料與二創用_strong_只有補料能搜尋() -> None:
     recipe = load_recipes(HARNESS, ("local", "strong", "max"))["restructure"]
-    assert [(s.id, s.skill, s.tier, s.escalate_to) for s in recipe.stages] == [
-        ("digest", "digest", "local", None),
-        # MVP 暫用 local；改回 strong 見 #63
-        ("compose", "compose", "local", None),
+    assert [
+        (s.id, s.skill, s.tier, s.escalate_to, s.tavily_credits) for s in recipe.stages
+    ] == [
+        ("digest", "digest", "local", None, 0),
+        ("research", "research", "strong", None, 10),
+        # #63：MVP 暫用 local 的二創改回 strong
+        ("compose", "compose", "strong", None, 0),
     ]
     assert recipe.on_feedback == "compose"
     assert (recipe.max_attempts, recipe.auto_fix) == (2, 1)

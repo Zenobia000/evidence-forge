@@ -30,8 +30,14 @@ C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages
 | `input/author/voice.md` | 作家聲音 |
 | `input/author/genre-style.md` | 作家在目標文類的風格；沒有就是未校準 |
 | `input/conversions/<來源>--<目標>.md` | 轉換說明 |
+| `input/sources/S<n>.md` | 補料段找到的來源正文（`S2` 起；`S1` 是原文 `input/content.md`）。補料段結束後由執行器照 `sources.json` 從這一段真的抓過的網頁放（`src/evidence_forge/runner/sources.py`），agent 不能寫 |
 
 `SKILL.md` 只能提到上表的路徑與這一段的產出目錄（`stages/…`）。要多給 agent 一份東西，先改 `stage_inputs.py`，再寫進 `SKILL.md`。
+
+工具也是執行器給的：`read_file`、`list_files`、`write_file`、`fetch_url`、`run_script` 每一段都有；
+**`web_search` 只有配方裡那一段 `tavily_credits` 大於 0 才有**（執行器設 `EF_WEB_SEARCH=1`，ef-tools 才註冊）。
+所以這個欄位同時決定「能花多少搜尋額度」與「有沒有搜尋工具」；`SKILL.md` 要用 `web_search`，配方那一段就要給額度。
+其他段的工具清單維持原樣，請求逐位元組不變，錄音才對得上。
 
 ## 3. 腳本不寫檔，結果只印到 stdout
 
