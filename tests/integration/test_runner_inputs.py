@@ -4,6 +4,7 @@
 放不進去（目標文類不存在）時不開 Pi，工單以失敗進待審並寫明原因。
 """
 
+import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -82,3 +83,42 @@ def test_目標文類不存在_不開_Pi_以失敗進待審並寫明原因(
     assert job.result is not None and job.result.outcome == "failed"
     assert "poem" in job.result.reason
     assert world.backend_calls == []
+
+
+# 假 Pi 把「有沒有拿到 web_search」寫進產出（ef-tools 看 EF_WEB_SEARCH 決定註冊不註冊）
+REPORTS_SEARCH = (
+    FAKE_PI_LIB
+    + """
+write("summary.json", {"summary": os.environ.get("EF_WEB_SEARCH", "off")})
+event(type="agent_end")
+"""
+)
+
+
+@pytest.mark.promise("FR-RS-01", "NFR-SEC-02")
+def test_配方給了_credits_的段才拿到_web_search(
+    world_for: Callable[..., World],
+) -> None:
+    echo = world_for(REPORTS_SEARCH).runner.recipes["echo"]
+    searching = echo.model_copy(
+        update={
+            "name": "searching",
+            "stages": (echo.stages[0].model_copy(update={"tavily_credits": 3}),),
+        }
+    )
+    world = world_for(REPORTS_SEARCH, recipes={"echo": echo, "searching": searching})
+    plain = world.job(recipe="echo", text="不搜尋的素材")
+    search = world.job(recipe="searching", text="要搜尋的素材")
+
+    # 一次跑一張
+    world.runner.run_once()
+    world.runner.run_once()
+
+    def summary(job_id: str) -> str:
+        path = world.data.job_dir(job_id) / "stages" / "echo" / "1" / "summary.json"
+        return str(json.loads(path.read_text(encoding="utf-8"))["summary"])
+
+    assert (summary(plain), summary(search)) == ("off", "1")
+    # 開單沒指定 credits：用配方給的
+    assert world.read(search).budget.tavily_credits == 3
+    assert world.read(plain).budget.tavily_credits == 0

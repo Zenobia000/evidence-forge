@@ -691,6 +691,7 @@ class Runner:
                 upstream_outputs(job_dir, recipe, stage),
             ),
             base_env=self._base_env(),
+            web_search=stage.tavily_credits > 0,
         )
         # 重開 `ef serve` 重跑同一次時鑰匙跟當機前一模一樣：前一個 `ef serve` 被硬殺時
         # 留下、還活著的 Pi 要在登記之前殺掉，不然它的請求與寫檔會被接受（SEAM-12）

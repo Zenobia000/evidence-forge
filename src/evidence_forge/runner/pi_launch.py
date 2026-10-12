@@ -14,6 +14,8 @@ Pi 本身不做沙箱，工具以 Pi 程序的權限執行（v0.3 §3.3），所
   Pi 每次跑都會在這裡寫 `auth.json`、`models-store.json`，所以不能指到 repo。
 - stdin 接 `/dev/null`：Pi 會把 stdin 接在提示詞前面，stdin 開著就一直等。
 - `--thinking`：明確指定，不靠模型設定的預設值。
+- `EF_WEB_SEARCH=1`：只有配方給了 `tavily_credits` 的段才設，ef-tools 看到才註冊 `web_search`（#69）。
+  工具清單是每個模型請求的一部分：沒有搜尋額度的段不多一個用不到的工具，請求也跟以前逐位元組相同。
 
 skill 的內容用 `--append-system-prompt <SKILL.md>` 直接放進系統提示：實測 Pi 1.1.0 在換掉
 系統提示、又沒有內建讀檔工具時，`--skill` 不會讓請求裡出現任何 skill 內容。
@@ -99,8 +101,12 @@ def build_pi_command(
     gateway_url: str,
     prompt: str,
     base_env: Mapping[str, str],
+    web_search: bool = False,
 ) -> PiCommand:
-    """組出一段一次的 Pi 指令列與環境變數。純函式，不碰檔案。"""
+    """組出一段一次的 Pi 指令列與環境變數。純函式，不碰檔案。
+
+    `web_search`：這一段能不能搜尋（配方這段的 `tavily_credits` 大於 0）。
+    """
     argv = (
         str(harness.pi_bin),
         "--print",
@@ -141,6 +147,8 @@ def build_pi_command(
             "EF_JOB_KEY": str(key),
         }
     )
+    if web_search:
+        env["EF_WEB_SEARCH"] = "1"
     return PiCommand(argv=argv, env=env, cwd=PI_CWD, stdin=Path(os.devnull))
 
 
