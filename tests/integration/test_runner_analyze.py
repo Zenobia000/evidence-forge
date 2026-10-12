@@ -407,3 +407,15 @@ def test_有爭議只附一邊的來源_查證段不合格(
 
     # schema 擋下（validate_outputs 的訊息只有 jsonschema 的說明，沒有位置）
     assert "['S2'] is too short" in _failed_reason(world, job_id)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_有爭議的兩邊是同一個來源_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    same_twice = [{**DISPUTED_FIRST[0], "sources": ["S2", "S2"]}, DISPUTED_FIRST[1]]
+    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=same_twice))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "non-unique" in _failed_reason(world, job_id)

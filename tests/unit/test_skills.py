@@ -340,6 +340,14 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
             {"fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2"]}]},
             "/fact_checks/0/sources",
         ),
+        (
+            {
+                "fact_checks": [
+                    {"claim": "K1", "verdict": "disputed", "sources": ["S2", "S2"]}
+                ]
+            },
+            "/fact_checks/0/sources",
+        ),
         ({"topics": [{"title": "沒有相關文章", "sources": []}]}, "/topics/0/sources"),
         ({"topics": []}, "/topics"),
     ],
@@ -348,6 +356,7 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
         "判定不在四種裡",
         "拿原文佐證原文",
         "有爭議只附一邊",
+        "有爭議的兩邊是同一個來源",
         "題材沒附文章",
         "沒有題材",
     ],

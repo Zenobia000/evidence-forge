@@ -139,9 +139,23 @@ def check_source_refs(output: object, *, file: str) -> list[CheckEntry]:
 # 報告內文的引用：[S2]、[S2, S3]、[S2、S3]
 _CITATION = re.compile(r"\[(S\d+(?:\s*[,、，]\s*S\d+)*)\]")
 _CITED_ID = re.compile(r"S\d+")
-# 來源清單裡的網址：碰到空白、括號、全形標點就結束；結尾的半形標點不算網址的一部分
-_URL = re.compile(r"https?://[^\s<>()\[\]「」『』，、。；：）（]+")
+# 來源清單裡的網址：碰到空白、角括號、方括號、全形標點就結束。半形括號留在裡面
+# （`…/Example_(film)` 是網址的一部分），結尾多出來、沒配對的 `)` 再由 `_trim_url` 拿掉
+_URL = re.compile(r"https?://[^\s<>\[\]「」『』，、。；：）（]+")
 _URL_TRAILING = ".,;:!?'\""
+
+
+def _trim_url(raw: str) -> str:
+    """拿掉網址結尾不屬於它的字：句尾標點，與沒配對的 `)`（Markdown 連結 `[t](url)` 的收尾、
+    句子裡 `(url)` 的右括號）。網址自己帶的成對括號留著。"""
+    url = raw
+    while True:
+        trimmed = url.rstrip(_URL_TRAILING)
+        if trimmed.endswith(")") and trimmed.count(")") > trimmed.count("("):
+            trimmed = trimmed[:-1]
+        if trimmed == url:
+            return url
+        url = trimmed
 SEED_ID = "S1"
 SUPPORTED = "supported"
 
@@ -206,7 +220,7 @@ def check_source_list_urls(
     failures: list[CheckEntry] = []
     for number, line in _section_lines(report, REPORT_SECTIONS[-1]):
         for match in _URL.finditer(line):
-            url = match.group(0).rstrip(_URL_TRAILING)
+            url = _trim_url(match.group(0))
             if normalize_url(url) in allowed:
                 continue
             failures.append(

@@ -285,3 +285,37 @@ def test_有爭議排在有佐證後面_擋() -> None:
 )
 def test_網址正規化_執行器與報告檢查用同一套(url: str, expected: str) -> None:
     assert normalize_url(url) == expected
+
+
+# --- PR #88 第二輪審查：網址帶括號 ---------------------------------------------------
+
+PAREN = "https://example.com/wiki/Example_(film)"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"- S2 電影條目，{PAREN}",
+        f"- S2 [電影條目]({PAREN})",
+        f"- S2 電影條目（{PAREN}）",
+        f"- S2 電影條目 ({PAREN}).",
+    ],
+    ids=["網址帶括號", "Markdown連結裡的網址帶括號", "全形括號包住", "半形括號包住加句點"],
+)
+def test_來源清單的網址帶括號_抓過完整網址就過(line: str) -> None:
+    report = REPORT.replace("- S2 一份報告\n", line + "\n")
+    allowed = {normalize_url(PAREN)}
+    assert _failed(check_source_list_urls(report, allowed, file="report.md")) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [f"- S2 電影條目，{PAREN}", f"- S2 [電影條目]({PAREN})"],
+    ids=["網址帶括號", "Markdown連結裡的網址帶括號"],
+)
+def test_來源清單的網址帶括號_只抓過前綴不能放行(line: str) -> None:
+    report = REPORT.replace("- S2 一份報告\n", line + "\n")
+    allowed = {normalize_url("https://example.com/wiki/Example_")}
+    assert _failed(check_source_list_urls(report, allowed, file="report.md")) == [
+        f"來源清單列了 {PAREN}：這一段沒有用 fetch_url 抓到它，也不是原文"
+    ]

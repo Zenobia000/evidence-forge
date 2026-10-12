@@ -38,7 +38,12 @@
         "properties": {
           "claim": { "type": "string", "pattern": "^K[1-6]$" },
           "verdict": { "enum": ["supported", "disputed", "not_found", "outdated"] },
-          "sources": { "type": "array", "items": { "$ref": "#/$defs/source_id" } }
+          "sources": {
+            "description": "同一個來源不能列兩次：有爭議要兩個不同的來源",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/source_id" }
+          }
         },
         "required": ["claim", "verdict", "sources"],
         "additionalProperties": false,
