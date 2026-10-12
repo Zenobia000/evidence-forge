@@ -842,7 +842,7 @@ class Runner:
                     job_dir,
                     stage,
                     attempt,
-                    seed_url=sources.seed_url(self.data, doc.job.feed.item),
+                    seed=sources.seed_item(self.data, doc.job.feed.item),
                 )
             error = pi_error(result.events)
             if problems and error is not None:

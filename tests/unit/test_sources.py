@@ -5,6 +5,7 @@ agent 在補料段用 `fetch_url` 抓過的網頁，閘道都記在這張單的�
 `sources.json` 列的網址這一次沒抓到過，就算這一次不合格，agent 捏不出一份「來源」。
 """
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from evidence_forge.gateway import ledger
 from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.gateway.fetch import request_bytes
 from evidence_forge.ledger_models import LedgerEntry
-from evidence_forge.models import FetchRecord, RecipeStage
+from evidence_forge.models import FetchRecord, Item, RecipeStage
 from evidence_forge.paths import DataDir
 from evidence_forge.runner import sources
 
@@ -34,15 +35,31 @@ def data(tmp_path: Path) -> DataDir:
     data = DataDir(tmp_path / "data")
     data.ensure()
     (data.job_dir(JOB) / "input").mkdir(parents=True)
-    (data.job_dir(JOB) / "input" / "content.md").write_text("種子", encoding="utf-8")
+    (data.job_dir(JOB) / "input" / "content.md").write_text(SEED_TEXT, encoding="utf-8")
     return data
+
+
+SEED_TEXT = "# 夜間圖書館\n\n種子文章的正文，講圖書館晚上開到幾點。\n"
+SEED_URL = "https://seed.example/p"
+
+
+def _seed(url: str | None = SEED_URL) -> Item:
+    """種子的素材項目（`item.json`）：網址與內容 hash 跟工單的 content.md 同一份。"""
+    return Item(
+        id="seed",
+        feed="manual",
+        url=url,
+        title="夜間圖書館",
+        fetched_at=NOW,
+        content_hash=hashlib.sha256(SEED_TEXT.encode("utf-8")).hexdigest(),
+    )
 
 
 def _fetched(
     data: DataDir,
     url: str,
     *,
-    text: str = "正文",
+    text: str | None = None,
     title: str | None = "標題",
     author: str | None = None,
     final_url: str | None = None,
@@ -59,7 +76,8 @@ def _fetched(
         fetched_at=NOW,
         title=title,
         author=author,
-        text=text if status == "ok" else "",
+        # 每一頁的正文預設各不相同：同一份正文會被當成同一個來源
+        text=(text if text is not None else f"{url} 的正文") if status == "ok" else "",
     )
     blobs = BlobStore(data.blobs)
     ledger.append(
@@ -91,10 +109,8 @@ def _entry(number: int, url: str) -> dict[str, str]:
     return {"id": f"S{number}", "url": url, "title": f"第 {number} 篇", "why": "補數字"}
 
 
-def _place(data: DataDir, attempt: int = 1, seed_url: str | None = None) -> list[str]:
-    return sources.place_sources(
-        data, data.job_dir(JOB), STAGE, attempt, seed_url=seed_url
-    )
+def _place(data: DataDir, attempt: int = 1, seed: Item | None = None) -> list[str]:
+    return sources.place_sources(data, data.job_dir(JOB), STAGE, attempt, seed=seed)
 
 
 def test_抓過的網頁照_sources_json_放進_input_sources_附網址與抓取時間(
@@ -193,9 +209,7 @@ def test_編號要從_S2_依序_網址不能重複_不能是種子本身(data: D
 
     _sources_json(data, _entry(2, "https://seed.example/p"), attempt=3)
     _fetched(data, "https://seed.example/p", attempt=3)
-    assert any(
-        "種子" in p for p in _place(data, attempt=3, seed_url="https://seed.example/p")
-    )
+    assert any("種子" in p for p in _place(data, attempt=3, seed=_seed()))
     assert not (data.job_dir(JOB) / "input" / "sources").exists()
 
 
@@ -215,9 +229,47 @@ def test_重開時同樣的來源再放一次沿用_內容不同就不合格(dat
     assert placed.read_text(encoding="utf-8").endswith("第一版\n")
 
 
-def test_種子的網址從素材項目讀_貼上的文字沒有網址(tmp_path: Path) -> None:
-    from evidence_forge.models import Item
+def test_同一份抓取_要求的網址與轉址後的網址不能列成兩個來源(data: DataDir) -> None:
+    _fetched(data, "https://b.example/short", final_url="https://b.example/long")
+    _sources_json(
+        data, _entry(2, "https://b.example/short"), _entry(3, "https://b.example/long")
+    )
 
+    problems = _place(data)
+
+    assert len(problems) == 1 and "S3" in problems[0] and "S2" in problems[0]
+    assert not (data.job_dir(JOB) / "input" / "sources").exists()
+
+
+def test_短網址轉到種子_算種子本身(data: DataDir) -> None:
+    # 正文跟種子不同（網頁改版過），只靠轉址後的網址認出來
+    _fetched(data, "https://sho.rt/abc", final_url=SEED_URL)
+    _sources_json(data, _entry(2, "https://sho.rt/abc"))
+
+    problems = _place(data, seed=_seed())
+
+    assert len(problems) == 1 and "種子" in problems[0]
+
+
+def test_清單上的網址抓回來正文跟種子相同_算種子本身(data: DataDir) -> None:
+    # 網址跟種子不一樣（帶追蹤參數、鏡像站），但抓回來的正文就是種子那一篇
+    _fetched(data, "https://mirror.example/library?ref=feed", text=SEED_TEXT)
+    _sources_json(data, _entry(2, "https://mirror.example/library?ref=feed"))
+
+    problems = _place(data, seed=_seed())
+
+    assert len(problems) == 1 and "種子" in problems[0]
+    assert not (data.job_dir(JOB) / "input" / "sources").exists()
+
+
+def test_種子是貼上的文字_沒有網址_照樣用正文認出來(data: DataDir) -> None:
+    _fetched(data, "https://a.example/same", text=SEED_TEXT)
+    _sources_json(data, _entry(2, "https://a.example/same"))
+
+    assert any("種子" in p for p in _place(data, seed=_seed(url=None)))
+
+
+def test_種子的素材項目從_item_json_讀_讀不到是_None(tmp_path: Path) -> None:
     data = DataDir(tmp_path / "data")
     item_dir = data.root / "inbox" / "manual" / "abc"
     item_dir.mkdir(parents=True)
@@ -231,5 +283,5 @@ def test_種子的網址從素材項目讀_貼上的文字沒有網址(tmp_path:
     )
     (item_dir / "item.json").write_text(item.model_dump_json(), encoding="utf-8")
 
-    assert sources.seed_url(data, "inbox/manual/abc") == "https://seed.example/p"
-    assert sources.seed_url(data, "inbox/manual/missing") is None
+    assert sources.seed_item(data, "inbox/manual/abc") == item
+    assert sources.seed_item(data, "inbox/manual/missing") is None
