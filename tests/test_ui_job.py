@@ -587,3 +587,23 @@ def test_viewing_a_job_changes_nothing_in_the_data_dir(folder: Folder) -> None:
 
     after = {p: p.read_bytes() for p in folder.data.root.rglob("*") if p.is_file()}
     assert after == before
+
+
+@pytest.mark.parametrize("tab", ["draft", "digest", "sources", "checks", "events", "bill"])
+def test_重構工單沒有整理結果與稿子_舊詳情頁每個分頁照樣打得開(
+    folder: Folder, tab: str
+) -> None:
+    # #79：重構工單沒有 claims.json 也沒有 drafts/，檢查結果只有 C5 與只顯示的 C3（warn）。
+    # 舊 UI 不重新設計（#86 會換掉），但不能壞
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE)
+    folder.checks(
+        "j",
+        [
+            {"check": "C5", "status": "pass", "reason": "結尾的參考來源列了原文出處"},
+            {"check": "C3", "status": "warn", "reason": "原文：8-gram 重疊率 12.0%"},
+        ],
+    )
+
+    response = client_for(folder).get(f"/jobs/j?tab={tab}")
+
+    assert response.status_code == 200

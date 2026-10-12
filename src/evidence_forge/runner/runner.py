@@ -3,9 +3,9 @@
 每一段（S0.6）：
 - 開 Pi 之前記下版本（`provenance.py`）；Pi 跑的時候把「在等什麼」寫進 `job.md`。
 - Pi 結束後依序看：預算擋下 → `incomplete`；後端故障 → `failed`，不重試不升級；
-  產出不合 schema、整理段的 C1／C5 沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
+  產出不合 schema、分析段的程式檢查沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
   就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
-  二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
+  重構段的程式檢查沒過 → 帶著結果回重構段修，到 `auto_fix` 次還沒過 → `incomplete`。
 - 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
   後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
   Tavily 故障之後沒再搜成功過，就以 `incomplete` 進待審，都沒有才是 `complete`。
@@ -226,7 +226,7 @@ BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily
 
 
 def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
-    """補料沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
+    """搜尋沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
 
     - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
     - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
@@ -624,7 +624,7 @@ class Runner:
             doc, result = self._run_stage(job_dir, doc, recipe, stage, progress)
             if result is not None:
                 if result.outcome == "incomplete":
-                    # 後面的段自己沒做完：補料沒做完整的事也一起寫，創作者才看得到全貌
+                    # 後面的段自己沒做完：搜尋沒做完整的事也一起寫，創作者才看得到全貌
                     notes = search_shortfalls(self.data, job_dir)
                     if notes:
                         result = JobResult(
@@ -701,7 +701,7 @@ class Runner:
                 return doc, tried.stop
             problems = tried.problems
             if not problems and tried.fix is not None:
-                # 二創的 C2～C5 沒過：帶著結果回這一段修，最多 auto_fix 次
+                # 重構文章的程式檢查沒過：帶著結果回這一段修，最多 auto_fix 次
                 failed = "、".join(tried.fix.failed_checks)
                 if progress.fixes >= recipe.auto_fix:
                     return doc, JobResult(

@@ -5,10 +5,10 @@ agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（
 （`$EF_DATA/authors/<作家>/`）都不在工單裡，所以由這裡複製進去：
 
 - `input/genres.md`：12 種文類的定義接成一份，整理段用來判斷文類、照抽取欄位整理；
-- `input/target-genre.md`：目標文類的定義（骨架），二創段用；
+- `input/target-genre.md`：目標文類的定義（骨架），重構段用；
 - `input/author/voice.md`：作家聲音；
 - `input/author/genre-style.md`：作家在目標文類的風格；作家沒寫這一類就沒有這個檔（未校準）；
-- `input/conversions/<來源>--<目標>.md`：轉換說明，全部放進去，二創段照整理出的主文類挑。
+- `input/conversions/<來源>--<目標>.md`：轉換說明，全部放進去，重構段照 brief 的主文類挑。
 
 - `input/headline-punchline.md`：標題與金句規則（`$EF_DATA/style/headline-punchline-system.md`，
   創作者自己的寫作系統，跨角色共用、不進 repo），重構段用；
