@@ -57,7 +57,7 @@ class GatewayConfig:
 def config_from_env(
     data: DataDir, env: Mapping[str, str] | None = None
 ) -> GatewayConfig:
-    """`ef serve` 用：從環境變數讀模式、錄音位置與 Ollama 位址。"""
+    """`ef serve` 用：從環境變數讀模式、錄音位置、Ollama 與 Tavily 的位址。"""
     environ = os.environ if env is None else env
     mode = environ.get("EF_GATEWAY_MODE", "live").strip() or "live"
     if mode not in ("live", "replay"):
@@ -76,6 +76,9 @@ def config_from_env(
         mode="replay" if mode == "replay" else "live",
         replay_dir=Path(replay) if replay else None,
         ollama_url=environ.get("EF_OLLAMA_URL", "").strip() or "http://127.0.0.1:11434",
+        # 錄重播 fixture 時換成本機的假 Tavily（tests/fixtures/web/），平常不設
+        tavily_url=environ.get("EF_TAVILY_URL", "").strip().rstrip("/")
+        or "https://api.tavily.com",
         secrets_dir=resolve_secrets_dir(environ),
         monthly_cap_usd=_monthly_cap(cap) if cap else 10.0,
         fault=cast(Fault, fault) if fault else None,

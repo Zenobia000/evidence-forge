@@ -558,3 +558,12 @@ def test_金鑰不出現在帳本_blobs_快取_回應與日誌裡(
     for path in data.root.rglob("*"):
         if path.is_file():
             assert FAKE_KEY.encode() not in path.read_bytes(), path
+
+
+def test_Tavily_的位址可以用環境變數換成本機的假後端(data: DataDir) -> None:
+    # 錄重播 fixture 時用（`tests/fixtures/web/`）：搜尋回的是為測試寫的文章，不是真的網路
+    from evidence_forge.gateway.config import config_from_env
+
+    custom = config_from_env(data, {"EF_TAVILY_URL": " http://127.0.0.1:8765/ "})
+    assert custom.tavily_url == "http://127.0.0.1:8765"
+    assert config_from_env(data, {}).tavily_url == "https://api.tavily.com"

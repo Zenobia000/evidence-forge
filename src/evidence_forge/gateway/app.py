@@ -8,6 +8,7 @@
 兩種請求都在 `x-api-key` 帶工單鑰匙；閘道只接受登記中的那一把（`ActiveStages`）。
 `fetch_url`、`web_search` 與 `run_script` 每呼叫一次，在這張工單的帳本記一筆
 （`kind: fetch`／`search`／`script`）。搜尋的規則在 `search.py`。
+重播模式下 `fetch_url` 與 `web_search` 只回放錄音（`fetch.RecordedFetches`、`search.py`），不連網。
 """
 
 import json
@@ -25,11 +26,12 @@ from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
 from evidence_forge.gateway.credentials import MissingCredential, read_anthropic_key
-from evidence_forge.gateway.fetch import Fetcher
+from evidence_forge.gateway.fetch import Fetcher, RecordedFetches, request_bytes
 from evidence_forge.gateway.messages import add_message_routes
 from evidence_forge.gateway.search import Searcher, parse_query
 from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import LedgerEntry, LedgerKind, LedgerStatus
+from evidence_forge.models import FetchRecord
 
 __all__ = ["ActiveStages", "GatewayConfig", "JobBoard", "create_app"]
 
@@ -66,6 +68,12 @@ def create_app(
     fetcher = fetcher or Fetcher.from_env(config.data, clock=config.clock)
     searcher = searcher or Searcher(config)
     blobs = fetcher.blobs
+    # 重播模式的抓取只看錄音；正式執行是 None
+    recorded: RecordedFetches | None = None
+    if config.mode == "replay":
+        if config.replay_dir is None:
+            raise ValueError("重播模式要指定錄音的位置（replay_dir）")
+        recorded = RecordedFetches(config.replay_dir)
 
     def record(
         key: JobKey,
@@ -124,6 +132,8 @@ def create_app(
         raise scope.ToolRejected(404, f"沒有這個工具：{name}")
 
     async def _fetch_url(key: JobKey, url: str) -> dict[str, Any]:
+        if recorded is not None:
+            return _replay_fetch(key, recorded, url)
         outcome = await run_in_threadpool(fetcher.fetch, url)
         request_hash, response_hash = outcome.store_blobs(blobs)
         record(
@@ -135,7 +145,42 @@ def create_app(
             request_hash=request_hash,
             response_hash=response_hash,
         )
-        found = outcome.record
+        return _fetched(outcome.record, cache_hit=outcome.cache_hit)
+
+    def _replay_fetch(
+        key: JobKey, recorded: RecordedFetches, url: str
+    ) -> dict[str, Any]:
+        """重播模式：只回放錄音裡的抓取，沒錄過就報錯，從不連網（NFR-COST-06）。"""
+        started = time.monotonic()
+        ts = config.clock()
+        request_hash = blobs.put(request_bytes(url))
+        replayed = recorded.get(request_hash)
+        response_hash = (
+            blobs.put(replayed.record.model_dump_json().encode("utf-8"))
+            if replayed is not None
+            else None
+        )
+        ledger.append(
+            config.data.job_dir(key.job_id),
+            LedgerEntry(
+                ts=ts,
+                job_id=key.job_id,
+                stage=key.stage,
+                attempt=key.attempt,
+                kind="fetch",
+                latency_ms=int((time.monotonic() - started) * 1000),
+                status=replayed.status if replayed is not None else "error",
+                request_hash=request_hash,
+                response_hash=response_hash,
+            ),
+        )
+        if replayed is None:
+            raise scope.ToolRejected(
+                500, f"重播模式：沒有錄過這個網址的抓取（{url.strip()}）"
+            )
+        return _fetched(replayed.record, cache_hit=replayed.status == "cache_hit")
+
+    def _fetched(found: FetchRecord, *, cache_hit: bool) -> dict[str, Any]:
         return {
             "status": found.status,
             "reason": found.reason,
@@ -145,7 +190,7 @@ def create_app(
             "author": found.author,
             "text": found.text,
             "fetched_at": found.fetched_at.isoformat(),
-            "cache_hit": outcome.cache_hit,
+            "cache_hit": cache_hit,
         }
 
     async def _run_script(key: JobKey, body: dict[str, Any]) -> dict[str, Any]:
