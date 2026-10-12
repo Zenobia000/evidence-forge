@@ -53,6 +53,17 @@ class GatewayConfig:
     backoff_max_s: float = 60.0
     clock: Callable[[], datetime] = _utc_now
 
+    def backoff_delay(self, retry_after: str | None, attempt: int) -> float:
+        """第 `attempt` 次（從 0 算）收到 429 之後等幾秒：照後端的 `retry-after`（秒）；
+        沒給或讀不懂就從 `backoff_base_s` 開始每次加倍。單次最多 `backoff_max_s`。"""
+        try:
+            delay = float(retry_after) if retry_after is not None else -1.0
+        except ValueError:
+            delay = -1.0
+        if delay < 0:
+            delay = self.backoff_base_s * (2**attempt)
+        return min(delay, self.backoff_max_s)
+
 
 def config_from_env(
     data: DataDir, env: Mapping[str, str] | None = None

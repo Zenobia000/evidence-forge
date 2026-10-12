@@ -1,16 +1,15 @@
-"""SEAM-02、SEAM-04：閘道的 `web_search`（Tavily）↔ 預算 ↔ 帳本 ↔ 快取與重播（#69）。
+"""SEAM-02、SEAM-04：閘道的 `web_search`（Tavily）↔ 預算 ↔ 帳本 ↔ 快取與重播 ↔ 告示板（#69）。
 
-一個本機 stub 扮演 Tavily 的 `POST /search`。金鑰是假的（`tvly-fake-xxxx-…`），放在測試自己的
-`EF_SECRETS` 資料夾；任何請求都只到 127.0.0.1（`tests/conftest.py` 擋掉往外的連線）。
+假 Tavily 在 `tests/tavily_stub.py`；金鑰是假的，任何請求都只到 127.0.0.1。
 """
 
 import asyncio
-import json
 import logging
 import shutil
+import socket
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,10 +17,11 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from tavily_stub import FAKE_KEY, Tavily, ok, status
 
-from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
+from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
+from evidence_forge.gateway.blobs import BlobStore
+from evidence_forge.gateway.board import Outage
 from evidence_forge.gateway.search import Searcher
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
@@ -32,81 +32,6 @@ from evidence_forge.runner.recipes import load_recipes
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 NOW = datetime(2026, 10, 12, 12, 0, 0, tzinfo=TAIPEI)
-# 假金鑰：帶 xxxx，guard-secrets 認得是假的；整串出現在任何輸出裡就是外洩
-FAKE_KEY = "tvly-fake-xxxx-tavily-canary-41c9"
-
-RESULTS: list[dict[str, Any]] = [
-    {
-        "url": "https://example.org/a",
-        "title": "第一篇",
-        "content": "第一篇的摘要",
-        "score": 0.91,
-        "published_date": "2026-10-01",
-        "raw_content": None,
-    },
-    {
-        "url": "https://example.org/b",
-        "title": "第二篇",
-        "content": "第二篇的摘要",
-        "score": 0.5,
-    },
-]
-
-
-def _tavily_body(
-    results: list[dict[str, Any]] | None = None, credits: int | None = 1
-) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "query": "ignored",
-        # Tavily 自己用模型寫的答案：不是來源，閘道不能交給 agent
-        "answer": "Tavily 的模型答案",
-        "images": [],
-        "results": RESULTS if results is None else results,
-        "response_time": 0.42,
-        "request_id": "req-1",
-    }
-    if credits is not None:
-        body["usage"] = {"credits": credits}
-    return body
-
-
-Reply = Callable[[], Response]
-
-
-def ok(credits: int | None = 1) -> Reply:
-    return lambda: JSONResponse(_tavily_body(credits=credits))
-
-
-def status(code: int, **headers: str) -> Reply:
-    return lambda: JSONResponse(
-        {"detail": {"error": f"stub {code}"}}, status_code=code, headers=headers
-    )
-
-
-@dataclass
-class Tavily:
-    """假的 Tavily：`replies` 依序用完之後回 `ok()`；`delay_s` 讓回應卡一下（逾時用）。"""
-
-    url: str = ""
-    received: list[dict[str, Any]] = field(default_factory=list)
-    headers: list[dict[str, str]] = field(default_factory=list)
-    replies: list[Reply] = field(default_factory=list)
-    delay_s: float = 0.0
-
-    def app(self) -> FastAPI:
-        app = FastAPI()
-
-        @app.post("/search")
-        async def search(request: Request) -> Response:
-            self.received.append(json.loads(await request.body()))
-            self.headers.append(dict(request.headers))
-            if self.delay_s:
-                await asyncio.sleep(self.delay_s)
-            if self.replies:
-                return self.replies.pop(0)()
-            return ok()()
-
-        return app
 
 
 Serve = Callable[[Any], AbstractContextManager[str]]
@@ -138,6 +63,8 @@ def secrets(tmp_path: Path) -> Path:
 @dataclass
 class Gateway:
     url: str
+    # 閘道跟執行器共用的告示板：等限流、Tavily 故障記在這裡
+    board: JobBoard
 
     def search(self, key: JobKey, **body: object) -> httpx.Response:
         return httpx.post(
@@ -161,6 +88,7 @@ def gateway(serve: Serve, data: DataDir, tavily: Tavily, secrets: Path) -> Start
         *,
         clock: Callable[[], datetime] = lambda: NOW,
         timeout_s: float = 5.0,
+        sleep: Callable[[float], Any] = asyncio.sleep,
         **changes: Any,
     ) -> Iterator[Gateway]:
         settings: dict[str, Any] = {
@@ -174,9 +102,10 @@ def gateway(serve: Serve, data: DataDir, tavily: Tavily, secrets: Path) -> Start
             **changes,
         }
         config = GatewayConfig(**settings)
-        searcher = Searcher(config, timeout_s=timeout_s)
-        with serve(create_app(config, stages, searcher=searcher)) as url:
-            yield Gateway(url)
+        board = JobBoard(config.clock)
+        searcher = Searcher(config, board=board, timeout_s=timeout_s, sleep=sleep)
+        with serve(create_app(config, stages, board, searcher=searcher)) as url:
+            yield Gateway(url, board)
 
     return start
 
@@ -314,7 +243,13 @@ def test_credits_不夠就拒絕_不送出_帳本記_budget_exceeded(
         ("ok", 1),
         ("budget_exceeded", 0),
     ]
-    assert entries[1].response_hash is None
+    # 回給 agent 的錯誤存進 blobs/：重播時照原樣回放（見〈重播〉）
+    refused = entries[1].response_hash
+    assert refused is not None
+    stored = BlobStore(data.blobs).get(refused)
+    assert stored is not None and message.encode() in stored
+    # credits 用完不是後端故障：不告訴執行器停掉，這一段照樣收尾
+    assert gw.board.outage(key) is None
 
 
 @pytest.mark.promise("NFR-COST-01")
@@ -395,16 +330,21 @@ def test_快取過了有效期限就重新搜尋(
 
 
 @pytest.mark.promise("NFR-PAR-03")
-def test_429_退避重試後成功(gateway: Start, data: DataDir, tavily: Tavily) -> None:
+def test_429_退避重試後成功_等待時間記在_queue_ms(
+    gateway: Start, data: DataDir, tavily: Tavily
+) -> None:
     job_id = _job(data)
     key = JobKey(job_id, "research", 1)
-    tavily.replies = [status(429, **{"retry-after": "0"}), status(429)]
-    with gateway(_active(key)) as gw:
+    # 第一次照 retry-after 等 0.1 秒；第二次沒有 retry-after，從 base 加倍：0.05 × 2 = 0.1 秒
+    tavily.replies = [status(429, **{"retry-after": "0.1"}), status(429)]
+    with gateway(_active(key), backoff_base_s=0.05, backoff_max_s=0.1) as gw:
         response = gw.search(key, query="限流")
     assert response.status_code == 200
     assert len(tavily.received) == 3
     [entry] = _ledger(data, job_id)
     assert (entry.status, entry.credits) == ("ok", 1)
+    # 真的等了約 0.2 秒；排隊時間是總延遲的一部分
+    assert 150 <= entry.queue_ms <= entry.latency_ms, entry
 
 
 @pytest.mark.promise("NFR-PAR-03")
@@ -414,13 +354,42 @@ def test_429_重試有上限_用完記_rate_limited_不扣_credits(
     job_id = _job(data)
     key = JobKey(job_id, "research", 1)
     tavily.replies = [status(429)] * 10
-    with gateway(_active(key), rate_limit_retries=2) as gw:
+    with gateway(
+        _active(key), rate_limit_retries=2, backoff_base_s=0.05, backoff_max_s=0.05
+    ) as gw:
         response = gw.search(key, query="一直限流")
     assert response.status_code == 429
     assert "429" in response.json()["error"]
     assert len(tavily.received) == 3
     [entry] = _ledger(data, job_id)
     assert (entry.status, entry.credits) == ("rate_limited", 0)
+    # 退避兩次、各 0.05 秒
+    assert 80 <= entry.queue_ms <= entry.latency_ms, entry
+
+
+@pytest.mark.promise("NFR-OBS-02", "NFR-PAR-03")
+def test_退避時告示板寫著等限流_退避完就清掉(
+    gateway: Start, data: DataDir, tavily: Tavily
+) -> None:
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    tavily.replies = [status(429)]
+    seen: list[str | None] = []
+    boards: list[JobBoard] = []
+
+    async def watch_sleep(delay: float) -> None:
+        # 退避的那一刻，執行器從告示板看到的是什麼
+        waiting = boards[0].waiting(job_id)
+        seen.append(waiting.kind if waiting is not None else None)
+        await asyncio.sleep(delay)
+
+    with gateway(_active(key), sleep=watch_sleep) as gw:
+        boards.append(gw.board)
+        response = gw.search(key, query="限流")
+        after = gw.board.waiting(job_id)
+    assert response.status_code == 200
+    assert seen == ["rate_limit"]
+    assert after is None
 
 
 @pytest.mark.parametrize(
@@ -439,7 +408,9 @@ def test_Tavily_回錯_agent_看得懂_不扣_credits(
     assert words in response.json()["error"]
     assert len(tavily.received) == 1
     [entry] = _ledger(data, job_id)
-    assert (entry.status, entry.credits, entry.response_hash) == ("error", 0, None)
+    assert (entry.status, entry.credits) == ("error", 0)
+    # 帳本指向回給 agent 的錯誤（重播用），不是 Tavily 的原始回應
+    assert entry.response_hash is not None
 
 
 def test_Tavily_逾時記_timeout_照預留的_credits_入帳(
@@ -472,6 +443,133 @@ def test_沒有金鑰檔_回錯_不扣_credits(
     assert (entry.status, entry.credits) == ("error", 0)
 
 
+def test_Tavily_的錯誤說明裡夾著金鑰_遮掉再交給_agent(
+    gateway: Start, data: DataDir, tavily: Tavily
+) -> None:
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    tavily.replies = [status(400, detail=f"query too long for key {FAKE_KEY}")]
+    with gateway(_active(key)) as gw:
+        response = gw.search(key, query="很長的查詢")
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert FAKE_KEY not in error
+    assert "query too long for key [redacted]" in error
+
+
+# --- Tavily 故障告訴執行器 -----------------------------------------------------
+
+
+def _closed_port() -> str:
+    """一個沒有人在聽的本機位址：連上去一定被拒。"""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+@pytest.mark.promise("NFR-RUN-05")
+@pytest.mark.parametrize(
+    "case", ["401", "432", "500", "429 重試用完", "逾時", "連不上", "沒有金鑰檔"]
+)
+def test_Tavily_故障告訴執行器_原因跟_agent_看到的一樣(
+    gateway: Start, data: DataDir, tavily: Tavily, secrets: Path, case: str
+) -> None:
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    changes: dict[str, Any] = {"rate_limit_retries": 1}
+    if case.isdigit():
+        tavily.replies = [status(int(case))]
+    elif case == "429 重試用完":
+        tavily.replies = [status(429)] * 2
+    elif case == "逾時":
+        tavily.delay_s = 1.0
+        changes["timeout_s"] = 0.2
+    elif case == "連不上":
+        changes["tavily_url"] = _closed_port()
+    else:
+        (secrets / "tavily").unlink()
+    with gateway(_active(key), **changes) as gw:
+        response = gw.search(key, query="故障")
+    assert response.status_code in (429, 502, 504)
+    # 執行器據此把沒交出產出的這一段標失敗，不重試、不升級（NFR-RUN-05）
+    assert gw.board.outage(key) == Outage("tavily", response.json()["error"])
+
+
+@pytest.mark.parametrize("case", ["400 查詢不行", "credits 用完"])
+def test_查詢不行與_credits_用完不算故障(
+    gateway: Start, data: DataDir, tavily: Tavily, case: str
+) -> None:
+    job_id = _job(data, credits=0 if case == "credits 用完" else 10)
+    key = JobKey(job_id, "research", 1)
+    tavily.replies = [status(400)]
+    with gateway(_active(key)) as gw:
+        response = gw.search(key, query="不算故障")
+    assert response.status_code in (400, 402)
+    assert gw.board.outage(key) is None
+
+
+@pytest.mark.promise("NFR-RUN-05")
+def test_Tavily_後來好好回了_先前的故障不算數_快取命中不算(
+    gateway: Start, data: DataDir, tavily: Tavily
+) -> None:
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    with gateway(_active(key)) as gw:
+        gw.search(key, query="先暖快取")
+        tavily.replies = [status(503)]
+        assert gw.search(key, query="故障").status_code == 502
+        # 快取命中沒有碰 Tavily，說不出它好了沒有
+        assert gw.search(key, query="先暖快取").json()["cache_hit"] is True
+        assert gw.board.outage(key) is not None
+        assert gw.search(key, query="故障").status_code == 200
+        assert gw.board.outage(key) is None
+
+
+# --- 結算的小地方 ---------------------------------------------------------------
+
+
+def test_Tavily_算的_credits_比預留的多_記一筆警告(
+    gateway: Start,
+    data: DataDir,
+    tavily: Tavily,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    tavily.replies = [ok(credits=2)]
+    with caplog.at_level(logging.WARNING), gateway(_active(key)) as gw:
+        gw.search(key, query="比較貴")
+    [entry] = _ledger(data, job_id)
+    assert entry.credits == 2
+    assert "比預留的 1 多" in caplog.text
+
+
+def test_Tavily_原始回應存不進_blobs_照樣回結果(
+    gateway: Start,
+    data: DataDir,
+    tavily: Tavily,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = BlobStore.put
+
+    def put(self: BlobStore, content: bytes) -> str:
+        # 只有 Tavily 的原始回應存不進去（磁碟滿之類）
+        if "Tavily 的模型答案".encode() in content:
+            raise OSError("磁碟滿了")
+        return original(self, content)
+
+    monkeypatch.setattr(BlobStore, "put", put)
+    job_id = _job(data)
+    key = JobKey(job_id, "research", 1)
+    with gateway(_active(key)) as gw:
+        response = gw.search(key, query="存不進去")
+    assert response.status_code == 200
+    assert len(response.json()["results"]) == 2
+    [entry] = _ledger(data, job_id)
+    assert (entry.status, entry.credits) == ("ok", 1)
+
+
 # --- 重播 -------------------------------------------------------------------
 
 
@@ -487,14 +585,48 @@ def _record(tmp_path: Path, data: DataDir, job_id: str) -> Path:
     return recording
 
 
+@dataclass
+class Replay:
+    gateway: Gateway
+    data: DataDir
+    key: JobKey
+
+
+Replaying = Callable[[Path], AbstractContextManager[Replay]]
+
+
+@pytest.fixture
+def replaying(serve: Serve, tavily: Tavily, tmp_path: Path, secrets: Path) -> Replaying:
+    """`with replaying(錄音) as replay:`：重播模式的閘道，用另一個資料目錄（沒有快取可用，只能靠錄音），
+    工單一個 credit 都沒有，時鐘撥到 30 天後（錄音裡的結果早就過期）。"""
+
+    @contextmanager
+    def start(recording: Path) -> Iterator[Replay]:
+        replay_data = DataDir(tmp_path / "replay-data")
+        replay_data.ensure()
+        key = JobKey(_job(replay_data, credits=0, goal="重播"), "research", 1)
+        config = GatewayConfig(
+            data=replay_data,
+            mode="replay",
+            replay_dir=recording,
+            tavily_url=tavily.url,
+            secrets_dir=secrets,
+            clock=lambda: NOW + timedelta(days=30),
+        )
+        board = JobBoard(config.clock)
+        with serve(create_app(config, _active(key), board)) as url:
+            yield Replay(Gateway(url, board), replay_data, key)
+
+    return start
+
+
 @pytest.mark.promise("NFR-COST-06")
 def test_重播模式從錄音回放_不連_Tavily_沒錄過就報錯(
     gateway: Start,
     data: DataDir,
     tavily: Tavily,
     tmp_path: Path,
-    serve: Serve,
-    secrets: Path,
+    replaying: Replaying,
 ) -> None:
     recorded_job = _job(data, goal="錄音")
     recorded_key = JobKey(recorded_job, "research", 1)
@@ -502,34 +634,62 @@ def test_重播模式從錄音回放_不連_Tavily_沒錄過就報錯(
         live = gw.search(recorded_key, query="錄過的查詢")
     recording = _record(tmp_path, data, recorded_job)
 
-    # 重播用另一個資料目錄：沒有快取可用，只能靠錄音
-    replay_data = DataDir(tmp_path / "replay-data")
-    replay_data.ensure()
-    job_id = _job(replay_data, credits=0, goal="重播")
-    key = JobKey(job_id, "research", 1)
-    config = GatewayConfig(
-        data=replay_data,
-        mode="replay",
-        replay_dir=recording,
-        tavily_url=tavily.url,
-        secrets_dir=secrets,
-        clock=lambda: NOW + timedelta(days=30),
-    )
-    with serve(create_app(config, _active(key))) as url:
-        gw = Gateway(url)
-        replayed = gw.search(key, query="  錄過的查詢")
-        missing = gw.search(key, query="沒錄過的查詢")
+    with replaying(recording) as replay:
+        replayed = replay.gateway.search(replay.key, query="  錄過的查詢")
+        missing = replay.gateway.search(replay.key, query="沒錄過的查詢")
 
     assert len(tavily.received) == 1
     assert replayed.status_code == 200
     assert replayed.json()["results"] == live.json()["results"]
     assert missing.status_code == 500
     assert "重播" in missing.json()["error"]
-    entries = _ledger(replay_data, job_id)
+    entries = _ledger(replay.data, replay.key.job_id)
     assert [(e.status, e.credits) for e in entries] == [
         ("cache_hit", 0),
         ("error", 0),
     ]
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_錄音裡失敗的搜尋_重播時回一模一樣的錯誤(
+    gateway: Start,
+    data: DataDir,
+    tavily: Tavily,
+    tmp_path: Path,
+    replaying: Replaying,
+) -> None:
+    # 錄音：同一個查詢先碰到 Tavily 500、再試一次成功；另一個查詢被 credits 擋下（402）、
+    # 查詢本身不行（400）。agent 收到錯誤之後照樣往下走，錯誤文字會進下一個模型請求
+    recorded_job = _job(data, credits=1, goal="錄音")
+    recorded_key = JobKey(recorded_job, "research", 1)
+    tavily.replies = [status(400), status(500)]
+    queries = ["查詢不行", "同一個", "同一個", "沒額度了"]
+    with gateway(_active(recorded_key)) as gw:
+        live = [gw.search(recorded_key, query=query) for query in queries]
+    assert [r.status_code for r in live] == [400, 502, 200, 402]
+    recording = _record(tmp_path, data, recorded_job)
+
+    with replaying(recording) as replay:
+        replayed = [replay.gateway.search(replay.key, query=query) for query in queries]
+        outage = replay.gateway.board.outage(replay.key)
+
+    assert len(tavily.received) == 3
+    for before, after in zip(live, replayed, strict=True):
+        assert after.status_code == before.status_code
+        if before.status_code != 200:
+            # agent 收到的位元組一樣：狀態碼與錯誤本文
+            assert after.content == before.content
+    assert replayed[2].json()["results"] == live[2].json()["results"]
+    # 帳本照錄音時的狀態記，執行器才做出跟錄音時一樣的判斷；重播不花 credits
+    entries = _ledger(replay.data, replay.key.job_id)
+    assert [(e.status, e.credits) for e in entries] == [
+        ("error", 0),
+        ("error", 0),
+        ("cache_hit", 0),
+        ("budget_exceeded", 0),
+    ]
+    # 錄音裡 Tavily 500 之後又成功了：重播時告示板也一樣，沒有留下故障
+    assert outage is None
 
 
 # --- 金鑰不外洩 ---------------------------------------------------------------

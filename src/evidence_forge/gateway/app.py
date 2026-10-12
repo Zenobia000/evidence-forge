@@ -60,11 +60,13 @@ def create_app(
     """`board` 要跟執行器共用（`ef serve`）；不傳就自己開一個，執行器讀不到。
 
     `fetcher` 不傳就照環境變數建一個（`EF_FETCH_TTL_SECONDS`）；測試傳假 DNS 的那一個。
-    `searcher` 不傳就照設定建一個（`EF_SEARCH_TTL_SECONDS`）；測試傳逾時短的那一個。
+    `searcher` 不傳就照設定建一個（`EF_SEARCH_TTL_SECONDS`），跟模型呼叫共用 `board`；
+    測試傳逾時短的那一個，要看告示板的話建它時傳同一個 `board`。
     """
     app = FastAPI(title="evidence-forge gateway")
+    board = board or JobBoard(config.clock)
     fetcher = fetcher or Fetcher.from_env(config.data, clock=config.clock)
-    searcher = searcher or Searcher(config)
+    searcher = searcher or Searcher(config, board=board)
     blobs = fetcher.blobs
 
     def record(
@@ -221,5 +223,5 @@ def create_app(
             )
         return JSONResponse({"status": "ok"})
 
-    add_message_routes(app, config, stages, board or JobBoard(config.clock))
+    add_message_routes(app, config, stages, board)
     return app
