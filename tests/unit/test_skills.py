@@ -336,10 +336,21 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
             },
             "/fact_checks/0/sources/0",
         ),
+        (
+            {"fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2"]}]},
+            "/fact_checks/0/sources",
+        ),
         ({"topics": [{"title": "沒有相關文章", "sources": []}]}, "/topics/0/sources"),
         ({"topics": []}, "/topics"),
     ],
-    ids=["有佐證卻沒來源", "判定不在四種裡", "拿原文佐證原文", "題材沒附文章", "沒有題材"],
+    ids=[
+        "有佐證卻沒來源",
+        "判定不在四種裡",
+        "拿原文佐證原文",
+        "有爭議只附一邊",
+        "題材沒附文章",
+        "沒有題材",
+    ],
 )
 def test_investigate_的_schema_擋下不合格的查證與題材(
     change: dict[str, Any], pointer: str

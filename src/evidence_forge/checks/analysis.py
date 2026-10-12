@@ -1,21 +1,26 @@
 """分析配方兩段的程式檢查（PRD v3.0 §7、ADR-0020 §3.4）：只看格式與出處，不判斷內容對不對。
 
 - brief 段：`brief.md` 是標準 Markdown、規定的六節都在（順序不拘）；`brief.json` 符合 `brief` 的 schema。
-- 查證與找題材段：`report.md` 是標準 Markdown、五節依序都在（PRD §5，標題固定是為了之後累積成知識庫）；
-  `sources.json` 符合 `investigate` 的 schema；查證與研究題材引用的來源編號都在來源清單上。
-  清單上的網址是不是這一段真的抓過的，要看閘道的帳本，由執行器的 `runner/sources.py` 查。
+- 查證與找題材段（US-22、`analyze.feature`）：
+  - `report.md` 是標準 Markdown、五節依序都在（PRD §5，標題固定是為了之後累積成知識庫）；
+  - 報告內文引用的 `[S<n>]` 都在來源清單上（或是原文 S1）；「來源清單」一節的網址都是這一段這一次
+    真的抓成功的網頁，或原文的網址——報告本身不能列憑記憶寫的來源；
+  - `sources.json` 符合 `investigate` 的 schema（有爭議要附至少兩個來源）；查證與研究題材引用的編號都在清單上；
+  - brief 的每條關鍵主張剛好一筆查證；有疑慮的（有爭議、過時、查不到）排在有佐證的前面。
+  `sources.json` 清單上的網址是不是這一段真的抓過的，由執行器的 `runner/sources.py` 查；
+  「這一段抓過哪些網頁」也由執行器從閘道的帳本算好傳進來（`allowed_urls`），這裡不讀帳本。
 
 全部是純函式：檔案由 `job.py` 讀好傳進來，不讀檔、不寫檔、不呼叫模型。
 條目都算 C5（格式）：ADR-0020 拿掉了 C1、C2、C4，留下的只有格式與出處。
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from evidence_forge.checks.format import check_markdown, check_schema
 from evidence_forge.checks.report import CheckEntry, Location, json_pointer
-from evidence_forge.checks.text import mask_code
+from evidence_forge.checks.text import line_column, mask_code, normalize_url
 
 # brief.md 規定的幾節（FR-AN-01）；`harness/skills/brief/SKILL.md` 照這幾個標題寫
 BRIEF_SECTIONS = (
@@ -29,13 +34,14 @@ BRIEF_SECTIONS = (
 # 分析報告的五節，依序（PRD §5）；`harness/skills/investigate/SKILL.md` 照這幾個標題寫
 REPORT_SECTIONS = ("作者在說什麼", "事實與觀點", "查證", "研究題材", "來源清單")
 
-_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.*?)[ \t#]*$")
+# 只認 `##` 這一層：報告的 `#` 是文章標題，標題剛好以「查證」之類的節名開頭時不能算成一節
+_HEADING = re.compile(r"^ {0,3}##[ \t]+(.*?)[ \t#]*$")
 # 標題前面的編號（「1.」「2)」「三、」）與粗體記號不算標題的一部分
 _NUMBERING = re.compile(r"^(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*")
 
 
 def headings(markdown: str) -> list[tuple[int, str]]:
-    """Markdown 的 ATX 標題：（行號, 去掉編號與粗體的標題文字）。程式碼區塊裡的不算。"""
+    """Markdown 的 `##` 標題：（行號, 去掉編號與粗體的標題文字）。程式碼區塊裡的不算。"""
     found: list[tuple[int, str]] = []
     for number, line in enumerate(mask_code(markdown).split("\n"), start=1):
         match = _HEADING.match(line)
@@ -130,6 +136,173 @@ def check_source_refs(output: object, *, file: str) -> list[CheckEntry]:
     return [CheckEntry(check="C5", status="pass", reason="引用的來源編號都在清單上")]
 
 
+# 報告內文的引用：[S2]、[S2, S3]、[S2、S3]
+_CITATION = re.compile(r"\[(S\d+(?:\s*[,、，]\s*S\d+)*)\]")
+_CITED_ID = re.compile(r"S\d+")
+# 來源清單裡的網址：碰到空白、括號、全形標點就結束；結尾的半形標點不算網址的一部分
+_URL = re.compile(r"https?://[^\s<>()\[\]「」『』，、。；：）（]+")
+_URL_TRAILING = ".,;:!?'\""
+SEED_ID = "S1"
+SUPPORTED = "supported"
+
+
+def _listed_ids(output: object) -> set[str]:
+    if not isinstance(output, Mapping):
+        return set()
+    return {
+        str(source.get("id"))
+        for source in output.get("sources") or []
+        if isinstance(source, Mapping)
+    }
+
+
+def check_report_citations(
+    report: str, listed: Collection[str], *, file: str
+) -> list[CheckEntry]:
+    """報告內文引用的每個來源編號都要在來源清單上，或是原文 S1。同一個編號只報一次。"""
+    allowed = {*listed, SEED_ID}
+    failures: list[CheckEntry] = []
+    reported: set[str] = set()
+    for match in _CITATION.finditer(mask_code(report)):
+        for cited in _CITED_ID.findall(match.group(1)):
+            if cited in allowed or cited in reported:
+                continue
+            reported.add(cited)
+            line, column = line_column(report, match.start())
+            failures.append(
+                CheckEntry(
+                    check="C5",
+                    status="fail",
+                    reason=f"報告引用的 {cited} 不在來源清單上",
+                    location=Location(file=file, line=line, column=column),
+                    excerpt=match.group(0),
+                )
+            )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="報告引用的編號都在來源清單上")]
+
+
+def _section_lines(markdown: str, title: str) -> list[tuple[int, str]]:
+    """以 `title` 開頭的那一節（到下一個 `##` 為止）的每一行：（行號, 原文）。沒有這一節是空的。"""
+    found_headings = headings(markdown)
+    start = next((n for n, text in found_headings if text.startswith(title)), None)
+    if start is None:
+        return []
+    end = next((n for n, _ in found_headings if n > start), None)
+    lines = markdown.split("\n")
+    stop = end - 1 if end is not None else len(lines)
+    return [(number, lines[number - 1]) for number in range(start + 1, stop + 1)]
+
+
+def check_source_list_urls(
+    report: str, allowed_urls: Collection[str], *, file: str
+) -> list[CheckEntry]:
+    """「來源清單」一節列的每個網址，都要是這一段這一次真的抓成功的網頁，或原文的網址。
+
+    `allowed_urls` 由執行器給，已經用 `normalize_url` 正規化（要求的與轉址後的網址都算）。
+    """
+    allowed = set(allowed_urls)
+    failures: list[CheckEntry] = []
+    for number, line in _section_lines(report, REPORT_SECTIONS[-1]):
+        for match in _URL.finditer(line):
+            url = match.group(0).rstrip(_URL_TRAILING)
+            if normalize_url(url) in allowed:
+                continue
+            failures.append(
+                CheckEntry(
+                    check="C5",
+                    status="fail",
+                    reason=f"來源清單列了 {url}：這一段沒有用 fetch_url 抓到它，也不是原文",
+                    location=Location(file=file, line=number, column=match.start() + 1),
+                    excerpt=url,
+                )
+            )
+    if failures:
+        return failures
+    return [
+        CheckEntry(
+            check="C5", status="pass", reason="來源清單的網址都是這一段抓過的網頁或原文"
+        )
+    ]
+
+
+def _fact_checks(output: object) -> list[tuple[int, Mapping[str, Any]]]:
+    entries = output.get("fact_checks") if isinstance(output, Mapping) else None
+    if not isinstance(entries, list):
+        return []
+    return [
+        (index, entry) for index, entry in enumerate(entries) if isinstance(entry, Mapping)
+    ]
+
+
+def check_claim_coverage(
+    output: object, key_claims: Sequence[str], *, file: str
+) -> list[CheckEntry]:
+    """brief 的每條關鍵主張剛好一筆查證：少的、重複的、brief 沒有的各一條 fail。"""
+    seen: dict[str, int] = {}
+    failures: list[CheckEntry] = []
+    for index, entry in _fact_checks(output):
+        claim = str(entry.get("claim"))
+        where = Location(file=file, pointer=json_pointer(["fact_checks", index, "claim"]))
+        if claim not in key_claims:
+            reason = f"查證了 {claim}，brief 沒有這條關鍵主張"
+        elif claim in seen:
+            reason = (
+                f"{claim} 查證了兩次（第 {seen[claim] + 1} 筆與第 {index + 1} 筆），"
+                "每條關鍵主張只能一筆"
+            )
+        else:
+            seen[claim] = index
+            continue
+        failures.append(
+            CheckEntry(
+                check="C5", status="fail", reason=reason, location=where, excerpt=claim
+            )
+        )
+    for claim in key_claims:
+        if claim not in seen:
+            failures.append(
+                CheckEntry(
+                    check="C5",
+                    status="fail",
+                    reason=f"brief 的關鍵主張 {claim} 沒有查證結果",
+                    location=Location(file=file, pointer="/fact_checks"),
+                    excerpt=claim,
+                )
+            )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="每條關鍵主張剛好一筆查證")]
+
+
+def check_verdict_order(output: object, *, file: str) -> list[CheckEntry]:
+    """有疑慮的查證（有爭議、過時、查不到）要排在有佐證的前面（`analyze.feature`）。"""
+    first_supported: str | None = None
+    failures: list[CheckEntry] = []
+    for index, entry in _fact_checks(output):
+        claim = str(entry.get("claim"))
+        if entry.get("verdict") == SUPPORTED:
+            first_supported = first_supported or claim
+            continue
+        if first_supported is None:
+            continue
+        failures.append(
+            CheckEntry(
+                check="C5",
+                status="fail",
+                reason=(
+                    f"{claim}（{entry.get('verdict')}）有疑慮，"
+                    f"要排在有佐證的 {first_supported} 前面"
+                ),
+                location=Location(file=file, pointer=json_pointer(["fact_checks", index])),
+                excerpt=claim,
+            )
+        )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="有疑慮的查證排在有佐證的前面")]
+
 def brief_checks(
     *,
     brief: str,
@@ -153,11 +326,26 @@ def report_checks(
     output: object,
     output_file: str,
     schema: Mapping[str, Any],
+    allowed_urls: Collection[str],
+    key_claims: Sequence[str] | None,
 ) -> list[CheckEntry]:
-    """查證與找題材段的產出：報告是 Markdown、五節依序都在；來源清單符合 schema、引用的編號都在清單上。"""
+    """查證與找題材段的產出，見模組說明。
+
+    `allowed_urls`：這一段這一次抓成功的網頁與原文的網址（正規化過）。
+    `key_claims`：brief 的關鍵主張編號；前面沒有 brief 段（例：之後只跑查證段的補查）時是 None，不查涵蓋。
+    """
+    coverage = (
+        check_claim_coverage(output, key_claims, file=output_file)
+        if key_claims is not None
+        else []
+    )
     return [
         *check_markdown(report, file=report_file),
         *check_sections(report, REPORT_SECTIONS, file=report_file, ordered=True),
+        *check_report_citations(report, _listed_ids(output), file=report_file),
+        *check_source_list_urls(report, allowed_urls, file=report_file),
         *check_schema(output, schema, file=output_file),
         *check_source_refs(output, file=output_file),
+        *coverage,
+        *check_verdict_order(output, file=output_file),
     ]

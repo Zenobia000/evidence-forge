@@ -95,7 +95,8 @@ else:
         "sources": [
             {"id": "S" + str(i + 2), "url": url, "title": "t", "why": "補數字"}
             for i, url in enumerate(LISTED_BY_ATTEMPT.get(ATTEMPT, LISTED))],
-        "fact_checks": [{"claim": "K1", "verdict": "supported", "sources": [CITED]}],
+        "fact_checks": FACT_CHECKS or [
+            {"claim": "K1", "verdict": "supported", "sources": [CITED]}],
         "topics": [{"title": "剩食的時段", "sources": ["S2"]}],
     })
     write("report.md", REPORT_BY_ATTEMPT.get(ATTEMPT, REPORT_MD))
@@ -111,10 +112,13 @@ def _script(
     listed_by_attempt: dict[str, list[str]] | None = None,
     cited: str = "S2",
     report_by_attempt: dict[str, str] | None = None,
+    brief_json: dict[str, Any] | None = None,
+    fact_checks: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         FAKE_PI_LIB
-        + f"BRIEF_MD = {BRIEF_MD!r}\nBRIEF_JSON = {BRIEF_JSON!r}\n"
+        + f"BRIEF_MD = {BRIEF_MD!r}\nBRIEF_JSON = {brief_json or BRIEF_JSON!r}\n"
+        + f"FACT_CHECKS = {fact_checks!r}\n"
         + f"BRIEF_MD_BY_TIER = {brief_by_tier or {}!r}\n"
         + f"FETCH = {fetch!r}\nLISTED = {listed!r}\nCITED = {cited!r}\n"
         + f"LISTED_BY_ATTEMPT = {listed_by_attempt or {}!r}\n"
@@ -289,3 +293,117 @@ def test_查證引用了清單上沒有的編號_查證段不合格(
         ).read_text(encoding="utf-8")
     )
     assert report["fact_checks"][0]["sources"] == ["S7"]
+
+
+# --- 報告本身的出處、關鍵主張的查證、有疑慮的排前面（PR #88 第一輪審查）---------------
+
+
+def _failed_reason(world: World, job_id: str) -> str:
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "failed", job.result
+    return job.result.reason
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_報告內文引用了清單上沒有的編號_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    report = REPORT_MD.replace("另一家店也降了很多 [S2]", "另一家店也降了很多 [S9]")
+    world = world_for(_script(report_by_attempt={"1": report, "2": report}))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "S9" in _failed_reason(world, job_id)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_來源清單一節列了這一段沒抓過的網址_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    # 別張單抓過、在共用快取裡的也不算：這一段這一次沒抓過，就是憑記憶寫的
+    report = REPORT_MD + "- 補充，https://elsewhere.example/other\n"
+    world = world_for(_script(report_by_attempt={"1": report, "2": report}))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "elsewhere.example" in _failed_reason(world, job_id)
+    assert not (world.data.job_dir(job_id) / "input" / "sources").exists()
+
+
+TWO_CLAIMS = {
+    **BRIEF_JSON,
+    "key_claims": [
+        {"id": "K1", "claim": "賣剩的麵包少了一半以上"},
+        {"id": "K2", "claim": "多數客人願意提前一天預約"},
+    ],
+}
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_brief_有兩條關鍵主張_查證只交一條_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_script(brief_json=TWO_CLAIMS))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "K2" in _failed_reason(world, job_id)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_同一條關鍵主張查證兩次_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    checks = [
+        {"claim": "K1", "verdict": "not_found", "sources": []},
+        {"claim": "K1", "verdict": "supported", "sources": ["S2"]},
+    ]
+    world = world_for(_script(fact_checks=checks))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "K1" in _failed_reason(world, job_id)
+
+
+DISPUTED_FIRST: list[dict[str, Any]] = [
+    {"claim": "K2", "verdict": "disputed", "sources": ["S2", "S3"]},
+    {"claim": "K1", "verdict": "supported", "sources": ["S2"]},
+]
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_有爭議與有佐證並存_有爭議的排前面而且附兩邊的來源_合格(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=DISPUTED_FIRST))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_有佐證的排在有爭議前面_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(
+        _script(brief_json=TWO_CLAIMS, fact_checks=list(reversed(DISPUTED_FIRST)))
+    )
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "K2" in _failed_reason(world, job_id)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_有爭議只附一邊的來源_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    one_side = [{**DISPUTED_FIRST[0], "sources": ["S2"]}, DISPUTED_FIRST[1]]
+    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=one_side))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    # schema 擋下（validate_outputs 的訊息只有 jsonschema 的說明，沒有位置）
+    assert "['S2'] is too short" in _failed_reason(world, job_id)

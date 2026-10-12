@@ -142,3 +142,22 @@ def tokenize(text: str) -> list[Token]:
         Token(unicodedata.normalize("NFKC", match.group(0)).casefold(), *match.span())
         for match in _TOKEN.finditer(text)
     ]
+
+
+# 協定://主機 路徑 ?查詢；`#` 之後先切掉。不用 urllib：`checks/` 不 import 任何碰得到網路的套件（test_purity.py）
+_URL_PARTS = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://([^/?]*)([^?]*)(?:\?(.*))?$", re.DOTALL)
+
+
+def normalize_url(url: str) -> str:
+    """比對網址用：去掉前後空白與 # 之後的部分，主機與協定不分大小寫，路徑結尾的 / 不算，空的 ? 不算。
+
+    執行器認「這一段抓過哪些網頁」（`runner/sources.py`）與報告的來源清單檢查（`analysis.py`）用同一套，
+    兩邊對同一個網址才會有同一個答案。不像網址的字串原樣（去掉空白與 #）回傳。
+    """
+    text = url.strip().split("#", 1)[0]
+    match = _URL_PARTS.match(text)
+    if match is None:
+        return text
+    scheme, host, path, query = match.groups()
+    tail = f"?{query}" if query else ""
+    return f"{scheme.lower()}://{host.lower()}{path.rstrip('/')}{tail}"

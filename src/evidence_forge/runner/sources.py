@@ -29,11 +29,10 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import ValidationError
 
-from evidence_forge.checks.text import normalize_for_match
+from evidence_forge.checks.text import normalize_for_match, normalize_url
 from evidence_forge.gateway import ledger
 from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.models import FetchRecord, Item, RecipeStage
@@ -43,6 +42,8 @@ from evidence_forge.runner.stage_inputs import CONTENT, SOURCES_DIR, put_once
 # 宣告這個產出的段交的是來源清單，執行器照它放正文
 SOURCES_FILE = "sources.json"
 SEED_ID = "S1"
+# 任務說明裡「原文出處」的標題最多幾個字
+ORIGIN_TITLE_MAX = 200
 SEED = Path(CONTENT)
 
 _PLACED = re.compile(r"^S([0-9]+)\.md$")
@@ -72,8 +73,17 @@ class Original:
 
     @property
     def credit(self) -> str:
-        """給 agent 抄的出處：標題、作者（有才寫）、網址（有才寫），用「，」隔開。"""
-        return "，".join(part for part in (self.title, self.author, self.url) if part)
+        """給 agent 抄的出處：標題、作者（有才寫）、網址（有才寫），用「，」隔開。
+
+        標題與作者可能是網頁的 og:title、meta：壓成一行、限制長度，不讓它拆亂或塞爆任務說明。
+        """
+        parts = []
+        for part in (self.title, self.author):
+            text = " ".join((part or "").split())
+            if len(text) > ORIGIN_TITLE_MAX:
+                text = text[:ORIGIN_TITLE_MAX] + "…"
+            parts.append(text)
+        return "，".join(part for part in (*parts, self.url) if part)
 
 
 def collects_sources(stage: RecipeStage) -> bool:
@@ -157,15 +167,6 @@ def _text_key(text: str) -> str:
     return hashlib.sha256(normalize_for_match(text).encode("utf-8")).hexdigest()
 
 
-def _normalized(url: str) -> str:
-    """比對用：去掉前後空白與 # 之後的部分，主機與協定不分大小寫，路徑結尾的 / 不算。"""
-    parts = urlsplit(url.strip())
-    path = parts.path.rstrip("/")
-    return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), path, parts.query, "")
-    )
-
-
 def fetched_pages(
     data: DataDir, job_dir: Path, stage_id: str, attempt: int
 ) -> dict[str, FetchRecord]:
@@ -191,7 +192,7 @@ def fetched_pages(
             continue
         for url in (record.url, record.final_url):
             if url:
-                pages.setdefault(_normalized(url), record)
+                pages.setdefault(normalize_url(url), record)
     return pages
 
 
@@ -200,7 +201,7 @@ def _is_seed(
 ) -> bool:
     """清單上這一筆是不是種子本身：寫的網址、實際抓的網址或轉址後的網址是種子的，或正文跟種子相同。"""
     urls = [url] + ([record.url, record.final_url or ""] if record is not None else [])
-    if any(u and _normalized(u) in seed_urls for u in urls):
+    if any(u and normalize_url(u) in seed_urls for u in urls):
         return True
     return record is not None and _text_key(record.text) == seed_text
 
@@ -259,7 +260,7 @@ def plan_sources(
     if isinstance(listed, str):
         return Placement(problems=(listed,))
     pages = fetched_pages(data, job_dir, stage.id, attempt)
-    seed_urls = {_normalized(seed.url)} if seed is not None and seed.url else set()
+    seed_urls = {normalize_url(seed.url)} if seed is not None and seed.url else set()
     seed_text = _text_key((job_dir / SEED).read_text(encoding="utf-8"))
     problems: list[str] = []
     planned: list[tuple[str, str]] = []
@@ -273,7 +274,7 @@ def plan_sources(
                 f"來源編號要從 S2 依序編，第 {number - 1} 筆應該是 {expected}，寫的是 {source_id}"
             )
             continue
-        record = pages.get(_normalized(url))
+        record = pages.get(normalize_url(url))
         if _is_seed(url, record, seed_urls, seed_text):
             problems.append(f"{source_id} 是種子本身（{url}），不算補充來源")
             continue

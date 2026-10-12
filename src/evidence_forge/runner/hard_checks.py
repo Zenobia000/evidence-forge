@@ -22,7 +22,7 @@
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +36,7 @@ from evidence_forge.checks import (
     run_report_checks,
     write_checks_report,
 )
+from evidence_forge.checks.text import normalize_url
 from evidence_forge.models import RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
@@ -44,6 +45,8 @@ from evidence_forge.runner import sources
 REPORT_OUTPUT = "report.md"
 BRIEF_OUTPUT = "brief.md"
 ARTICLE_OUTPUT = "article.md"
+# 分析報告的檢查從前面各段的產出找這一份，拿 brief 的關鍵主張
+BRIEF_JSON = "brief.json"
 _CHECKED_OUTPUTS = (REPORT_OUTPUT, BRIEF_OUTPUT, ARTICLE_OUTPUT)
 
 # 任務說明裡最多列幾條沒過的條目；全部都在 checks.vN.json
@@ -83,10 +86,13 @@ def run_hard_checks(
     schema: Path,
     clock: Callable[[], datetime],
     original: sources.Original | None = None,
+    upstream: Sequence[str] = (),
 ) -> ChecksReport | None:
     """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。
 
-    `original` 是原文的出處與正文（`sources.original`），重構段用它檢查結尾的出處、算重疊率。
+    `original` 是原文的出處與正文（`sources.original`）：分析報告的來源清單可以列它的網址，
+    重構段用它檢查結尾的出處、算重疊率。`upstream` 是前面各段合格那一次的產出
+    （`runner.upstream_outputs`）：分析報告從裡面的 `brief.json` 拿關鍵主張，檢查每條剛好一筆查證。
     """
     checked = checked_output(stage)
     if checked is None:
@@ -112,9 +118,24 @@ def run_hard_checks(
                 texts=texts,
                 thresholds=load_check_settings(data).c3,
             )
+        elif checked == REPORT_OUTPUT:
+            # 報告的來源清單只能列這一段這一次真的抓成功的網頁，或原文的網址
+            allowed = set(sources.fetched_pages(data, job_dir, stage.id, attempt))
+            if original is not None and original.url:
+                allowed.add(normalize_url(original.url))
+            brief = next(
+                (Path(p) for p in upstream if Path(p).name == BRIEF_JSON), None
+            )
+            entries = run_report_checks(
+                job_dir,
+                document,
+                output=output,
+                schema=schema,
+                allowed_urls=allowed,
+                brief=brief,
+            )
         else:
-            run = run_brief_checks if checked == BRIEF_OUTPUT else run_report_checks
-            entries = run(job_dir, document, output=output, schema=schema)
+            entries = run_brief_checks(job_dir, document, output=output, schema=schema)
     except (ValueError, OSError) as exc:
         # SchemaError、跑出工單資料夾的路徑、壞掉的 checks.yaml 都在這裡
         raise ChecksUnavailable(str(exc)) from exc

@@ -14,7 +14,7 @@
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -119,11 +119,34 @@ def run_brief_checks(
     )
 
 
+def _key_claims(job_dir: Path, brief: Path) -> list[str]:
+    """前一段合格的 `brief.json` 的關鍵主張編號。它已經過 schema，讀不出來是執行器的問題，丟例外。"""
+    try:
+        payload = _read_json(_inside(job_dir, brief))
+    except _Unreadable as exc:
+        raise ValueError(f"前一段的 {brief.as_posix()} {exc}") from exc
+    claims = payload.get("key_claims") if isinstance(payload, dict) else None
+    if not isinstance(claims, list):
+        raise ValueError(f"前一段的 {brief.as_posix()} 沒有關鍵主張（key_claims）")
+    return [str(claim.get("id")) for claim in claims if isinstance(claim, dict)]
+
+
 def run_report_checks(
-    job_dir: Path, report: Path, *, output: Path, schema: Path
+    job_dir: Path,
+    report: Path,
+    *,
+    output: Path,
+    schema: Path,
+    allowed_urls: Collection[str],
+    brief: Path | None,
 ) -> list[CheckEntry]:
-    """查證與找題材段某次嘗試的產出：`report.md` 五節依序、`sources.json` 符合 schema 且引用對得上。"""
+    """查證與找題材段某次嘗試的產出（`analysis.report_checks`）。
+
+    `allowed_urls` 是這一段這一次抓成功的網頁與原文的網址（執行器從帳本算）；
+    `brief` 是前一段合格的 `brief.json`（相對於 `job_dir`），沒有就不查關鍵主張的涵蓋。
+    """
     schema_doc = _load_schema(schema)
+    key_claims = _key_claims(job_dir, brief) if brief is not None else None
     read = _read_document(job_dir, report, output)
     if isinstance(read, list):
         return read
@@ -134,6 +157,8 @@ def run_report_checks(
         output=payload,
         output_file=output.as_posix(),
         schema=schema_doc,
+        allowed_urls=allowed_urls,
+        key_claims=key_claims,
     )
 
 

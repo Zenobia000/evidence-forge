@@ -898,6 +898,7 @@ class Runner:
                 self.harness.schema_file(stage.skill),
                 self.clock,
                 original,
+                upstream_outputs(job_dir, recipe, stage),
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因進待審

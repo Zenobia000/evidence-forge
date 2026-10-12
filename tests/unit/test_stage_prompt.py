@@ -100,3 +100,14 @@ def test_再改的任務說明帶著創作者的一句意見() -> None:
         feedback="開頭太長，直接講結論",
     )
     assert "創作者對上一版的意見：開頭太長，直接講結論\n" in prompt
+
+
+def test_原文出處的標題壓成一行_太長就截短() -> None:
+    # 標題可能是網頁的 og:title：換行會把任務說明拆亂，超長的會塞爆提示
+    title = "第一行\n  第二行\t" + "長" * 300
+    linked = Original(title=title, text="正文", url="https://s.example/a")
+    prompt = stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇", original=linked)
+    [line] = [x for x in prompt.splitlines() if x.startswith("原文出處：")]
+    assert line.startswith("原文出處：第一行 第二行 長長")
+    assert line.endswith("…，https://s.example/a")
+    assert len(line) < 200 + len("原文出處：…，https://s.example/a") + 1
