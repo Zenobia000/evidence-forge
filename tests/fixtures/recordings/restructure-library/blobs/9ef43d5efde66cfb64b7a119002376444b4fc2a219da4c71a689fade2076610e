@@ -1,0 +1,117 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfxUXHqLc5Q8wCJvE2wxM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2913,"cache_read_input_tokens":5246,"cache_creation":{"ephemeral_5m_input_tokens":2913,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS6wQKEAgSGAI4AUIIdGhpbmtpbmcSDME5oOleQAE2y7YBABoMgtmI/8IWSFO/BXQuIjDSPdPRNxeTSnJF2OSH8ntvreh24GlA7sWbRda14ZFHPJqAPVhj5aYCmqINghARmeMqiATfAv/E6C40d0o92tsSygy7nfftxQBJVmoQErgfOeOCDYCo9Bqmnc1tem3DeqUcrUnPqXc1JQK8HQ7+vRAtKjvrexFCJPOdAh7g+znAR4/culIW3A06Z7hCci0By05uvNaziA15KS9wrFnsrJEN6FAMoMwkCnmx4BLZ1t1LyUf9nJmvdpBc2U9c1dOfrIX/I9y8F716KUiAigO+1NvMsQ6F15+CbXvaP+bsONmAOTNn/c5J7S6YnG/Cn5srr/YAYodNkqQoYcsbofEAHTYW5Js3VQwgmW4LGkVeXx0NRtn0/TFbW/Nz7fqFMlXsMIRGy821AqP6obVKsS0wBZs0Bat2ix/AntIf/uY+WcaDaSj1KHpZTUw3Ix0HLpTFKAj3EmGU33nKZncQV31nvBFEOCcYEQ8RWIlVpBEvbluDTQea1JEB5Uiv51xMMxkZcHgrIpLjOso+42JzIyY6c1SsQJqpQYBtVUNaCq+KoRtJGJ2oqmtVM4MoNOgoSgvY/mDs9MkqXU0aAHZ+D2QWfN6cKd0rrChcxZ2sgMg2YlQpNKO63few3qPq4ui6MtzRc+oOPqTACLcCSAyK79oIuD4F2cufDQyp0eHj6Gm1CZk/XtP2k5Pj3dMlLQrwVf8Ws/u38hTyMG5Ngox/fQJreP5uJS+aJeZeJaMdO3xEHoIT2g9Smqdo2MKzUec4GAE="}   }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01YCvpNSWhXL9GHPdqJJ2BDy","name":"fetch_url","input":{},"caller":{"type":"direct"}}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\": \"https"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"://city"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-reading.example/2026"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/evening-hours-surv"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ey"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}           }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1             }
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01Ljvjx9oU46csxCSJeii12v","name":"fetch_url","input":{},"caller":{"type":"direct"}} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"url\": \"https://"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"budget-watch.example/"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"2026/acquisitions"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"-cut"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"}"}          }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2         }
+
+event: content_block_start
+data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_01G1QXndhSXWTa9xh66h9b3e","name":"fetch_url","input":{},"caller":{"type":"direct"}}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":""} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"url\": \"https://library-ops.example"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"/staffing/night-sh"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"ift-costs"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"\"}"} }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":3            }
+
+event: content_block_start
+data: {"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_017oAWkgze8QkWc8r7Xj24cE","name":"fetch_url","input":{},"caller":{"type":"direct"}}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"url\": \"https://quiet-sp"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"aces.example/essays/"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"third-place"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"\"}"}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":4 }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2913,"cache_read_input_tokens":5246,"output_tokens":283,"output_tokens_details":{"thinking_tokens":20}}            }
+
+event: message_stop
+data: {"type":"message_stop"   }
+
