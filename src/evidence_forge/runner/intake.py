@@ -229,6 +229,11 @@ def _new_job_dir(data: DataDir, base: str) -> tuple[str, Path]:
         return job_id, data.jobs / job_id
 
 
+def recipe_credits(recipe: Recipe) -> int:
+    """配方各段 `tavily_credits` 的總和：開單沒指定 credits 時，這張單的 Tavily 上限。"""
+    return sum(stage.tavily_credits for stage in recipe.stages)
+
+
 def open_job(
     data: DataDir,
     recipe: Recipe,
@@ -238,9 +243,13 @@ def open_job(
     now: datetime,
     fetcher: Fetcher | None = None,
     budget_usd: float = 0.5,
+    budget_credits: int | None = None,
     genre: str | None = None,
 ) -> Intake:
     """投入一篇東西並開單（或回傳已有的那張）。
+
+    `budget_credits` 是這張單的 Tavily credits 上限；沒給就用配方各段 `tavily_credits` 的總和
+    （`recipe_credits`），配方沒有一段要搜尋就是 0。
 
     錯誤：網址讀不到丟 `SourceUnreadable`；內容是空的、檔案格式不支援、PDF 抽不到字、
     沒有目標可用丟 `ValueError`（含 `ExtractError`）。兩種都不開單。
@@ -266,8 +275,14 @@ def open_job(
         existing = _open_job_for(data, item_path, chosen_goal)
         if existing is not None:
             return Intake(job=existing, created=False)
+        budget = Budget(
+            usd=budget_usd,
+            tavily_credits=(
+                recipe_credits(recipe) if budget_credits is None else budget_credits
+            ),
+        )
         job = _create_job(
-            data, recipe, item, item_path, material, chosen_goal, now, budget_usd, genre
+            data, recipe, item, item_path, material, chosen_goal, now, budget, genre
         )
     return Intake(job=job, created=True)
 
@@ -297,7 +312,7 @@ def _create_job(
     material: _Material,
     goal: str,
     now: datetime,
-    budget_usd: float,
+    budget: Budget,
     genre: str | None,
 ) -> Job:
     assert item.content_hash is not None  # 讀得到的素材項目一定有
@@ -310,7 +325,7 @@ def _create_job(
         feed=FeedRef(connector=MANUAL_FEED, name=MANUAL_FEED, item=item_path),
         goal=goal,
         target_genre=genre,
-        budget=Budget(usd=budget_usd),
+        budget=budget,
         status="queued",
     )
     # 先寫開單事件、最後寫 job.md：執行器看到 job.md 時，「開單」一定已經在事件紀錄裡
