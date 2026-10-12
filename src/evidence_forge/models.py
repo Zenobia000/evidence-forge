@@ -181,6 +181,15 @@ class RecipeStage(_Contract):
     # 同一級試到 max_attempts 還不合格時，改用哪一級再試；沒寫就不升級
     escalate_to: Tier | None = None
 
+    @property
+    def online(self) -> bool:
+        """這一段能不能上網（`fetch_url`、`web_search`）：配方給了搜尋額度才能。
+
+        要上網的段一定也要搜尋（查證段先搜再抓），所以用同一個欄位宣告，不另加一欄；
+        執行器照它決定 Pi 有沒有 `web_search`，閘道照它決定准不准 `fetch_url`、`web_search`。
+        """
+        return self.tavily_credits > 0
+
     @model_validator(mode="after")
     def _escalate_upwards(self) -> Self:
         if self.escalate_to is not None and _tier_rank(self.escalate_to) <= _tier_rank(

@@ -1,6 +1,7 @@
 """重構配方接進執行器（#79、SEAM-05、SEAM-06）：假 Pi、真的閘道、執行器、`rewrite` 配方與 skill 的 schema。
 
-- 從分析工單開重構：執行器把報告、brief、來源正文放進新工單的 `input/`，原文全文不放；
+- 從分析工單開重構：執行器把報告、brief、來源正文放進新工單的 `input/`，原文全文不放，
+  閘道也不讓這一段用 `fetch_url` 把原文抓回來；
   任務說明給原文出處，不提 `input/content.md`。
 - 文章結尾的參考來源沒列原文出處：帶著檢查結果回這一段修，修不好以未完成結束。
 - 跟原文、跟來源的逐字重疊只顯示：照抄一大段照樣完成，檢查結果裡是 warn。
@@ -48,6 +49,9 @@ assert status == 200, status
 # 重構工單裡沒有原文全文
 status, _ = call("/tools/read_file", {"path": "input/content.md"})
 assert status == 404, status
+# 也不能上網把原文抓回來：重構段沒有搜尋額度，閘道拒絕 fetch_url
+status, _ = call("/tools/fetch_url", {"url": SEED_URL})
+assert status == 403, status
 if STAGE == "rewrite":
     write("article.md", ARTICLE_BY_ATTEMPT.get(ATTEMPT, ARTICLE))
     write("article.json", {"title": "半夜的圖書館，替誰開燈", "title_candidates": ["半夜的圖書館，替誰開燈"]})
@@ -64,6 +68,7 @@ def _script(
 ) -> str:
     return (
         FAKE_PI_LIB
+        + f"SEED_URL = {SEED_URL!r}\n"
         + f"ARTICLE = {article!r}\nARTICLE_BY_ATTEMPT = {by_attempt or {}!r}\n"
         + f"SELF_CHECKS = {self_checks!r}\n"
         + PI_BODY

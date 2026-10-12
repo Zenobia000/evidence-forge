@@ -123,9 +123,10 @@ def _job(data: DataDir, credits: int | None = 10, goal: str = "測試") -> str:
 
 
 def _active(*keys: JobKey) -> ActiveStages:
+    # 這些段都是配方給了搜尋額度的段（能上網）
     stages = ActiveStages()
     for key in keys:
-        stages.activate(key)
+        stages.activate(key, online=True)
     return stages
 
 

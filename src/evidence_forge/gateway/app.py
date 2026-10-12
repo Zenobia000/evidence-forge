@@ -33,6 +33,9 @@ from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import LedgerEntry, LedgerKind, LedgerStatus
 from evidence_forge.models import FetchRecord
 
+# 要上網的工具：只有登記成能上網的段（配方給了搜尋額度）才准用
+ONLINE_TOOLS = frozenset({"fetch_url", "web_search"})
+
 __all__ = ["ActiveStages", "GatewayConfig", "JobBoard", "create_app"]
 
 
@@ -116,6 +119,14 @@ def create_app(
         if not isinstance(body, dict):
             raise scope.ToolRejected(400, "請求內容要是 JSON 物件")
         job_dir = config.data.job_dir(key.job_id)
+        if name in ONLINE_TOOLS and not stages.online(key):
+            # 配方沒給這一段搜尋額度：不准上網（例：重構段不准把原文抓回來，#92 審查）。
+            # Pi 那邊的工具清單不動（動了錄好的請求就對不上），由閘道擋
+            raise scope.ToolRejected(
+                403,
+                f"這一段不能上網：配方沒有給 {key.stage} 段搜尋額度（tavily_credits），"
+                "fetch_url 與 web_search 都不能用，只用工單資料夾裡的檔",
+            )
         if name == "read_file":
             return {"content": scope.read_file(job_dir, _string(body, "path"))}
         if name == "list_files":

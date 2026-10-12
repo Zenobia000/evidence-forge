@@ -809,7 +809,7 @@ class Runner:
                 feedback=doc.job.feedback,
             ),
             base_env=self._base_env(),
-            web_search=stage.tavily_credits > 0,
+            web_search=stage.online,
         )
         # 重開 `ef serve` 重跑同一次時鑰匙跟當機前一模一樣：前一個 `ef serve` 被硬殺時
         # 留下、還活著的 Pi 要在登記之前殺掉，不然它的請求與寫檔會被接受（SEAM-12）
@@ -827,6 +827,8 @@ class Runner:
             key,
             skill_dir=skill_dir,
             escalated_from=stage.tier if tier != stage.tier else None,
+            # 配方沒給搜尋額度的段不准上網：閘道拒絕 fetch_url、web_search（#92 審查）
+            online=stage.online,
         )
         try:
             result = self._run_pi(
