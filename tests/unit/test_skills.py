@@ -69,7 +69,7 @@ _RESEARCH_SOURCE = {
 }
 
 
-def _research_output(**changes: object) -> dict[str, Any]:
+def _research_output(**changes: str | None) -> dict[str, Any]:
     """`sources.json` 的樣本：只有一個來源；`changes` 改那一個來源的欄位，值是 None 就拿掉。"""
     source = dict(_RESEARCH_SOURCE)
     for name, value in changes.items():
