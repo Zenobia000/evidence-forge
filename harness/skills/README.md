@@ -12,6 +12,11 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 
 - `digest`：每條主張的 `quote` 是 `required`、`minLength: 1`，主張陣列 `minItems: 1`（每條主張附逐字引句）。
 - `compose`：每句事實句放在叫 `fact` 的欄位，`facts` 陣列 `minItems: 1`。
+- `research`：每個來源的 `id`（`S2` 起）、`url`（http 或 https）、`title`、`why` 是 `required`，不准多寫欄位；
+  `sources` 是 `minItems: 1`。SKILL.md 要求 3～5 篇，但額度用完時只找到 1 篇也算這一段完成，單子算不算未完成由執行器看帳本判斷。
+
+schema 寫不出來的硬性要求，寫成檢查：例如「補料段放了外部來源時，稿子正文至少引用兩個不同的來源」是 C2 的一部分
+（`checks/stages.py` 的 `compose_checks`），不是請模型遵守的一句提示。
 
 C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages.py`）。改了欄位名，C5 照樣過，C1、C2 卻會每次都過、沒人發現；所以有一條契約測試讀這兩份 schema，改名時先壞的是那條測試。
 
