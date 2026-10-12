@@ -31,17 +31,17 @@ Feature: 執行器：照配方跑、跑得動、可恢復
 
   @sad-path
   Scenario: 基礎設施故障不升級
-    Given 配方的整理段可以升級到 strong
+    Given 配方的 brief 段可以升級到 strong
     And Ollama 在這段途中停止回應
     When 執行器處理這次失敗
     Then 不改用 strong
-    And 工單進待審，結果是「失敗：Ollama 沒回應」
+    And 工單結束，結果是「失敗：Ollama 沒回應」
 
   @happy-path
   Scenario: 中途當機，重跑不重付
-    Given 二創段已經完成 3 次模型呼叫，第 4 次進行中時程序被殺掉
+    Given 重構段已經完成 3 次模型呼叫，第 4 次進行中時程序被殺掉
     When 程序重啟
-    Then 這張工單從二創段重跑
+    Then 這張工單從重構段重跑
     And 前 3 次呼叫直接回放存好的回應，帳本記 cache_hit，不收費
     And 從第 4 次開始才真的呼叫模型
 
@@ -63,9 +63,9 @@ Feature: 執行器：照配方跑、跑得動、可恢復
   @smoke
   Scenario: CI 用重播跑完整流程
     Given 閘道在重播模式，固定的小案例有錄好的回應
-    When CI 從投入跑到待審
+    When CI 跑完一次分析與一次重構
     Then 全程沒有任何付費呼叫
-    And 工單進待審，結果是「完成」
+    And 工單結束，結果是「完成」
 
   Scenario: 重播模式沒錄過的請求直接報錯
     Given 閘道在重播模式

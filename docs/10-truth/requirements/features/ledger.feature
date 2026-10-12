@@ -18,18 +18,18 @@ Feature: 帳本、預算與帳單
   @sad-path
   Scenario: 預算先預留，不夠就拒絕
     Given 這張工單的美元預算剩 US$0.02
-    When 二創段送出一個估計最高花費 US$0.05 的請求
+    When 重構段送出一個估計最高花費 US$0.05 的請求
     Then 閘道拒絕，回傳 budget_exceeded
-    And 工單進待審，結果是「未完成：預算用完」
+    And 工單結束，結果是「未完成：預算用完」
     And 沒有任何超出預算的實際花費
 
   @sad-path
   Scenario: 每月額度用完就拒絕
     Given 每月上限是 US$10，依 Asia/Taipei 的日曆月計算，本月已花 US$9.98
     And 這張工單自己的預算還很充足
-    When 二創段送出一個估計最高花費 US$0.05 的請求
+    When 重構段送出一個估計最高花費 US$0.05 的請求
     Then 閘道拒絕，回傳 budget_exceeded，原因寫明是本月額度
-    And 工單進待審，結果是「未完成：本月額度用完」
+    And 工單結束，結果是「未完成：本月額度用完」
 
   Scenario: 結算時退回多預留的部分
     Given 一個請求預留了 US$0.05
@@ -38,13 +38,13 @@ Feature: 帳本、預算與帳單
 
   @happy-path
   Scenario: 單張帳單
-    When 一張工單進待審
-    Then bill.md 列出總花費、每段花費與時間、用了哪些模型、升級幾次、退件重跑多花多少
+    When 一張工單結束
+    Then bill.md 列出總花費、每段花費與時間、用了哪些模型、升級幾次、再改多花多少
 
   Scenario: 每月總表
     When 創作者打開帳單頁
-    Then 看到本月依 skill、模型、訂閱源分的花費，本機與雲端的比例
-    And 看到每篇通過文章的平均成本，退件重跑的花費也算進去
+    Then 看到本月依角色、模型、skill 分的花費，本機與雲端的比例
+    And 看到每份報告、每篇文章的平均成本，補查與再改的花費也算進去
 
   @security
   Scenario: 雲端金鑰不外流

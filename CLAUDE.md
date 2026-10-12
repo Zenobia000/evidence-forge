@@ -2,7 +2,7 @@
 
 ## 這個 repo 的狀態
 
-Evidence Forge：把別人的文章與電子報接進來，由 agent 核心（Pi）照配方與 skill 自動整理、補料，再照目標、用創作者的風格二創；創作者只在待審通過或退件。現在在規劃階段：需求（`docs/10-truth/requirements/prd.md` v2.0）、決策（ADR-0009～0013 取代了 ADR-0001、0006 的舊設計）、架構草案 v0.3（`docs/30-snapshot/plans/`）都寫好了，還沒有產品程式；下一步是 S0 實驗（`docs/00-intent/roadmap.md`），進度看 `docs/20-state/progress.md`。不能動的：`docs/30-snapshot/` 只增不改；決策以 ADR 為準，要推翻就先寫一份新的 ADR；別人的文章與創作者的私人資料放在 `EF_DATA`，不進 repo。
+Evidence Forge：一個聊天室工作台。丟一篇文章進去，agent 核心（Pi）照配方與 skill 讀懂作者、查證、找可以借題發揮的題材，交一份分析報告；創作者看完，再叫它用設定好的角色與文體重構成新文章（ADR-0019、ADR-0020，2026-10-13 改版）。S0 做好的執行器、閘道、帳本、Tavily 搜尋沿用；需求在 `docs/10-truth/requirements/prd.md` v3.0，階段在 `docs/00-intent/roadmap.md`（P0～P4），進度看 `docs/20-state/progress.md`，改版規劃原文在 `docs/30-snapshot/plans/2026-10-13-chat-workbench-replan.md`。不能動的：`docs/30-snapshot/` 只增不改；決策以 ADR 為準，要推翻就先寫一份新的 ADR；別人的文章與創作者的私人資料放在 `EF_DATA`，不進 repo。
 
 ## Agent skills
 
