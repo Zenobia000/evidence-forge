@@ -1,12 +1,13 @@
 Feature: 素材投入與訂閱源接入
-  # 需求：FR-IN-01、FR-IN-02、FR-IN-03、NFR-SEC-01｜故事：US-01、US-02｜決策：ADR-0012
+  # 需求：FR-IN-01、FR-IN-02、FR-CH-01、NFR-SEC-01｜故事：US-21｜決策：ADR-0012、ADR-0019
 
   @happy-path @smoke
-  Scenario Outline: 手動投入就開一張工單
-    Given 創作者在新增工單頁選擇「<kind>」並填了目標
+  Scenario Outline: 在對話裡丟素材就開始分析
+    Given 創作者在一個對話裡「<kind>」
     When 送出
     Then inbox 的 manual 底下多一個素材項目，附出處、時間與內容 hash
-    And 依選定的配方開出一張排隊中的工單，目標寫在 job.md
+    And 對話的 agent 用 analyze 工具開出一張分析工單
+    And 對話裡顯示這次分析跑到哪
 
     Examples:
       | kind     |
@@ -14,10 +15,11 @@ Feature: 素材投入與訂閱源接入
       | 貼文字   |
       | 上傳檔案 |
 
-  Scenario: 沒填目標時用配方的預設目標
-    Given 創作者投入一篇文章但沒填目標
-    When 工單開出來
-    Then job.md 的目標是該配方的預設目標
+  Scenario: 同一份素材在同一個對話不重複分析
+    Given 這個對話已經分析過一篇文章
+    When 創作者再丟一次內容 hash 相同的文章
+    Then 不開新的分析，對話的 agent 指出之前那份報告
+    And 創作者明說要重做時才開新的分析
 
   @sad-path
   Scenario: 讀不到的網址不繞過
@@ -25,14 +27,15 @@ Feature: 素材投入與訂閱源接入
     When 系統抓取
     Then 素材項目標成讀不到，並寫明原因
     And 不嘗試任何繞過方式
-    And 提示創作者改用貼文字或上傳檔案
+    And 對話裡說明讀不到的原因，提示改用貼文字或上傳檔案
 
+  # 以下是訂閱源（FR-IN-02，Later）的情境；自動投入只跑到分析報告（ADR-0019）
   @happy-path
-  Scenario: 訂閱源依排程自動抓取並開單
+  Scenario: 訂閱源依排程自動抓取並開始分析
     Given feeds.yaml 裡有一個 rss 訂閱源，排程是每天 07:00，指定了配方與目標
     When 到了 07:00，且有一篇新文章
     Then 那篇文章進 inbox
-    And 依訂閱源設定自動開出一張工單
+    And 自動開出一張分析工單，報告放進這個訂閱源的對話
 
   Scenario: 同一篇不會開兩張單
     Given 一篇文章已經進過 inbox
@@ -55,4 +58,4 @@ Feature: 素材投入與訂閱源接入
   Scenario: 沒有接口的 app 透過 Drive 資料夾接入
     Given 外部工具把一篇 app 文章放進 Google Drive 的指定資料夾
     When drive connector 依排程掃描
-    Then 那篇文章跟其他來源一樣進 inbox 並開單
+    Then 那篇文章跟其他來源一樣進 inbox 並開始分析
