@@ -173,6 +173,26 @@ def test_ef_tools_從環境變數拿到閘道位址與鑰匙(tmp_path: Path) -> 
     assert env["EF_JOB_KEY"] == "job:20261011-120000-abcd1234:echo:1"
 
 
+@pytest.mark.promise("NFR-SEC-02", "FR-RS-01")
+def test_只有給了_credits_的段才開_web_search(tmp_path: Path) -> None:
+    # 預設不開：沒有搜尋額度的段看不到這個工具，送給模型的工具清單也跟以前一樣（錄音對得上）
+    _, env, _ = _command(tmp_path)
+    assert "EF_WEB_SEARCH" not in env
+    cmd = build_pi_command(
+        harness=_harness(tmp_path / "searching"),
+        data=DataDir(tmp_path / "data"),
+        key=KEY,
+        tier="local",
+        thinking="off",
+        skill_file=tmp_path / "SKILL.md",
+        gateway_url="http://127.0.0.1:8787",
+        prompt="做這一段",
+        base_env={},
+        web_search=True,
+    )
+    assert cmd.env["EF_WEB_SEARCH"] == "1"
+
+
 def test_準備_Pi_設定資料夾_把閘道位址填進範本(tmp_path: Path) -> None:
     data = DataDir(tmp_path / "data")
     agent_dir = prepare_agent_dir(_harness(tmp_path), data, "http://127.0.0.1:8787")

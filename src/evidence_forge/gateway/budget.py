@@ -6,6 +6,10 @@
 2. **這個月**：月上限（設定值，預設 US$10，Q-30）− 本月所有工單帳本與投入帳本的花費 − 所有預留中的金額。
    月份依 Asia/Taipei 的日曆月切。
 
+Tavily credits（`web_search`）另有一道：`job.md` 的 `budget.tavily_credits` − 這張單帳本的
+`credits` 總和 − 這張單預留中的 credits（`CreditGuard`）。credits 沒有月上限（票 #69 沒要求）。
+credits 不夠時只拒絕那一次搜尋，不擋下那一段；單子在全部段跑完後以未完成進待審（`CREDITS_REASON`）。
+
 結算的順序是「先把實際金額寫進帳本，再放掉預留」，中間沒有空檔讓這筆錢兩邊都沒算到。
 帳本寫不進去時，實際金額改留在記憶體裡照算（`BudgetGuard.release` 的 `unbooked_micros`）。
 金額一律是整數微美元（`budget.py`）；帳本的 `cost_usd` 讀進來就換成整數再加。
@@ -39,6 +43,9 @@ LIMIT_REASONS: dict[BudgetLimit, str] = {
     "job": "預算用完",
     "month": "本月額度用完",
 }
+# 搜尋額度（Tavily credits）用完的原因：也是這張單的預算用完，只是不擋下那一段，
+# 全部段跑完才以未完成進待審（`gateway/search.py` 模組說明第 4 點）
+CREDITS_REASON = "預算用完（搜尋額度）"
 
 
 def taipei_month(ts: datetime) -> str:
@@ -54,6 +61,8 @@ class _FileTally:
     lines: int = 0
     by_month: dict[str, int] = field(default_factory=dict)
     total: int = 0
+    # Tavily credits 的總和（不分月份：credits 只有工單上限）
+    credits: int = 0
 
 
 class SpendTally:
@@ -106,6 +115,7 @@ class SpendTally:
             return False
         tally.by_month[month] = tally.by_month.get(month, 0) + micros
         tally.total += micros
+        tally.credits += _credits(row)
         return True
 
     def month_micros(self, month: str) -> int:
@@ -113,6 +123,20 @@ class SpendTally:
 
     def job_micros(self, job_id: str) -> int:
         return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").total
+
+    def job_credits(self, job_id: str) -> int:
+        return self._refresh(self._data.job_dir(job_id) / "ledger.jsonl").credits
+
+
+def _credits(row: dict[str, object]) -> int:
+    """一行帳的 Tavily credits；沒寫或讀不懂是 0（閘道寫的行一定是非負整數，見 `LedgerEntry`）。
+
+    跟美元分開讀：credits 欄位壞掉不能讓那一行的金額也不算。
+    """
+    value = row.get("credits", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
 
 
 @dataclass(frozen=True)
@@ -204,4 +228,56 @@ class BudgetGuard:
                 month = taipei_month(self._clock())
                 self._unbooked.append(
                     _Unbooked(reservation.job_id, month, unbooked_micros)
+                )
+
+
+@dataclass(frozen=True)
+class CreditReservation:
+    id: int
+    job_id: str
+    credits: int
+
+
+class CreditGuard:
+    """Tavily credits 的預留與結算（`web_search`）：跟美元同一套順序，只有工單這一道上限。
+
+    結算一樣是「先把實際用掉的 credits 寫進帳本，再 `release`」；帳本寫不進去時，
+    實際用掉的 credits 用 `unbooked_credits` 交回來，程序重開之前照樣算進這張單。
+    """
+
+    def __init__(self, data: DataDir) -> None:
+        self._tally = SpendTally(data)
+        self._lock = threading.Lock()
+        self._ids = itertools.count(1)
+        self._outstanding: dict[int, CreditReservation] = {}
+        self._unbooked: dict[str, int] = {}
+
+    def reserve(
+        self, job_id: str, *, job_credits: int, credits: int
+    ) -> CreditReservation:
+        """預留 `credits`；這張單剩下的不夠就丟 `BudgetExceeded("job")`，什麼都不預留。"""
+        with self._lock:
+            held = sum(
+                r.credits for r in self._outstanding.values() if r.job_id == job_id
+            ) + self._unbooked.get(job_id, 0)
+            left = job_credits - self._tally.job_credits(job_id) - held
+            if credits > left:
+                raise BudgetExceeded(
+                    "job",
+                    f"這張單的 Tavily credits 不夠：這次要 {credits}，"
+                    f"剩 {max(left, 0)}（上限 {job_credits}）",
+                )
+            reservation = CreditReservation(next(self._ids), job_id, credits)
+            self._outstanding[reservation.id] = reservation
+            return reservation
+
+    def release(
+        self, reservation: CreditReservation, *, unbooked_credits: int = 0
+    ) -> None:
+        """放掉預留。實際用掉的 credits 先寫進帳本再呼叫；重複呼叫無害。"""
+        with self._lock:
+            released = self._outstanding.pop(reservation.id, None)
+            if released is not None and unbooked_credits > 0:
+                self._unbooked[released.job_id] = (
+                    self._unbooked.get(released.job_id, 0) + unbooked_credits
                 )

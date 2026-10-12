@@ -416,3 +416,31 @@ def test_有指定目標文類_不用作家的預設(data: DataDir) -> None:
 def test_沒有作家設定也沒指定_目標文類留空(data: DataDir) -> None:
     intake = _submit(data, PastedText("文章"))
     assert intake.job.target_genre is None
+
+
+# --- Tavily credits 的預設（#69） ---------------------------------------------
+
+
+@pytest.mark.promise("NFR-COST-01", "FR-RS-01")
+def test_開單沒指定_credits_用配方各段_tavily_credits_的總和(data: DataDir) -> None:
+    searching = RECIPE.model_copy(
+        update={
+            "stages": (
+                RecipeStage(id="echo", skill="echo", tier="local", output=("a.json",)),
+                RecipeStage(
+                    id="research",
+                    skill="echo",
+                    tier="local",
+                    output=("b.json",),
+                    tavily_credits=10,
+                ),
+            )
+        }
+    )
+    assert _submit(data, PastedText("配方沒有搜尋段")).job.budget.tavily_credits == 0
+    job = _submit(data, PastedText("配方有搜尋段"), recipe=searching).job
+    assert job.budget.tavily_credits == 10
+    given = open_job(
+        data, searching, PastedText("開單指定"), goal="x", now=NOW, budget_credits=3
+    ).job
+    assert given.budget.tavily_credits == 3

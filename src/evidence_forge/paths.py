@@ -47,6 +47,11 @@ class DataDir:
         return self.cache / "fetch"
 
     @property
+    def search_cache(self) -> Path:
+        """搜尋的快取：`cache/search/<請求 hash>/<搜尋時間>.json`，跨工單共用、只增不改。"""
+        return self.cache / "search"
+
+    @property
     def run(self) -> Path:
         """執行期的暫存：Pi 的設定資料夾（`run/pi-agent/`）、Pi 的事件紀錄、
         正在跑的 Pi 的程序群組編號（`run/pi-pids/`）。不是工單資料。"""

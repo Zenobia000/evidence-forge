@@ -12,8 +12,9 @@ from typing import Any
 
 import pytest
 from runner_world import FAKE_PI_LIB, WELL_BEHAVED, World, runner_world
+from tavily_stub import FAKE_KEY, Tavily, status
 
-from evidence_forge.models import Waiting
+from evidence_forge.models import Recipe, Waiting
 
 
 def _watch(
@@ -98,3 +99,56 @@ write("summary.json", {{"summary": "好"}})
             release.touch()
             world.runner.wait(timeout_s=30)
     assert waiting is not None and waiting.tool == "fetch_url"
+
+
+@pytest.mark.promise("NFR-OBS-02", "NFR-PAR-03")
+def test_搜尋被_Tavily_限流退避時_job_md_寫著在等限流_不是執行工具中(
+    tmp_path: Path, serve: Callable[[Any], AbstractContextManager[str]]
+) -> None:
+    # Pi 的事件說 web_search 正在跑；閘道知道得更細：它在等 Tavily 的限流
+    script = (
+        FAKE_PI_LIB
+        + """
+event(type="tool_execution_start", toolCallId="t1", toolName="web_search", args={})
+status, _ = call("/tools/web_search", {"query": "限流"})
+assert status == 200, status
+event(type="tool_execution_end", toolCallId="t1", toolName="web_search", isError=False)
+write("summary.json", {"summary": "好"})
+"""
+    )
+    recipe = Recipe.model_validate(
+        {
+            "name": "search",
+            "description": "test",
+            "stages": [
+                {
+                    "id": "research",
+                    "skill": "echo",
+                    "tier": "local",
+                    "output": ["summary.json"],
+                    "tavily_credits": 1,
+                }
+            ],
+            "on_feedback": "research",
+        }
+    )
+    tavily = Tavily(replies=[status(429, **{"retry-after": "1.5"})])
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "tavily").write_text(FAKE_KEY, encoding="utf-8")
+    with (
+        serve(tavily.app()) as tavily_url,
+        runner_world(
+            tmp_path, serve, tavily_url=tavily_url, rate_limit_retries=1
+        ) as build,
+    ):
+        world = build(script, recipes={"search": recipe}, progress_interval_s=0.05)
+        job_id = world.job(recipe="search")
+        world.runner.start_available()
+        try:
+            _watch(world, job_id, lambda w: w is not None and w.kind == "rate_limit")
+        finally:
+            world.runner.wait(timeout_s=30)
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+    [entry] = [e for e in world.ledger(job_id) if e.kind == "search"]
+    assert entry.queue_ms >= 1400, entry

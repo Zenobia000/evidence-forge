@@ -2,7 +2,7 @@
 
 - `ef new --url <網址> | --text "<內容>" | --file <md|txt|pdf>`：先抓取與抽文字，在
   `inbox/manual/` 寫一個素材項目，開一張排隊中的工單；可帶 `--goal`、`--recipe`、
-  `--genre`、`--budget-usd`。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
+  `--genre`、`--budget-usd`、`--budget-credits`（Tavily credits；沒給就用配方各段的總和）。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
   網址讀不到（403、付費牆、robots、內網位址）不開單，結束碼 1，提示改用 `--text` 或 `--file`。
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
   啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01）；同時最多跑 `--parallel` 張（預設 2）；
@@ -60,6 +60,17 @@ def _source(args: argparse.Namespace) -> Source:
     return PastedText(args.text)
 
 
+def _credits(value: str) -> int:
+    """`--budget-credits`：0 以上的整數。"""
+    try:
+        credits = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"要是整數：{value}") from None
+    if credits < 0:
+        raise argparse.ArgumentTypeError(f"不能是負的：{value}")
+    return credits
+
+
 def _new(args: argparse.Namespace) -> int:
     recipes = _recipes(_harness(args.harness))
     recipe = recipes.get(args.recipe)
@@ -79,6 +90,7 @@ def _new(args: argparse.Namespace) -> int:
             goal=args.goal,
             now=taipei_now(),
             budget_usd=args.budget_usd,
+            budget_credits=args.budget_credits,
             genre=args.genre,
         )
     except SourceUnreadable as exc:
@@ -185,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("--genre", help="目標文類（例：explainer）")
     new.add_argument(
         "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"
+    )
+    new.add_argument(
+        "--budget-credits",
+        type=_credits,
+        help="這張工單的 Tavily credits 上限（預設：配方各段 tavily_credits 的總和）",
     )
     new.add_argument("--harness", help="harness 資料夾（預設 repo 的 harness/）")
     new.set_defaults(handler=_new)

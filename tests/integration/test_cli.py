@@ -66,6 +66,18 @@ def test_ef_new_帶文類與預算(ef_data: Path, capsys: pytest.CaptureFixture[
     job_id = capsys.readouterr().out.strip()
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
     assert (job.target_genre, job.budget.usd) == ("explainer", 1.5)
+    # echo 配方沒有一段要搜尋：沒指定 credits 就是 0
+    assert job.budget.tavily_credits == 0
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_ef_new_帶_Tavily_credits(
+    ef_data: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["new", "--text", "要搜尋的文章", "--budget-credits", "7"]) == 0
+    job_id = capsys.readouterr().out.strip()
+    job = read_job(ef_data / "jobs" / job_id / "job.md").job
+    assert job.budget.tavily_credits == 7
 
 
 @pytest.mark.promise("FR-IN-01")
