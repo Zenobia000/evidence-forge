@@ -758,3 +758,33 @@ def test_Tavily_的位址可以用環境變數換成本機的假後端(data: Dat
     custom = config_from_env(data, {"EF_TAVILY_URL": " http://127.0.0.1:8765/ "})
     assert custom.tavily_url == "http://127.0.0.1:8765"
     assert config_from_env(data, {}).tavily_url == "https://api.tavily.com"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://tavily.example.com",
+        "http://10.0.0.5:8765",
+        "ftp://127.0.0.1:8765",
+        "https://",
+    ],
+    ids=["外部主機用http", "內網位址用http", "不是http", "沒有主機"],
+)
+def test_Tavily_的位址_外部主機只准_https_金鑰不送去沒加密的地方(
+    data: DataDir, url: str
+) -> None:
+    from evidence_forge.gateway.config import config_from_env
+
+    with pytest.raises(ValueError, match="EF_TAVILY_URL"):
+        config_from_env(data, {"EF_TAVILY_URL": url})
+
+
+def test_Tavily_的位址_https_或本機的_http_可以(data: DataDir) -> None:
+    from evidence_forge.gateway.config import config_from_env
+
+    for url in (
+        "https://tavily.example.com",
+        "http://localhost:8765",
+        "http://127.0.0.1:8765",
+    ):
+        assert config_from_env(data, {"EF_TAVILY_URL": url}).tavily_url == url
