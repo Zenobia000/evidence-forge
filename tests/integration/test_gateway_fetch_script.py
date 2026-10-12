@@ -303,3 +303,36 @@ def test_重播模式的_fetch_url_從錄音回放_不連網_沒錄過就報錯(
     ]
     assert replay.ledger()[0].response_hash == env.ledger()[0].response_hash
     assert replay.ledger()[2].response_hash is None
+
+
+@pytest.mark.promise("NFR-COST-06")
+def test_重播時同一段同一次抓同一個網址_第_n_次回放錄音裡的第_n_次(
+    env: Env,
+    fake_web: "FakeWeb",
+    tmp_path: Path,
+    serve: Callable[[Any], AbstractContextManager[str]],
+) -> None:
+    # 錄音：第一次網站出錯（讀不到），agent 再抓一次就讀到了
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", 503)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+    live = [env.call("fetch_url", url="http://news.example/p/1").json() for _ in "12"]
+    assert [body["status"] for body in live] == ["unavailable", "ok"]
+    recording = _record(env, tmp_path)
+
+    data = DataDir(tmp_path / "replay-data")
+    data.ensure()
+    (data.job_dir(JOB) / "input").mkdir(parents=True)
+    stages = ActiveStages()
+    stages.activate(KEY)
+    config = GatewayConfig(
+        data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
+    )
+    with serve(create_app(config, stages)) as url:
+        replay = Env(url=url, data=data, skill_dir=env.skill_dir, stages=stages)
+        replayed = [
+            replay.call("fetch_url", url="http://news.example/p/1").json() for _ in "12"
+        ]
+
+    assert [body["status"] for body in replayed] == ["unavailable", "ok"]
+    assert replayed[1]["text"] == live[1]["text"]

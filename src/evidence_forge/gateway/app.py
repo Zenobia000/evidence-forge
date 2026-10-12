@@ -156,7 +156,7 @@ def create_app(
         started = time.monotonic()
         ts = config.clock()
         request_hash = blobs.put(request_bytes(url))
-        replayed = recorded.get(request_hash)
+        replayed = recorded.get(key, request_hash)
         response_hash = (
             blobs.put(replayed.record.model_dump_json().encode("utf-8"))
             if replayed is not None

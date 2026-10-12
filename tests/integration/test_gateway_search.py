@@ -692,6 +692,37 @@ def test_錄音裡失敗的搜尋_重播時回一模一樣的錯誤(
     assert outage is None
 
 
+@pytest.mark.promise("NFR-COST-06")
+def test_錄音裡回放不了的那一行_重播時佔住它的位置_後面的第_n_次不錯位(
+    gateway: Start,
+    data: DataDir,
+    tmp_path: Path,
+    replaying: Replaying,
+) -> None:
+    recorded_job = _job(data, goal="錄音")
+    recorded_key = JobKey(recorded_job, "research", 1)
+    with gateway(_active(recorded_key)) as gw:
+        live = gw.search(recorded_key, query="同一個")
+    recording = _record(tmp_path, data, recorded_job)
+    # 同一個查詢在它前面還有一次，結果沒存進 blobs/（帳本那一行沒有 response_hash）
+    lines = (recording / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    lost = LedgerEntry.model_validate_json(lines[0]).model_copy(
+        update={"status": "error", "response_hash": None}
+    )
+    (recording / "ledger.jsonl").write_text(
+        "\n".join([lost.model_dump_json(), *lines]) + "\n", encoding="utf-8"
+    )
+
+    with replaying(recording) as replay:
+        first = replay.gateway.search(replay.key, query="同一個")
+        second = replay.gateway.search(replay.key, query="同一個")
+
+    # 第 1 次對到回放不了的那一行（報錯），第 2 次才是錄到結果的那一次
+    assert first.status_code == 500
+    assert second.status_code == 200
+    assert second.json()["results"] == live.json()["results"]
+
+
 # --- 金鑰不外洩 ---------------------------------------------------------------
 
 

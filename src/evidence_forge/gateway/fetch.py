@@ -21,6 +21,7 @@ import json
 import os
 import re
 import ssl
+import threading
 import time
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -44,6 +45,7 @@ from evidence_forge.gateway.url_guard import (
     system_resolver,
 )
 from evidence_forge.gateway import ledger
+from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import IntakeEntry, LedgerStatus
 from evidence_forge.models import FetchRecord
 from evidence_forge.paths import DataDir
@@ -169,32 +171,44 @@ class Replayed:
 class RecordedFetches:
     """重播模式（`EF_GATEWAY_MODE=replay`）的 `fetch_url`：只看錄音，從不連網（NFR-COST-06）。
 
-    錄音是一張工單的 `ledger.jsonl`（`kind: fetch` 的行）加上它指到的 `blobs/`，
-    用請求的 hash（`request_bytes`）對。讀不到的網頁也照樣回放（同樣的原因），
-    agent 看到的工具結果跟錄音時一字不差，之後的模型請求才對得上錄音。
+    錄音是一張工單的 `ledger.jsonl`（`kind: fetch` 的行）加上它指到的 `blobs/`。
+    跟搜尋的重播同一套對法：同一段、同一次、第 n 次抓同一個網址（請求 hash，`request_bytes`）
+    回放錄音裡的第 n 次；讀不到的網頁也照樣回放（同樣的原因）。agent 看到的工具結果跟錄音時
+    一字不差，之後的模型請求才對得上錄音。回放不了的行（沒有 `response_hash`）也佔一個位置。
     """
 
     def __init__(self, replay_dir: Path) -> None:
         self._blobs = BlobStore(replay_dir / "blobs")
-        self._recorded: dict[str, tuple[str, LedgerStatus]] = {}
+        self._recorded: dict[
+            tuple[str, int, str], list[tuple[str | None, LedgerStatus]]
+        ] = {}
+        # 重播時同一張單、同一段、同一次、同一個網址已經回放過幾次
+        self._seen: dict[tuple[str, str, int, str], int] = {}
+        self._lock = threading.Lock()
         for entry in ledger.read(replay_dir / "ledger.jsonl"):
-            # 同一個網址錄到好幾次時用第一次的：結果一樣可以重現
-            if entry.kind == "fetch" and entry.response_hash is not None:
+            if entry.kind == "fetch":
                 self._recorded.setdefault(
-                    entry.request_hash, (entry.response_hash, entry.status)
-                )
+                    (entry.stage, entry.attempt, entry.request_hash), []
+                ).append((entry.response_hash, entry.status))
 
-    def get(self, request_hash: str) -> Replayed | None:
-        found = self._recorded.get(request_hash)
-        raw = self._blobs.get(found[0]) if found is not None else None
-        if found is None or raw is None:
+    def get(self, key: JobKey, request_hash: str) -> Replayed | None:
+        counter = (key.job_id, key.stage, key.attempt, request_hash)
+        with self._lock:
+            nth = self._seen.get(counter, 0)
+            self._seen[counter] = nth + 1
+        found = self._recorded.get((key.stage, key.attempt, request_hash), [])
+        if nth >= len(found):
+            return None
+        digest, status = found[nth]
+        raw = self._blobs.get(digest) if digest is not None else None
+        if raw is None:
             return None
         try:
             record = FetchRecord.model_validate_json(raw)
         except ValidationError:
             return None
         # 錄音時讀得到的（不論當時是真的抓還是快取命中），重播一律算快取命中
-        return Replayed(record, "cache_hit" if record.status == "ok" else found[1])
+        return Replayed(record, "cache_hit" if record.status == "ok" else status)
 
 
 def cache_key(url: str) -> str:

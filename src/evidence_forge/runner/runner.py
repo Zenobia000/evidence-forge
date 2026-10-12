@@ -31,14 +31,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import jsonschema
+from pydantic import ValidationError
 
 from evidence_forge.checks import ChecksReport, SchemaError
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.gateway import ledger
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import MODELS_YAML
+from evidence_forge.gateway.blobs import BlobStore
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.budget import CREDITS_REASON, LIMIT_REASONS
+from evidence_forge.gateway.search import OUTAGE_STATUSES
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import (
@@ -48,6 +51,7 @@ from evidence_forge.models import (
     JobStatus,
     Recipe,
     RecipeStage,
+    SearchFailure,
     StageProgress,
     Waiting,
 )
@@ -215,21 +219,58 @@ def open_tool(log_path: Path) -> str | None:
 BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily"}
 
 
-def searches_refused(job_dir: Path) -> list[str]:
-    """哪幾段有搜尋因為 Tavily credits 不夠被拒（帳本裡 `search` 的 `budget_exceeded`），照先後排。
+def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
+    """補料沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
+
+    - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
+    - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
+      `OUTAGE_STATUSES`），而且那一段最後一次在故障之後沒有再搜成功過：產出就算合格，
+      也只是用手上的資料湊的（#70）。查詢本身被 Tavily 退回的 400 不算。
 
     看帳本而不是告示板：這件事到全部段跑完才用得上，中間可能重開過 `ef serve`（告示板會清空）；
-    重播時閘道也照錄音記同樣的一行，結果跟錄音時一樣。
+    重播時閘道也照錄音記同樣的行，結果跟錄音時一樣。
     """
-    stages: list[str] = []
-    for entry in ledger.read(job_dir / "ledger.jsonl"):
-        if (
-            entry.kind == "search"
-            and entry.status == "budget_exceeded"
-            and entry.stage not in stages
+    blobs = BlobStore(data.blobs)
+    refused: list[str] = []
+    entries = [e for e in ledger.read(job_dir / "ledger.jsonl") if e.kind == "search"]
+    last_attempt: dict[str, int] = {}
+    for entry in entries:
+        last_attempt[entry.stage] = max(last_attempt.get(entry.stage, 0), entry.attempt)
+    # 每一段最後一次：還沒恢復的 Tavily 故障（沒有就是 None）
+    outages: dict[str, str | None] = {}
+    for entry in entries:
+        if entry.status == "budget_exceeded" and entry.stage not in refused:
+            refused.append(entry.stage)
+        if entry.attempt != last_attempt[entry.stage]:
+            continue
+        if entry.status in ("ok", "cache_hit"):
+            outages[entry.stage] = None
+            continue
+        failure = _search_failure(blobs, entry.response_hash)
+        status = failure.status if failure is not None else None
+        if entry.status in ("rate_limited", "timeout") or (
+            entry.status == "error" and (status is None or status in OUTAGE_STATUSES)
         ):
-            stages.append(entry.stage)
-    return stages
+            outages[entry.stage] = (
+                failure.error if failure is not None else "原因沒有記下來"
+            )
+    notes: list[str] = []
+    if refused:
+        notes.append(f"{CREDITS_REASON}：{'、'.join(refused)} 段用已經找到的資料完成")
+    for stage_id, message in outages.items():
+        if message is not None:
+            notes.append(f"Tavily 故障（{message}）：{stage_id} 段用已經找到的資料完成")
+    return notes
+
+
+def _search_failure(blobs: BlobStore, digest: str | None) -> SearchFailure | None:
+    raw = blobs.get(digest) if digest is not None else None
+    if raw is None:
+        return None
+    try:
+        return SearchFailure.model_validate_json(raw)
+    except ValidationError:
+        return None
 
 
 def pi_error(events: Sequence[Mapping[str, object]]) -> str | None:
@@ -567,12 +608,21 @@ class Runner:
             resumed = None
             doc, result = self._run_stage(job_dir, doc, recipe, stage, progress)
             if result is not None:
+                if result.outcome == "incomplete":
+                    # 後面的段自己沒做完：補料沒做完整的事也一起寫，創作者才看得到全貌
+                    notes = search_shortfalls(self.data, job_dir)
+                    if notes:
+                        result = JobResult(
+                            outcome="incomplete",
+                            reason="；".join([result.reason, *notes])[:2000],
+                        )
                 self._set(job_dir, doc, "review", result.reason, result=result)
                 return
-        refused = searches_refused(job_dir)
-        if refused:
-            # 搜尋額度用完：那一段用已經找到的資料收尾、後面照跑，但這張單沒做完（NFR-COST-01）
-            reason = f"{CREDITS_REASON}：{'、'.join(refused)} 段用已經找到的資料完成"
+        notes = search_shortfalls(self.data, job_dir)
+        if notes:
+            # 搜尋額度用完或 Tavily 故障：那一段用已經找到的資料收尾、後面照跑，
+            # 但這張單沒做完（NFR-COST-01、#70）
+            reason = "；".join(notes)
             result = JobResult(outcome="incomplete", reason=reason)
             self._set(job_dir, doc, "review", reason, result=result)
             return
