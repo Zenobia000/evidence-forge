@@ -100,7 +100,8 @@ def _serve(
     }
     return subprocess.Popen(
         [sys.executable, "-m", "evidence_forge.cli", "serve", "--port", str(port)]
-        + ["--harness", str(harness), "--interval", "0.1", *extra],
+        # 這裡只測執行器的重開；對話主機有自己的測試（test_chat_serve.py），不佔 8790
+        + ["--harness", str(harness), "--interval", "0.1", "--chat-port", "0", *extra],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

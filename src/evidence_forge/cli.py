@@ -7,6 +7,9 @@
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
   啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01）；同時最多跑 `--parallel` 張（預設 2）；
   重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
+  還有對話主機（#85，`chat/host.py`）與給畫面的 API（`chat/api.py`，`--chat-port`，預設 8790，也只綁 127.0.0.1）：
+  對話的 Pi 閒置 `--chat-idle-minutes`（預設 10）分鐘就關掉，`analyze` 開 `--chat-recipe`（預設 analyze）。
+  `--chat-port 0` 或 `--once` 時不開對話主機。
 
 兩個指令啟動時都先讀全部配方，有一份不能用就拒絕並點名（FR-RC-01）。
 """
@@ -18,7 +21,11 @@ import time
 from pathlib import Path
 
 import uvicorn
+from fastapi import FastAPI
 
+from evidence_forge.chat import api as chat_api
+from evidence_forge.chat.desk import Desk
+from evidence_forge.chat.host import ConversationHost
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import create_app
@@ -35,6 +42,7 @@ from evidence_forge.runner.intake import (
     WebPage,
     open_job,
 )
+from evidence_forge.runner.pi_launch import prepare_agent_dir
 from evidence_forge.runner.preflight import Preflight
 from evidence_forge.runner.recipes import RecipeError, load_recipes
 from evidence_forge.runner.runner import Runner, taipei_now
@@ -109,11 +117,41 @@ def _new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _start_server(app: FastAPI, port: int) -> tuple[uvicorn.Server, threading.Thread] | None:
+    """在背景執行緒開一個只綁 127.0.0.1 的伺服器，等它起來；起不來（埠被佔用）回 None。"""
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            # SSE 串流不會自己結束：關機時最多等這麼久
+            timeout_graceful_shutdown=5,
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        if not thread.is_alive():
+            return None
+        time.sleep(0.05)
+    return server, thread
+
+
+def _stop_server(started: tuple[uvicorn.Server, threading.Thread] | None) -> None:
+    if started is not None:
+        server, thread = started
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
 def _serve(args: argparse.Namespace) -> int:
     harness = _harness(args.harness)
     recipes = _recipes(harness)
     if args.parallel < 1:
         raise ValueError(f"--parallel 至少是 1：{args.parallel}")
+    if args.chat_idle_minutes <= 0:
+        raise ValueError(f"--chat-idle-minutes 要大於 0：{args.chat_idle_minutes}")
     data = resolve_data_dir()
     config = config_from_env(data)
     gateway_url = f"http://127.0.0.1:{args.port}"
@@ -131,21 +169,28 @@ def _serve(args: argparse.Namespace) -> int:
     stages = ActiveStages()
     # 閘道寫、執行器讀：等待狀態與預算擋下的原因
     board = JobBoard(config.clock)
-    server = uvicorn.Server(
-        uvicorn.Config(
-            create_app(config, stages, board),
-            host="127.0.0.1",
-            port=args.port,
-            log_level="warning",
+    chat = args.chat_port != 0 and not args.once
+    host: ConversationHost | None = None
+    desk: Desk | None = None
+    if chat:
+        host = ConversationHost(
+            data=data,
+            harness=harness,
+            stages=stages,
+            gateway_url=gateway_url,
+            recipes=recipes,
+            clock=taipei_now,
+            board=board,
+            idle_s=args.chat_idle_minutes * 60,
+            tier=args.chat_tier,
         )
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    while not server.started:
-        if not thread.is_alive():
-            print(f"閘道沒有啟動（埠 {args.port} 被佔用？）", file=sys.stderr)
-            return 1
-        time.sleep(0.05)
+        desk = Desk(data, recipes, args.chat_recipe, clock=taipei_now, on_opened=host.job_opened)
+        # 告示板一變（開始等、等完）就推進度；等完時花費已經進帳本
+        board.listen(host.job_changed)
+    gateway = _start_server(create_app(config, stages, board, desk=desk), args.port)
+    if gateway is None:
+        print(f"閘道沒有啟動（埠 {args.port} 被佔用？）", file=sys.stderr)
+        return 1
     print(
         f"閘道 http://127.0.0.1:{args.port}（{config.mode}）；資料目錄 {data.root}",
         flush=True,
@@ -159,9 +204,30 @@ def _serve(args: argparse.Namespace) -> int:
         board=board,
         max_parallel=args.parallel,
         preflight=preflight,
+        on_job_change=host.job_changed if host is not None else None,
     )
+    chat_server: tuple[uvicorn.Server, threading.Thread] | None = None
     blocked: str | None = None
     try:
+        if host is not None:
+            # 對話的 Pi 跟段的 Pi 共用 $EF_DATA/run/pi-agent/ 的 models.json（指到閘道）
+            prepare_agent_dir(harness.pi, data, gateway_url)
+            chat_server = _start_server(chat_api.create_app(host), args.chat_port)
+            if chat_server is None:
+                print(f"對話的 API 沒有啟動（埠 {args.chat_port} 被佔用？）", file=sys.stderr)
+                return 1
+            host.start()
+            print(
+                f"對話 API http://127.0.0.1:{args.chat_port}/api/conversations；"
+                f"analyze 開 {args.chat_recipe}；閒置 {args.chat_idle_minutes:g} 分鐘關掉對話的 Pi",
+                flush=True,
+            )
+            if args.chat_recipe not in recipes:
+                print(
+                    f"ef serve：沒有配方 {args.chat_recipe}，對話的 analyze 會說開不了單",
+                    file=sys.stderr,
+                    flush=True,
+                )
         while True:
             # 重開之後先接著跑沒跑完的單，再照開單順序拿排隊單，同時最多 --parallel 張
             started = runner.start_available()
@@ -179,8 +245,11 @@ def _serve(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
-        server.should_exit = True
-        thread.join(timeout=10)
+        # 先收對話的 Pi 與串流，再關 API 與閘道：Pi 收尾時可能還在打閘道
+        if host is not None:
+            host.close()
+        _stop_server(chat_server)
+        _stop_server(gateway)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -214,6 +283,24 @@ def main(argv: list[str] | None = None) -> int:
         "--parallel", type=int, default=2, help="同時跑幾張工單（預設 2）"
     )
     serve.add_argument("--harness", help="harness 資料夾（預設 repo 的 harness/）")
+    serve.add_argument(
+        "--chat-port",
+        type=int,
+        default=8790,
+        help="給聊天室畫面的 API 的埠（預設 8790，只綁 127.0.0.1）；0 表示不開對話主機",
+    )
+    serve.add_argument(
+        "--chat-recipe", default="analyze", help="對話的 analyze 開哪份配方（預設 analyze）"
+    )
+    serve.add_argument(
+        "--chat-idle-minutes",
+        type=float,
+        default=10.0,
+        help="對話的 Pi 閒置幾分鐘就關掉（預設 10）；再有訊息時接回同一份紀錄",
+    )
+    serve.add_argument(
+        "--chat-tier", default="strong", help="對話本身用哪一級模型（預設 strong）"
+    )
     serve.set_defaults(handler=_serve)
 
     args = parser.parse_args(argv)
