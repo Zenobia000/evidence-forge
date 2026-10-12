@@ -172,7 +172,7 @@ def pid_file(data: DataDir, key: JobKey) -> Path:
     return data.run / "pi-pids" / f"{key.job_id}-{key.stage}-{key.attempt}.pid"
 
 
-def _record_pid(path: Path, pgid: int) -> None:
+def record_pid(path: Path, pgid: int) -> None:
     # 先寫暫存檔再換上去：重開時讀到的一定是完整的編號
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -263,7 +263,7 @@ def run_pi(
         )
         if pid_path is not None:
             # 自己一個 session：程序群組編號就是 Pi 的 pid
-            _record_pid(pid_path, process.pid)
+            record_pid(pid_path, process.pid)
         try:
             process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
