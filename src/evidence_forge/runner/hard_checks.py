@@ -23,7 +23,7 @@
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +38,7 @@ from evidence_forge.checks import (
     run_report_checks,
     write_checks_report,
 )
+from evidence_forge.checks.text import normalize_url
 from evidence_forge.models import Item, RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
@@ -47,6 +48,8 @@ REPORT_OUTPUT = "report.md"
 BRIEF_OUTPUT = "brief.md"
 DRAFT_OUTPUT = "draft.md"
 CLAIMS_OUTPUT = "claims.json"
+# 分析報告的檢查從前面各段的產出找這一份，拿 brief 的關鍵主張
+BRIEF_JSON = "brief.json"
 _CHECKED_OUTPUTS = (REPORT_OUTPUT, BRIEF_OUTPUT, DRAFT_OUTPUT, CLAIMS_OUTPUT)
 
 # 原文（種子）在工單裡的位置。二創段的來源清單是種子加補料段放的來源（`sources.job_sources`）
@@ -89,10 +92,13 @@ def run_hard_checks(
     schema: Path,
     clock: Callable[[], datetime],
     seed: Item | None = None,
+    upstream: Sequence[str] = (),
 ) -> ChecksReport | None:
     """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。
 
-    `seed` 是種子的素材項目（`sources.seed_item`），二創段用它的標題、網址認出 S1 的註腳。
+    `seed` 是種子的素材項目（`sources.seed_item`）：二創段用它的標題、網址認出 S1 的註腳，
+    分析報告的來源清單可以列它的網址。`upstream` 是前面各段合格那一次的產出（`runner.upstream_outputs`）：
+    分析報告從裡面的 `brief.json` 拿關鍵主張，檢查每條剛好一筆查證。
     """
     checked = checked_output(stage)
     if checked is None:
@@ -105,12 +111,30 @@ def run_hard_checks(
             entries = run_digest_checks(
                 job_dir, output=output, schema=schema, source=ORIGINAL_SOURCE
             )
-        elif checked in (BRIEF_OUTPUT, REPORT_OUTPUT):
-            document = base / checked
+        elif checked == BRIEF_OUTPUT:
+            document = base / BRIEF_OUTPUT
             output = base / _output(stage, ".json")
             files = (document, output)
-            run = run_brief_checks if checked == BRIEF_OUTPUT else run_report_checks
-            entries = run(job_dir, document, output=output, schema=schema)
+            entries = run_brief_checks(job_dir, document, output=output, schema=schema)
+        elif checked == REPORT_OUTPUT:
+            document = base / REPORT_OUTPUT
+            output = base / _output(stage, ".json")
+            files = (document, output)
+            # 報告的來源清單只能列這一段這一次真的抓成功的網頁，或原文的網址
+            allowed = set(sources.fetched_pages(data, job_dir, stage.id, attempt))
+            if seed is not None and seed.url:
+                allowed.add(normalize_url(seed.url))
+            brief = next(
+                (Path(p) for p in upstream if Path(p).name == BRIEF_JSON), None
+            )
+            entries = run_report_checks(
+                job_dir,
+                document,
+                output=output,
+                schema=schema,
+                allowed_urls=allowed,
+                brief=brief,
+            )
         else:
             draft = base / DRAFT_OUTPUT
             output = base / _output(stage, ".json")

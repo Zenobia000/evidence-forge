@@ -69,6 +69,8 @@ from evidence_forge.transitions import transition
 from evidence_forge.write_once import write_once
 
 TAIPEI = ZoneInfo("Asia/Taipei")
+# 任務說明裡「原文出處」的標題最多幾個字
+ORIGIN_TITLE_MAX = 200
 
 _log = logging.getLogger(__name__)
 
@@ -104,7 +106,11 @@ def stage_prompt(
         seed = cited.get(sources.SEED_ID)
         if seed is not None and seed.url:
             # 只有種子、種子有網址：分析報告的來源清單要列原文出處（PRD §5），agent 讀不到素材項目
-            listed = f"原文出處：{seed.title}，{seed.url}\n"
+            # 標題可能是網頁的 og:title：壓成一行、限制長度，不讓它拆亂或塞爆任務說明
+            title = " ".join(seed.title.split())
+            if len(title) > ORIGIN_TITLE_MAX:
+                title = title[:ORIGIN_TITLE_MAX] + "…"
+            listed = f"原文出處：{title}，{seed.url}\n"
     elif cited is not None and len(cited) > 1:
         paths = "、".join(
             f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
@@ -884,6 +890,7 @@ class Runner:
                 self.harness.schema_file(stage.skill),
                 self.clock,
                 seed,
+                upstream_outputs(job_dir, recipe, stage),
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因進待審

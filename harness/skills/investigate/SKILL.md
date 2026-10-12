@@ -36,7 +36,7 @@ Then write the analysis report for the creator. You do not write an article and 
 
 For each key claim, pick one verdict from what the fetched pages say, never from memory or common sense:
 
-- `disputed`: fetched sources disagree with the claim or with each other. List the sources on both sides.
+- `disputed`: fetched sources disagree with the claim or with each other. List the sources on both sides: at least two.
 - `outdated`: the claim was true once, but a fetched source shows it has changed (a newer version, price, number or policy).
 - `supported`: a fetched source, preferably a primary one, backs the claim.
 - `not_found`: you found nothing that confirms or contradicts it. Say so plainly; this is not the same as wrong.
@@ -61,12 +61,12 @@ Call `write_file` exactly once to create `sources.json` in the output directory 
 ```
 
 - `sources`: `S2`, `S3`, ... in order. `S1` is the article itself; never list it. Copy each `url` exactly as you gave it to `fetch_url`. Leave `author` out when the page does not show one. Write `why` in Traditional Chinese, one or two sentences.
-- `fact_checks`: one entry per key claim in `brief.json`, using its id. `sources` are the ids of the listed sources behind the verdict; every verdict except `not_found` needs at least one.
+- `fact_checks`: exactly one entry per key claim in `brief.json`, using its id; no claim missing, none twice. Order them doubtful first: `disputed`, then `outdated`, then `not_found`, and `supported` last. `sources` are the ids of the listed sources behind the verdict; every verdict except `not_found` needs at least one, and `disputed` needs at least two.
 - `topics`: 2 to 4 research topics, each with the ids of one or two listed sources.
 
 ## Write report.md
 
-Call `write_file` once more to create `report.md` in the same directory. Write it in Traditional Chinese as used in Taiwan; keep names of people, products and papers in their original form. Use your own words: no long quotes from the article or the sources. Use exactly these five level-2 headings, in this order:
+Call `write_file` once more to create `report.md` in the same directory. Write it in Traditional Chinese as used in Taiwan; keep names of people, products and papers in their original form. Use your own words: no long quotes from the article or the sources. Use exactly these five level-2 headings, in this order. The second one is 事實與觀點, not the brief's 事實與數據:
 
 ```markdown
 # <the article's title>
@@ -87,6 +87,8 @@ Each topic: what the creator could write about, which source(s) to read [S3], an
 - S1 the article itself: its title, and its URL when the task gives one under 原文出處.
 - Each listed source: id, title, URL.
 ```
+
+The runner checks the report too: every [S<n>] you cite must be S1 or an id in `sources.json`, and every URL under 來源清單 must be a page you fetched in this stage or the URL given under 原文出處.
 
 Reply with one short line saying both files were written. Do not call any other tool after that.
 

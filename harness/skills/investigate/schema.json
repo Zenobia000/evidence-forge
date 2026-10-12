@@ -29,7 +29,7 @@
       }
     },
     "fact_checks": {
-      "description": "brief 的每條關鍵主張一筆；查不到不等於錯",
+      "description": "brief 的每條關鍵主張剛好一筆，有疑慮的（有爭議、過時、查不到）排在有佐證的前面（執行器檢查，checks/analysis.py）；查不到不等於錯",
       "type": "array",
       "minItems": 1,
       "maxItems": 6,
@@ -42,8 +42,18 @@
         },
         "required": ["claim", "verdict", "sources"],
         "additionalProperties": false,
-        "if": { "properties": { "verdict": { "not": { "const": "not_found" } } } },
-        "then": { "properties": { "sources": { "minItems": 1 } } }
+        "allOf": [
+          {
+            "description": "除了查不到，都要附來源",
+            "if": { "properties": { "verdict": { "not": { "const": "not_found" } } } },
+            "then": { "properties": { "sources": { "minItems": 1 } } }
+          },
+          {
+            "description": "有爭議要附兩邊的來源（analyze.feature）",
+            "if": { "properties": { "verdict": { "const": "disputed" } } },
+            "then": { "properties": { "sources": { "minItems": 2 } } }
+          }
+        ]
       }
     },
     "topics": {
