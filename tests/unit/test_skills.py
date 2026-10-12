@@ -168,7 +168,7 @@ def test_預設配方_restructure_整理在本機_補料與二創用_strong_只�
         (s.id, s.skill, s.tier, s.escalate_to, s.tavily_credits) for s in recipe.stages
     ] == [
         ("digest", "digest", "local", None, 0),
-        ("research", "research", "strong", None, 10),
+        ("research", "research", "strong", None, 12),
         # #63：MVP 暫用 local 的二創改回 strong
         ("compose", "compose", "strong", None, 0),
     ]

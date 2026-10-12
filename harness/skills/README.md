@@ -37,6 +37,8 @@ C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages
 工具也是執行器給的：`read_file`、`list_files`、`write_file`、`fetch_url`、`run_script` 每一段都有；
 **`web_search` 只有配方裡那一段 `tavily_credits` 大於 0 才有**（執行器設 `EF_WEB_SEARCH=1`，ef-tools 才註冊）。
 所以這個欄位同時決定「能花多少搜尋額度」與「有沒有搜尋工具」；`SKILL.md` 要用 `web_search`，配方那一段就要給額度。
+額度是**這一段在整張單裡的總額，含重試**（工單的上限預設是各段加總，閘道只看整張單用了多少），
+所以要照「skill 一次最多搜幾次 × `max_attempts`」給，不是只給一次的量。
 其他段的工具清單維持原樣，請求逐位元組不變，錄音才對得上。
 
 ## 3. 腳本不寫檔，結果只印到 stdout
