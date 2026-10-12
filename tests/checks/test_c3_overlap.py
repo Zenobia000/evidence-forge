@@ -123,3 +123,44 @@ def test_long_copy_shorter_than_one_ngram_still_shows_where() -> None:
     assert [entry.status for entry in entries] == ["fail"] * len(entries)
     assert [entry.excerpt for entry in located] == ["the real cost of running agents"]
     assert located[0].location == Location(file=FILE, line=1, column=11)
+
+
+# #67：註腳定義行本來就該照抄來源標題，不算照抄
+LONG_TITLE = (
+    "The real cost of running agents is not the tokens: it is the hours engineers "
+    "spend reading transcripts"
+)
+DEFAULTS = OverlapThresholds(ngram_size=8, max_ngram_overlap=0.1, max_common_tokens=30)
+
+
+def test_footnote_definition_with_a_long_source_title_is_not_counted() -> None:
+    draft = (
+        "# 我的看法\n\n"
+        "跑代理人最貴的不是模型費，是人去翻紀錄的時間[^S1]。我認為該先把紀錄整理好。\n\n"
+        f"[^S1]: {LONG_TITLE}（https://example.org/agents）\n"
+    )
+    source = f"# {LONG_TITLE}\n\n{SOURCE_EN}"
+
+    entries = check_overlap(draft, source, DEFAULTS, file=FILE)
+
+    assert [entry.status for entry in entries] == ["pass"]
+
+
+def test_same_title_copied_into_the_body_still_fails() -> None:
+    # 只放過註腳定義那一行；同一段話寫進正文照樣算照抄
+    draft = f"# 我的看法\n\n{LONG_TITLE}, and here is why it matters.\n"
+    source = f"# {LONG_TITLE}\n\n{SOURCE_EN}"
+
+    entries = check_overlap(draft, source, DEFAULTS, file=FILE)
+
+    assert {entry.status for entry in entries} == {"fail"}
+
+
+def test_footnote_lookalike_inside_a_sentence_is_still_checked() -> None:
+    # 「[^S1]:」不在行首就不是註腳定義（GFM），整行照樣比對
+    draft = f"# 觀點\n\n他說 [^S1]: {LONG_TITLE}\n"
+    source = f"# {LONG_TITLE}\n\n{SOURCE_EN}"
+
+    entries = check_overlap(draft, source, DEFAULTS, file=FILE)
+
+    assert {entry.status for entry in entries} == {"fail"}

@@ -108,6 +108,18 @@ def mask_code(text: str) -> str:
     return _CODE_SPAN.sub(lambda match: " " * len(match.group(0)), masked)
 
 
+# GFM 註腳定義：行首（最多 3 個空白）的 `[^編號]:`，到行尾
+_FOOTNOTE_DEFINITION = re.compile(r"^ {0,3}\[\^[^\]\s]+\]:.*$", re.MULTILINE)
+
+
+def mask_footnote_definitions(text: str) -> str:
+    """把註腳定義行（`[^S1]: <來源標題>（網址）`）換成空白，換行與長度不變。
+
+    註腳本來就該照抄來源的標題；C3 算照抄時把它算進去，標題一長就誤擋（#67）。
+    """
+    return _FOOTNOTE_DEFINITION.sub(lambda match: " " * len(match.group(0)), text)
+
+
 def line_column(text: str, offset: int) -> tuple[int, int]:
     """字元位移換成（行, 欄），都從 1 起算；欄以字元計，一個中文字算一欄。"""
     line = text.count("\n", 0, offset) + 1
