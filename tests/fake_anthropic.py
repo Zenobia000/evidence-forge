@@ -134,6 +134,7 @@ def reply(kind: str, value: Any, number: int) -> bytes:
             "usage": {"input_tokens": 100, "output_tokens": 1},
         },
     }
+    block: dict[str, Any]
     if kind == "text":
         block = {"type": "text", "text": ""}
         delta = {"type": "text_delta", "text": value}
@@ -165,6 +166,11 @@ class FakeAnthropic:
 
     def app(self) -> FastAPI:
         app = FastAPI()
+
+        @app.get("/v1/models")
+        async def models() -> dict[str, Any]:
+            # 閘道的開跑前檢查拿它確認金鑰有效（不花錢）
+            return {"data": [], "has_more": False}
 
         @app.post("/v1/messages")
         async def messages(request: Request) -> Response:

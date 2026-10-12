@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 from collections.abc import Iterator
+from functools import partial
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -341,7 +342,8 @@ def test_主機關機時收掉所有對話的_Pi(world: World) -> None:
     host.close()
 
     for pid in pids:
-        wait_until(lambda pid=pid: not pid_alive(pid or 0), what="Pi 結束")
+        assert pid is not None
+        wait_until(partial(lambda p: not pid_alive(p), pid), what="Pi 結束")
     assert not world.stages.is_active(ConversationKey(first, 1))
     assert not list((world.data.run / "chat-pids").glob("*.pid"))
 
