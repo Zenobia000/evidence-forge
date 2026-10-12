@@ -4,6 +4,7 @@ Pi 是講 RPC 協定的假 Pi（`tests/chat_world.py`），不需要 Node、不�
 """
 
 import os
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -185,4 +186,57 @@ def test_卡死的_Pi_寫到一半也關得掉(tmp_path: Path) -> None:
     assert not pid_alive(pid)
     writer.join(5)
     assert errors and isinstance(errors[0], PiExited)
+    assert not world.stages.is_active(pi.key)
+
+
+def test_Pi_開的子程序跟著收掉_整組都結束才刪紀錄(tmp_path: Path) -> None:
+    world = Started(tmp_path, {"spawn_child": True})
+    pi = world.open()
+    child_file = world.data.conversation_dir("c1") / "pi-session" / "child.pid"
+    wait_until(child_file.is_file, what="子程序開好")
+    child = int(child_file.read_text())
+    assert pid_alive(child)
+
+    # Pi 本體正常收掉（stdin 關掉），子程序 sleep 不會自己結束
+    pi.stop()
+
+    assert not pid_alive(child)
+    assert not pid_file(world.data, "c1").exists()
+
+
+def test_領頭的已經結束_留下的子程序照樣被當成孤兒收掉(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    # 前一個主機的 Pi：領頭的 sh 已經結束，它開的 sleep 還在同一個群組、拿著對話鑰匙
+    leader = subprocess.Popen(
+        ["sh", "-c", "sleep 300 & echo $!"],
+        stdout=subprocess.PIPE,
+        start_new_session=True,
+        env={"PATH": os.environ["PATH"], "EF_JOB_KEY": "conv:c1:3"},
+    )
+    assert leader.stdout is not None
+    child = int(leader.stdout.readline())
+    leader.wait()
+    assert pid_alive(child)
+    record = pid_file(data, "c1")
+    record.parent.mkdir(parents=True)
+    record.write_text(f"{leader.pid}\n")
+
+    assert kill_leftover(data, "c1") == leader.pid
+    assert not pid_alive(child)
+    assert not record.exists()
+
+
+def test_Pi_自己死掉留下子程序_主機照樣馬上知道_子程序也收掉(tmp_path: Path) -> None:
+    world = Started(tmp_path, {"spawn_child": True})
+    pi = world.open()
+    child_file = world.data.conversation_dir("c1") / "pi-session" / "child.pid"
+    wait_until(child_file.is_file, what="子程序開好")
+    child = int(child_file.read_text())
+    assert pi.pid is not None
+
+    # 只殺 Pi 本體：子程序還拿著 Pi 的 stdout
+    os.kill(pi.pid, signal.SIGKILL)
+
+    assert world.exited.wait(5), "讀取執行緒沒讀到結尾：主機不知道 Pi 死了"
+    assert not pid_alive(child)
     assert not world.stages.is_active(pi.key)

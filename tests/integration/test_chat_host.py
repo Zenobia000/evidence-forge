@@ -14,6 +14,8 @@ import os
 import signal
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from functools import partial
 from datetime import UTC, datetime
@@ -24,7 +26,7 @@ import pytest
 from chat_world import fake_chat_harness, pid_alive, wait_until
 
 from evidence_forge import conversations
-from evidence_forge.chat.host import ConversationHost, ConversationNotFound
+from evidence_forge.chat.host import ConversationHost, ConversationNotFound, Subscription
 from evidence_forge.chat.pi_rpc import session_dir
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import JobDocument, read_job, write_job
@@ -185,7 +187,8 @@ def test_閒置關掉_再打字就接回_紀錄還在(world: World) -> None:
     # 閒置計時器到期就關，不用任何人來問
     wait_until(lambda: host.live_pid(cid) is None, what="閒置關掉")
     wait_until(lambda: not pid_alive(pid), what="閒置的 Pi 結束")
-    assert not world.stages.is_active(ConversationKey(cid, 1))
+    # 收尾（收群組、撤銷鑰匙）在 Pi 結束之後由讀取執行緒做
+    wait_until(lambda: not world.stages.is_active(ConversationKey(cid, 1)), what="鑰匙撤銷")
 
     host.send(cid, "第二句")
     wait_until(lambda: len(world.replies(cid)) == 2, what="接回後的回答")
@@ -242,7 +245,7 @@ def test_工單跑完_通知對話一次_重複的變動與接回都不會多一
     assert world.notices(cid, job_id) == 1
 
 
-def test_沒記下送到就再送一次_ef_tools_照紀錄去重_還是一則(world: World) -> None:
+def test_通知進了紀錄卻沒記到_重開時從紀錄補記_不再送_之後也不再開_Pi(world: World) -> None:
     host = world.host()
     cid = world.conversation()
     job_id = world.job(cid)
@@ -252,17 +255,88 @@ def test_沒記下送到就再送一次_ef_tools_照紀錄去重_還是一則(wo
     wait_until(lambda: conversations.read(world.data, cid).notified_jobs == [job_id])
     host.close()
 
-    # 模擬「通知進了紀錄、主機還沒記下就死了」：拿掉記錄，重開主機
+    # 模擬「通知進了紀錄、主機還沒記下就被硬殺」：拿掉記錄，重開主機
     conversation = conversations.read(world.data, cid)
     conversation.notified_jobs = []
     conversations.save(world.data, conversation)
-    world.host()
+    second = world.host()
 
-    wait_until(
-        lambda: sum(c.get("message", "").startswith("/ef-job-done") for c in world.commands(cid)) == 2,
-        what="重開後補送一次",
-    )
+    # 開 Pi 讀一次紀錄，補記起來；不再送 /ef-job-done
+    wait_until(lambda: conversations.read(world.data, cid).notified_jobs == [job_id], what="從紀錄補記")
+    assert sum(c.get("message", "").startswith("/ef-job-done") for c in world.commands(cid)) == 1
     assert world.notices(cid, job_id) == 1
+    second.close()
+
+    # 再重開：已經記到了，不用為它開 Pi
+    third = world.host()
+    third.close()
+    assert conversations.read(world.data, cid).launches == 2
+
+
+def test_ef_tools_處理通知時丟錯_過一下再送_還是只有一則(world: World) -> None:
+    host = world.host(world.harness(fail_job_done=1), notice_retry_s=0.2)
+    cid = world.conversation()
+    job_id = world.job(cid)
+    world.finish(job_id)
+    host.job_changed(job_id)
+
+    wait_until(lambda: world.notices(cid, job_id) == 1, what="重送之後送到")
+    sent = [c for c in world.commands(cid) if c.get("message", "").startswith("/ef-job-done")]
+    assert len(sent) == 2
+    # 同一個 Pi 沒有重開：是在它活著的期間重送的
+    assert conversations.read(world.data, cid).launches == 1
+
+
+def test_通知指令被拒_過一下再送(world: World) -> None:
+    host = world.host(world.harness(reject_job_done=1), notice_retry_s=0.2)
+    cid = world.conversation()
+    job_id = world.job(cid)
+    world.finish(job_id)
+    host.job_changed(job_id)
+
+    wait_until(lambda: world.notices(cid, job_id) == 1, what="重送之後送到")
+    assert conversations.read(world.data, cid).launches == 1
+
+
+def test_Pi_接受了訊息_還沒開始回答前不閒置關掉(world: World) -> None:
+    # 接受 prompt 之後 1 秒才 agent_start，這段時間沒有任何事件；閒置 0.2 秒就關的話這一輪會斷掉
+    host = world.host(world.harness(start_delay_s=1.0), idle_s=0.2)
+    cid = world.conversation()
+    host.send(cid, "等一下才開始")
+    wait_until(lambda: world.replies(cid) == ["回覆：等一下才開始"], what="回答完")
+    wait_until(lambda: host.live_pid(cid) is None, what="答完之後閒置關掉")
+
+
+def test_Pi_卡住又有通知要補送_關機幾秒內結束_不留_Pi(world: World) -> None:
+    host = world.host(world.harness(stuck=True))
+    cid = world.conversation()
+    job_id = world.job(cid)
+    # 一則大訊息把 Pi 的 stdin 塞滿：送的人卡在寫入、拿著寫入鎖
+    sender = threading.Thread(target=lambda: _ignore(lambda: host.send(cid, "長" * 1_000_000)), daemon=True)
+    sender.start()
+    wait_until(lambda: host.live_pid(cid) is not None)
+    pid = host.live_pid(cid)
+    assert pid is not None
+    # 工單結束：補送通知的人拿著對話鎖去等寫入鎖
+    world.finish(job_id)
+    host.job_changed(job_id)
+    wait_until(lambda: host._lock_for(cid).locked(), what="補送通知卡在對話鎖裡")
+
+    started = time.monotonic()
+    host.close()
+
+    # 等對話鎖 1 秒拿不到就殺；不殺的話要等寫入鎖逾時（5 秒）以上
+    assert time.monotonic() - started < 4
+    wait_until(lambda: not pid_alive(pid), what="卡住的 Pi 被殺掉")
+    sender.join(5)
+    assert not sender.is_alive()
+
+
+def _ignore(work: Any) -> None:
+    try:
+        work()
+    except Exception:
+        pass
 
 
 def test_別的對話的工單結束_不通知這個對話(world: World) -> None:
@@ -380,7 +454,7 @@ def test_訂閱先送現況_之後推進度_標題換成素材標題(world: Worl
         got: list[dict[str, Any]] = []
         try:
             while not any(e.get("type") == "ef_conversation" for e in got):
-                event = await asyncio.wait_for(subscription.queue.get(), 10)
+                event = await asyncio.wait_for(subscription.get(), 10)
                 assert event is not None
                 got.append(event)
                 if len(got) == 2:
@@ -391,6 +465,8 @@ def test_訂閱先送現況_之後推進度_標題換成素材標題(world: Worl
         return got
 
     events = asyncio.run(collect())
+    seqs = [e.pop("seq") for e in events]
+    assert seqs == sorted(seqs)
     assert events[0] == {"type": "ef_pi", "state": "stopped", "launch": None, "reason": None, "busy": False}
     assert events[1]["type"] == "ef_job" and events[1]["job_id"] == job_id
     assert events[-1] == {"type": "ef_conversation", "title": "圖書館的夜班"}
@@ -399,3 +475,43 @@ def test_訂閱先送現況_之後推進度_標題換成素材標題(world: Worl
     assert summary["title"] == "圖書館的夜班"
     assert summary["job_count"] == 1
     assert summary["latest_job"]["status"] == "queued"
+
+
+def test_佇列同一件事只排一次(world: World) -> None:
+    host = ConversationHost(
+        data=world.data,
+        harness=world.harness(),
+        stages=world.stages,
+        gateway_url="http://127.0.0.1:9",
+        recipes={"analyze": RECIPE},
+        clock=lambda: NOW,
+    )
+    # 沒有 start：沒有人在拿，看得到佇列積了多少
+    for _ in range(1000):
+        host.job_changed("20261013-050000-aaaa1111")
+    host.job_opened("c1", "20261013-050000-aaaa1111")
+    assert host._inbox.qsize() == 1
+
+
+def test_畫面卡住時事件有上限_同一張工單的進度只留最新一筆() -> None:
+    async def run() -> None:
+        subscription = Subscription(asyncio.get_running_loop(), backlog=10)
+        for n in range(100):
+            subscription.put({"type": "ef_job", "job_id": "j1", "status": f"s{n}", "seq": n})
+        await asyncio.sleep(0)
+        first = await subscription.get()
+        assert first is not None and first["status"] == "s99"
+
+        for n in range(50):
+            subscription.put({"type": "message_update", "n": n})
+        await asyncio.sleep(0)
+        got = []
+        while True:
+            event = await asyncio.wait_for(subscription.get(), 1)
+            if event is None:
+                break
+            got.append(event)
+        # 積到上限就斷開：之後的不再收，畫面重連時用完整紀錄補
+        assert len(got) == 10
+
+    asyncio.run(run())

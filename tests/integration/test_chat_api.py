@@ -75,7 +75,8 @@ def test_開對話_送訊息_串流收得到回答_完整紀錄拿得到(api: st
     events = _events(api, cid, "agent_settled", after_open=send)
     types = [e["type"] for e in events]
     assert types[0] == "ef_pi" and events[0]["state"] == "stopped"
-    assert {"type": "ef_pi", "state": "running", "launch": 1, "reason": None, "busy": False} in events
+    plain = [{k: v for k, v in e.items() if k != "seq"} for e in events]
+    assert {"type": "ef_pi", "state": "running", "launch": 1, "reason": None, "busy": False} in plain
     ends = [e["message"] for e in events if e["type"] == "message_end"]
     assert [m["role"] for m in ends] == ["user", "assistant"]
 

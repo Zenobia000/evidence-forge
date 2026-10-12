@@ -10,6 +10,9 @@
 - `get_messages`：回完整紀錄；`slow_get_messages_s` 讓它晚一點回，後送的指令的回應會先到。
 - stdin 關掉就結束；`ignore_eof` 時不結束（模擬卡住的 Pi，給殺孤兒的測試）。
 - `stuck` 時根本不讀 stdin（模擬事件迴圈卡死的 Pi）。
+- `fail_job_done`／`reject_job_done`：前幾次 `/ef-job-done` 丟錯（`extension_error`、照樣回成功）或被拒。
+- `start_delay_s`：接受 prompt 之後過這麼久才 `agent_start`。
+- `spawn_child`：開一個同群組的子程序（`sleep 300`），編號寫在 `--session-dir/child.pid`。
 
 設定放在假 Pi 旁邊的 `fake-pi.json`（`fake_chat_harness(..., settings)`）：主機只把 PATH 等幾個
 環境變數交給 Pi，測試的設定不能從環境變數進去。
@@ -50,6 +53,14 @@ if os.path.exists(session_path):
                 messages.append(json.loads(line))
 busy = False
 queue = []
+# 前幾次 /ef-job-done 故意失敗：丟錯（extension_error、照樣回成功）或被拒（success: false）
+failures = {"error": int(settings.get("fail_job_done", 0)), "reject": int(settings.get("reject_job_done", 0))}
+if settings.get("spawn_child"):
+    # Pi 開的子程序：跟 Pi 同一個程序群組、繼承它的環境變數
+    import subprocess
+    child = subprocess.Popen(["sleep", "300"])
+    with open(os.path.join(session_dir, "child.pid"), "w") as handle_child:
+        handle_child.write(str(child.pid))
 
 
 def emit(record):
@@ -70,6 +81,9 @@ def run_turns(first):
     global busy
     item = first
     while item is not None:
+        # Pi 接受了 prompt、還沒 agent_start 的空檔（例如還在準備這一輪）
+        if settings.get("start_delay_s"):
+            time.sleep(float(settings["start_delay_s"]))
         emit({"type": "agent_start"})
         if item["kind"] == "user":
             keep({"role": "user", "content": item["text"]})
@@ -129,6 +143,17 @@ def handle(command):
     text = command.get("message", "")
     if text.startswith("/ef-job-done "):
         job_id = text.split(" ", 1)[1].strip()
+        if failures["reject"] > 0:
+            failures["reject"] -= 1
+            respond(command, success=False, error="command rejected")
+            return
+        if failures["error"] > 0:
+            failures["error"] -= 1
+            # 跟真的 Pi 一樣：處理函式丟錯時發 extension_error，然後照樣回成功
+            emit({"type": "extension_error", "extensionPath": "command:ef-job-done",
+                  "event": "command", "error": "gateway returned HTTP 503"})
+            respond(command, data={"disposition": "handled"})
+            return
         already = any(
             m.get("role") == "custom"
             and m.get("customType") == "ef-job"

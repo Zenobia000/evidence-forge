@@ -181,7 +181,12 @@ def test_丟文章到拿到整理_全程經過_ef_serve_關掉之後不留_Pi(
     assert running and running[0]["stage"]["index"] == 1 and running[0]["stage"]["total"] == 1
     assert progress[-1]["outcome"] == "complete"
     assert progress[-1]["spent_usd"] > 0
-    assert {"type": "ef_conversation", "title": "圖書館的夜班"} in events
+    assert {"type": "ef_conversation", "title": "圖書館的夜班"} in [
+        {k: v for k, v in e.items() if k != "seq"} for e in events
+    ]
+    # 每則都帶主機的流水號，照送出的順序遞增
+    seqs = [e["seq"] for e in events]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     stop.set()
 
     detail = httpx.get(f"{api}/api/conversations/{cid}").json()

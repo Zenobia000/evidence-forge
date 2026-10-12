@@ -133,7 +133,7 @@ def create_app(host: ConversationHost) -> FastAPI:
                 yield b": connected\n\n"
                 while True:
                     try:
-                        event = await asyncio.wait_for(subscription.queue.get(), KEEPALIVE_S)
+                        event = await asyncio.wait_for(subscription.get(), KEEPALIVE_S)
                     except TimeoutError:
                         yield b": keepalive\n\n"
                         continue

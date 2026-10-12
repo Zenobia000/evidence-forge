@@ -11,6 +11,7 @@
 1. 主機（`ef serve`）死掉時 Pi 的 stdin 被關，Pi 照 RPC 的規矩自己收掉（rpc.md〈Shutdown〉，spike 實測約 1 秒）。
 2. 萬一它沒收掉（例如卡住），程序群組編號記在 `run/chat-pids/<對話 id>.pid`；
    下次開這個對話（或主機重開）之前，`kill_leftover` 只殺環境變數裡拿著這個對話鑰匙的那一群。
+3. Pi 本體結束時（不管怎麼結束），群組裡留下的子程序一起收掉，整組都結束才刪紀錄。
 """
 
 import itertools
@@ -111,6 +112,26 @@ def build_rpc_command(
     return RpcCommand(argv=argv, env=env, cwd=PI_CWD)
 
 
+def group_members(pgid: int) -> list[int]:
+    """程序群組 `pgid` 裡還活著的程序（殭屍不算）。只有 Linux 有 /proc。
+
+    Pi 本體先結束、它開的子程序還留在群組裡的話，只看領頭那一個會以為群組已經沒了。
+    """
+    found: list[int] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="ascii", errors="replace")
+        except OSError:
+            continue
+        # 程序名稱在括號裡、可能有空白：從最後一個右括號之後切欄位（狀態、父程序、群組…）
+        fields = stat[stat.rfind(")") + 2 :].split()
+        if len(fields) > 2 and fields[0] != "Z" and fields[2] == str(pgid):
+            found.append(int(entry.name))
+    return found
+
+
 def _holds_conversation(pid: int, conversation_id: str) -> bool:
     """`pid` 的環境變數裡拿著這個對話（任何一次開）的鑰匙。pid 會被重用，所以不照名稱認。"""
     try:
@@ -121,11 +142,36 @@ def _holds_conversation(pid: int, conversation_id: str) -> bool:
     return any(entry.startswith(prefix) for entry in environ.split(b"\0"))
 
 
-def kill_leftover(data: DataDir, conversation_id: str, *, wait_s: float = 5.0) -> int | None:
-    """前一個主機留下、還活著的這個對話的 Pi：整個程序群組送 SIGKILL，等它死透。
+def _ours(pgid: int, conversation_id: str) -> bool:
+    """群組裡還有程序拿著這個對話的鑰匙（子程序繼承 Pi 的環境變數）。"""
+    return any(_holds_conversation(pid, conversation_id) for pid in group_members(pgid))
 
-    回傳殺掉的程序群組編號；沒有就是 None。`wait_s` 秒內還沒死透就丟 `RuntimeError`，
+
+def kill_group(pgid: int, *, wait_s: float = 5.0) -> None:
+    """對整個程序群組送 SIGKILL，等到群組裡一個活的都不剩；等不到丟 `RuntimeError`。
+
+    群組裡已經沒有活的就什麼都不送：群組還有成員時編號不會被重用，沒有成員的編號可能已經是別人的。
+    """
+    if not group_members(pgid):
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + wait_s
+    while group_members(pgid):
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"程序群組 {pgid} 送了 SIGKILL 還沒結束")
+        time.sleep(0.01)
+
+
+def kill_leftover(data: DataDir, conversation_id: str, *, wait_s: float = 5.0) -> int | None:
+    """前一個主機留下、還活著的這個對話的 Pi（連它的子程序）：整個程序群組送 SIGKILL，等它死透。
+
+    回傳殺掉的程序群組編號；沒有就是 None。看的是群組裡每一個還活著的程序，不只領頭的那個：
+    Pi 本體先結束、子程序還在的話也要收。`wait_s` 秒內還沒死透就丟 `RuntimeError`，
     這時不能開新的 Pi（舊的鑰匙雖然會被閘道拒絕，但兩個 Pi 會搶同一份對話紀錄）。
+    整組都結束才刪紀錄。
     """
     path = pid_file(data, conversation_id)
     try:
@@ -133,18 +179,10 @@ def kill_leftover(data: DataDir, conversation_id: str, *, wait_s: float = 5.0) -
     except FileNotFoundError:
         return None
     pgid = int(text) if text.isdigit() else None
-    if pgid is None or not _holds_conversation(pgid, conversation_id):
+    if pgid is None or not _ours(pgid, conversation_id):
         path.unlink(missing_ok=True)
         return None
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    deadline = time.monotonic() + wait_s
-    while _holds_conversation(pgid, conversation_id):
-        if time.monotonic() > deadline:
-            raise RuntimeError(f"對話 {conversation_id} 前一次的 Pi（程序群組 {pgid}）殺不掉")
-        time.sleep(0.01)
+    kill_group(pgid, wait_s=wait_s)
     path.unlink(missing_ok=True)
     return pgid
 
@@ -173,8 +211,11 @@ class PiProcess:
         on_exit: Callable[[int], None],
         stderr_path: Path,
         pid_path: Path,
+        write_timeout_s: float = 5.0,
     ) -> None:
         self.key = key
+        # 等寫入鎖最多多久：別人卡在寫（Pi 不讀 stdin 了）時，後到的不能跟著永遠等
+        self._write_timeout_s = write_timeout_s
         self._command = command
         self._stages = stages
         self._on_event = on_event
@@ -216,6 +257,20 @@ class PiProcess:
             target=self._read, name=f"pi-{self.key}", daemon=True
         )
         self._reader.start()
+        # Pi 本體一結束就收掉群組裡留下的子程序：它們拿著 Pi 的 stdout，
+        # 不收的話讀取執行緒讀不到結尾，主機也不會知道 Pi 已經死了（等它結束，不輪詢）
+        threading.Thread(
+            target=self._reap_group, name=f"pi-wait-{self.key}", daemon=True
+        ).start()
+
+    def _reap_group(self) -> None:
+        process = self._process
+        assert process is not None
+        process.wait()
+        try:
+            kill_group(process.pid)
+        except RuntimeError:
+            _log.warning("對話 %s 的 Pi 留下的程序收不掉", self.key.conversation_id, exc_info=True)
 
     @property
     def pid(self) -> int | None:
@@ -258,13 +313,16 @@ class PiProcess:
         if process is None or process.stdin is None or self._exited.is_set():
             raise PiExited(f"{self.key} 的 Pi 沒有開")
         line = json.dumps({**command, "id": request_id}, ensure_ascii=False) + "\n"
-        with self._write_lock:
-            try:
-                process.stdin.write(line.encode("utf-8"))
-                process.stdin.flush()
-            except (ValueError, OSError) as exc:
-                # 關掉的 stdin 丟 ValueError，Pi 已經死掉丟 BrokenPipeError（OSError 的一種）
-                raise PiExited(f"{self.key} 的 Pi 已經結束：{exc}") from None
+        if not self._write_lock.acquire(timeout=self._write_timeout_s):
+            raise PiExited(f"{self.key} 的 Pi 卡住了（{self._write_timeout_s:g} 秒寫不進指令）")
+        try:
+            process.stdin.write(line.encode("utf-8"))
+            process.stdin.flush()
+        except (ValueError, OSError) as exc:
+            # 關掉的 stdin 丟 ValueError，Pi 已經死掉丟 BrokenPipeError（OSError 的一種）
+            raise PiExited(f"{self.key} 的 Pi 已經結束：{exc}") from None
+        finally:
+            self._write_lock.release()
 
     def _read(self) -> None:
         process = self._process
@@ -290,6 +348,11 @@ class PiProcess:
             except Exception:
                 _log.exception("對話 %s 的事件處理失敗", self.key.conversation_id)
         returncode = process.wait()
+        # Pi 本體結束了，它開的子程序可能還在群組裡：一起收掉，整組都結束才刪紀錄
+        try:
+            kill_group(process.pid)
+        except RuntimeError:
+            _log.warning("對話 %s 的 Pi 留下的程序收不掉", self.key.conversation_id, exc_info=True)
         self._exited.set()
         # 還在等回應的不要空等到逾時：叫醒它們，它們會看到沒有回應
         with self._pending_lock:
@@ -334,15 +397,33 @@ class PiProcess:
     def kill(self) -> None:
         """直接殺掉整個程序群組（關不掉時用；測試用它模擬當機）。"""
         process = self._process
-        if process is not None and process.poll() is None:
+        if process is None:
+            return
+        if process.poll() is None:
+            # 還沒收屍：編號一定還是它的
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             process.wait()
+        # 留在群組裡的子程序也收掉
+        try:
+            kill_group(process.pid)
+        except RuntimeError:
+            _log.warning("對話 %s 的 Pi 留下的程序收不掉", self.key.conversation_id, exc_info=True)
 
     def join(self, timeout_s: float = 10.0) -> None:
-        """等讀取執行緒收完尾（撤銷鑰匙、呼叫 `on_exit`）。"""
+        """等讀取執行緒收完尾（撤銷鑰匙、呼叫 `on_exit`）。
+
+        Pi 本體已經結束的話，先收掉群組裡留下的子程序：它們繼承了 Pi 的 stdout，
+        不收的話讀取執行緒一直讀不到結尾。
+        """
+        process = self._process
+        if process is not None and process.poll() is not None:
+            try:
+                kill_group(process.pid)
+            except RuntimeError:
+                _log.warning("對話 %s 的 Pi 留下的程序收不掉", self.key.conversation_id, exc_info=True)
         reader = self._reader
         if reader is not None and reader is not threading.current_thread():
             reader.join(timeout_s)
