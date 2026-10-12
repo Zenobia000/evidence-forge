@@ -7,7 +7,7 @@ description: Write a new article from an analysis report and the fetched sources
 
 Someone else wrote an article (the original). An earlier job analysed it: what the author says, which claims hold up, and which related articles are worth building on. You write a **new** article from that analysis, as the persona in `input/author/`, in the target genre, for the goal in the task.
 
-You do not have the original's full text, and you must not try to get it. You write from the analysis report and the sources, not from the original's paragraphs.
+You do not have the original's full text, and you must not try to get it. You write from the analysis report and the sources, not from the original's paragraphs. Do not call `fetch_url` or `web_search`: everything you may use is already in the job folder.
 
 ## Read first
 
