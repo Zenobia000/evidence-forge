@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from evidence_forge.jobkey import check_name
+
 # 專案根目錄：本檔在 src/evidence_forge/ 底下，往上兩層。
 # uv sync 以可編輯模式安裝，所以這裡指到的就是原始碼所在的 repo（或 worktree）。
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +81,8 @@ class DataDir:
         return self.root / "conversations"
 
     def conversation_dir(self, conversation_id: str) -> Path:
+        # 對話 id 會拼進路徑：跟工單 id 同一套字元規則（擋空字串、`/`、`..`、冒號）
+        check_name("對話 id", conversation_id)
         return self.conversations / conversation_id
 
     def owner_dir(self, owner_id: str) -> Path:

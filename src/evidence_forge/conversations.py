@@ -13,7 +13,6 @@ $EF_DATA/conversations/<對話 id>/
 `job.md` 的 `conversation` 只記「是誰開的」，給投入去重用，不拿來判斷能不能讀。
 """
 
-import json
 import os
 import secrets
 import threading
@@ -30,7 +29,7 @@ from pydantic import (
     ValidationError,
 )
 
-from evidence_forge.jobkey import check_name
+from evidence_forge.gateway.ledger import append_line
 from evidence_forge.paths import DataDir
 
 DEFAULT_BUDGET_USD = 1.0
@@ -67,8 +66,7 @@ class ConversationJob(BaseModel):
 
 
 def _folder(data: DataDir, conversation_id: str) -> Path:
-    # 對話 id 會拼進路徑，跟工單 id 同一套字元規則
-    check_name("對話 id", conversation_id)
+    # 對話 id 的字元規則在 `DataDir.conversation_dir` 檢查
     return data.conversation_dir(conversation_id)
 
 
@@ -131,10 +129,11 @@ def owns_job(data: DataDir, conversation_id: str, job_id: str) -> bool:
 
 
 def add_job(data: DataDir, conversation_id: str, row: ConversationJob) -> None:
-    """記下這個對話開了這張工單；已經記過就不再記（投入去重拿回同一張時）。"""
+    """記下這個對話開了這張工單；已經記過就不再記（投入去重拿回同一張時）。
+
+    跟帳本同一套追加寫入（`append_line`）：一行一次寫完；上一筆寫到一半被砍留下的殘行
+    先補換行封起來，這一筆才不會黏在它後面、一起讀不懂。殘行本身讀的時候跳過。
+    """
     if owns_job(data, conversation_id, row.job_id):
         return
-    path = _jobs_file(data, conversation_id)
-    line = json.dumps(row.model_dump(mode="json"), ensure_ascii=False)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
+    append_line(_jobs_file(data, conversation_id), row.model_dump_json() + "\n")

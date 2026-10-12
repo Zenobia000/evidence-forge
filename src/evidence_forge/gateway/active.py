@@ -11,7 +11,11 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from evidence_forge.convkey import Principal
+from evidence_forge.convkey import ConversationKey, Principal
+
+
+class StaleKey(ValueError):
+    """對話鑰匙比這個對話登記過的還舊（或一樣）：延遲到的前一次開 Pi，不准登記。"""
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,8 @@ class ActiveStages:
         self._lock = threading.Lock()
         # 一張工單同一時間只會有一段一次在跑
         self._by_job: dict[str, _Entry] = {}
+        # 每個對話登記過最大的第幾次開；撤銷之後也記著，舊的那一把永遠登記不回來
+        self._latest_launch: dict[str, int] = {}
 
     def activate(
         self,
@@ -35,6 +41,16 @@ class ActiveStages:
     ) -> None:
         """登記這一段這一次（與它的 skill 資料夾、升級前的等級）；同一張單之前登記的鑰匙同時失效。"""
         with self._lock:
+            if isinstance(key, ConversationKey):
+                # 只認最新那一把（ADR-0021 §3.1）：第 2 次開先登記好、延遲的第 1 次開才來，
+                # 直接覆蓋的話舊鑰匙就復活了
+                latest = self._latest_launch.get(key.conversation_id, 0)
+                if key.launch <= latest:
+                    raise StaleKey(
+                        f"對話 {key.conversation_id} 已經登記過第 {latest} 次開，"
+                        f"不能再登記第 {key.launch} 次"
+                    )
+                self._latest_launch[key.conversation_id] = key.launch
             self._by_job[key.job_id] = _Entry(key, skill_dir, escalated_from)
 
     def deactivate(self, key: Principal) -> None:

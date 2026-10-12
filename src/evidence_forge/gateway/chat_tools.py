@@ -3,6 +3,7 @@
 對話的 Pi 只有這幾個工具，全部帶對話鑰匙（`conv:<id>:<n>`）打 `POST /tools/<名稱>`：
 
 - `analyze`：開一張分析工單，**開了就回**（工單 id 與狀態），不等它跑完。
+  同一份素材在這個對話裡已有排隊中、執行中或完成的單就拿回那一張；帶 `again: true`（重做）就不拿。
 - `read_report`：讀這個對話開過的某張工單的結果。
 - `job_status`：一張工單現在跑到哪。
 
@@ -12,6 +13,9 @@
 - 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1）：
   對話的 agent 可以一直開單，每張單各有預算，不擋的話總花費只剩月上限管得到。
   只擋「要開新單」：同一篇文章再丟一次（連按兩下）照樣拿回那一張，即使它還在跑。
+  「在跑幾張」看 `job.md` 記的是哪個對話開的，不看 `jobs.jsonl`：開了單、還沒記進去就當掉的那張也算。
+  已經滿了而這次不會是拿回在跑的那一張，就在抓網頁之前擋下，不對外抓、不寫投入帳。
+- 工作台回的工單，閘道先讀它的 `job.md`：不是這個對話開的就不記、回 500。範圍由閘道自己把關。
 
 真正開單、讀結果的事交給 `Desk`（對話主機注入，知道配方與 harness）；閘道只管鑰匙、範圍與記帳。
 """
@@ -27,6 +31,8 @@ from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import read_job
 from evidence_forge.gateway.config import GatewayConfig
 from evidence_forge.gateway.scope import ToolRejected
+from evidence_forge.models import Job
+from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
 
 CHAT_TOOLS = frozenset({"analyze", "read_report", "job_status"})
 # 還會花錢的狀態：排隊中的單等一下就會跑
@@ -43,11 +49,12 @@ class Desk(Protocol):
         url: str | None,
         text: str | None,
         goal: str | None,
+        again: bool,
         before_create: Callable[[], None],
     ) -> dict[str, Any]:
         """開單（或拿回這個對話已有的那張）；回 `{"job_id", "created", "status", …}`。
         讀不到網址回 `{"status": "unavailable", "reason"}`，不開單。可以花幾秒抓網頁。
-        `conversation_id` 與 `before_create` 原樣傳給投入（`open_job`）：去重的鍵含對話 id；
+        `conversation_id`、`again` 與 `before_create` 原樣傳給投入（`open_job`）：去重的鍵含對話 id；
         `before_create` 只在要開新單時呼叫，它丟的 `ToolRejected` 要原樣往外丟。"""
         ...
 
@@ -95,34 +102,52 @@ class ChatTools:
         if (url is None) == (text is None):
             raise ToolRejected(400, "url 與 text 要給其中一個")
         goal = _optional(body, "goal")
+        again = body.get("again", False)
+        if not isinstance(again, bool):
+            raise ToolRejected(400, "again 要是 true 或 false")
+        source: Source = WebPage(url) if url is not None else PastedText(text or "")
         data = self._config.data
         conversation_id = key.conversation_id
         if not (data.conversation_dir(conversation_id) / "conversation.json").is_file():
             raise ToolRejected(403, f"沒有這個對話：{conversation_id}")
 
+        limit = self._config.chat_max_running_jobs
+
+        def full(running: list[Job]) -> ToolRejected:
+            ids = "、".join(job.id for job in running)
+            return ToolRejected(
+                409,
+                f"這個對話已經有 {len(running)} 張工單在跑（{ids}），"
+                f"同一時間最多 {limit} 張；等它跑完再開，或請創作者決定",
+            )
+
         def room_for_new_job() -> None:
             # 在投入的鎖裡、確定要開新單時才數：去重拿回舊單不受上限影響
             running = self._running_jobs(conversation_id)
-            limit = self._config.chat_max_running_jobs
             if len(running) >= limit:
-                raise ToolRejected(
-                    409,
-                    f"這個對話已經有 {len(running)} 張工單在跑（{'、'.join(running)}），"
-                    f"同一時間最多 {limit} 張；等它跑完再開，或請創作者決定",
-                )
+                raise full(running)
 
         def open_and_record() -> dict[str, Any]:
+            # 已經滿了，而這次也不會是拿回在跑的那一張（換了素材，或要重做）：
+            # 抓網頁之前就擋下，不然每次都先對外抓、寫投入帳，最後才拒絕
+            running = self._running_jobs(conversation_id)
+            if len(running) >= limit and (
+                again or not any(same_source(data, job, source) for job in running)
+            ):
+                raise full(running)
             # 開單與記進 jobs.jsonl 在同一個執行緒裡做完：請求中途被取消（關機、斷線）時，
-            # 不會留下開了單卻沒記在對話底下、也不算進「在跑」的工單
+            # 不會留下開了單卻沒記在對話底下的工單
             opened = desk.open_analysis(
                 conversation_id=conversation_id,
                 url=url,
                 text=text,
                 goal=goal,
+                again=again,
                 before_create=room_for_new_job,
             )
             job_id = opened.get("job_id")
             if isinstance(job_id, str):
+                self._check_opened_here(conversation_id, job_id)
                 conversations.add_job(
                     data,
                     conversation_id,
@@ -136,17 +161,39 @@ class ChatTools:
         async with lock:
             return await run_in_threadpool(open_and_record)
 
-    def _running_jobs(self, conversation_id: str) -> list[str]:
-        """這個對話還在排隊或在跑的工單。讀不到 `job.md` 的不算：執行器也跑不了它。"""
-        found: list[str] = []
-        for row in conversations.jobs(self._config.data, conversation_id):
+    def _running_jobs(self, conversation_id: str) -> list[Job]:
+        """這個對話開的、還在排隊或在跑的工單。
+
+        看每張單 `job.md` 的 `conversation`（投入時在同一把鎖裡寫的），不看 `jobs.jsonl`：
+        開了單、還沒記進 `jobs.jsonl` 就當掉的那張，照樣算在跑。
+        讀不到 `job.md` 的不算：執行器也跑不了它。
+        """
+        jobs_root = self._config.data.jobs
+        if not jobs_root.is_dir():
+            return []
+        found: list[Job] = []
+        for job_dir in sorted(jobs_root.iterdir()):
             try:
-                job = read_job(self._config.data.job_dir(row.job_id) / "job.md").job
+                job = read_job(job_dir / "job.md").job
             except (OSError, ValueError):
                 continue
-            if job.status in _RUNNING:
-                found.append(row.job_id)
+            if job.conversation == conversation_id and job.status in _RUNNING:
+                found.append(job)
         return found
+
+    def _check_opened_here(self, conversation_id: str, job_id: str) -> None:
+        """工作台回的工單真的是這個對話開的；不是就不記、回 500（ADR-0021 §3.4）。
+
+        記進 `jobs.jsonl` 就讀得到，所以不能只聽工作台的：工作台寫錯，別的對話的單就漏進來。
+        """
+        try:
+            job = read_job(self._config.data.job_dir(job_id) / "job.md").job
+        except (OSError, ValueError):
+            job = None
+        if job is None or job.conversation != conversation_id:
+            raise ToolRejected(
+                500, f"工作台回的工單 {job_id} 不是這個對話開的，沒有記下"
+            )
 
     def _owned_job(self, key: ConversationKey, body: dict[str, Any]) -> str:
         job_id = body.get("job_id")

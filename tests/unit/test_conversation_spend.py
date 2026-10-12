@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from evidence_forge import conversations
 from evidence_forge.gateway.budget import SpendTally, taipei_month
 from evidence_forge.gateway.config import config_from_env
 from evidence_forge.ledger_models import LedgerEntry
+from evidence_forge.jobkey import InvalidJobKey
 from evidence_forge.paths import DataDir
 
 NOW = datetime(2026, 10, 13, 5, 0, tzinfo=UTC)
@@ -73,3 +75,24 @@ def test_帳本一行只屬於一張工單或一個對話() -> None:
         LedgerEntry.model_validate(_row())
     with pytest.raises(ValueError):
         LedgerEntry.model_validate(_row(job_id="j1", conversation_id="c1"))
+
+
+@pytest.mark.parametrize("bad", ["", "../jobs/x", "a/b", "c:1", ".hidden", "a..b"])
+def test_對話資料夾的路徑擋不合法的_id(tmp_path: Path, bad: str) -> None:
+    data = DataDir(tmp_path)
+    with pytest.raises(InvalidJobKey):
+        data.conversation_dir(bad)
+    with pytest.raises(InvalidJobKey):
+        data.owner_dir(f"conv:{bad}")
+
+
+def test_jobs_jsonl_有寫到一半的殘行_下一筆照樣讀得到(tmp_path: Path) -> None:
+    data = DataDir(tmp_path)
+    conversation = conversations.create(data, NOW)
+    path = data.conversation_dir(conversation.id) / "jobs.jsonl"
+    path.write_text('{"job_id": "J0", "ts": "2026-10', encoding="utf-8")
+    conversations.add_job(
+        data, conversation.id, conversations.ConversationJob(job_id="J1", ts=NOW)
+    )
+    assert [row.job_id for row in conversations.jobs(data, conversation.id)] == ["J1"]
+    assert path.read_text(encoding="utf-8").endswith("\n")

@@ -11,6 +11,8 @@
 """
 
 import json
+import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -31,6 +33,7 @@ from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.models import JobResult, Recipe, RecipeStage
 from evidence_forge.paths import DataDir
+from evidence_forge.gateway.active import StaleKey
 from evidence_forge.runner.intake import PastedText, open_job
 
 NOW = datetime(2026, 10, 13, 5, 0, tzinfo=UTC)
@@ -68,6 +71,10 @@ class IntakeDesk:
     def __init__(self, data: DataDir) -> None:
         self.data = data
         self.opened: list[dict[str, Any]] = []
+        # 開單前故意等一下：讓兩個同時送來的請求撞在一起
+        self.delay_s = 0.0
+        # 不照實回：開完單卻回另一張單的 id（閘道不能相信工作台）
+        self.forged_job_id: str | None = None
 
     def open_analysis(
         self,
@@ -76,11 +83,13 @@ class IntakeDesk:
         url: str | None,
         text: str | None,
         goal: str | None,
+        again: bool,
         before_create: Callable[[], None],
     ) -> dict[str, Any]:
         self.opened.append({"conversation_id": conversation_id, "url": url})
         if url is not None:
             return {"status": "unavailable", "reason": "付費牆"}
+        time.sleep(self.delay_s)
         intake = open_job(
             self.data,
             RECIPE,
@@ -88,10 +97,11 @@ class IntakeDesk:
             goal=goal,
             now=NOW,
             conversation=conversation_id,
+            again=again,
             before_create=before_create,
         )
         return {
-            "job_id": intake.job.id,
+            "job_id": self.forged_job_id or intake.job.id,
             "created": intake.created,
             "status": intake.job.status,
         }
@@ -162,14 +172,18 @@ class Env:
             timeout=10,
         )
 
-    def finish(self, job_id: str) -> None:
+    def finish(
+        self, job_id: str, outcome: str = "complete", reason: str = "跑完"
+    ) -> None:
         """把工單改成跑完（待審）：執行器會做的事，這裡直接寫 `job.md`。"""
         path = self.data.job_dir(job_id) / "job.md"
         job = read_job(path).job
         done = job.model_copy(
             update={
                 "status": "review",
-                "result": JobResult(outcome="complete", reason="跑完"),
+                "result": JobResult.model_validate(
+                    {"outcome": outcome, "reason": reason}
+                ),
             }
         )
         write_job(path, JobDocument(job=done))
@@ -271,6 +285,32 @@ def test_沒有對話資料夾的鑰匙不能開單(env: Env) -> None:
     assert not env.data.conversation_dir(ghost.conversation_id).exists()
 
 
+@pytest.mark.parametrize(
+    ("outcome", "reason"), [("failed", "模型後端連不上"), ("incomplete", "預算用完")]
+)
+def test_失敗或未完成的單不拿回_再丟一次開新單(
+    env: Env, outcome: str, reason: str
+) -> None:
+    first = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
+    env.finish(first, outcome=outcome, reason=reason)
+    again = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
+    assert again != first
+
+
+def test_帶_again_就重做_不拿回完成的那張(env: Env) -> None:
+    first = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
+    env.finish(first)
+    redo = env.call("analyze", env.mine, text="# 一篇\n\n內容", again=True)
+    assert redo.json()["created"] is True
+    assert _opened(redo) != first
+    assert len(conversations.jobs(env.data, env.mine.conversation_id)) == 2
+
+
+def test_again_要是布林值(env: Env) -> None:
+    response = env.call("analyze", env.mine, text="# 一篇\n\n內容", again="yes")
+    assert response.status_code == 400
+
+
 # --- 範圍 -------------------------------------------------------------------
 
 
@@ -338,6 +378,26 @@ def test_接回之後舊鑰匙被拒_新鑰匙可以用(env: Env) -> None:
     assert env.call("analyze", relaunched, text="# a\n\nb").status_code == 200
 
 
+def test_倒過來的順序登記_舊鑰匙不會復活(env: Env) -> None:
+    # 第 2 次開先登記好，延遲的第 1 次開才來登記：拒絕，而且第 1 把照樣被拒
+    relaunched = ConversationKey(env.mine.conversation_id, 2)
+    env.stages.activate(relaunched)
+    with pytest.raises(StaleKey):
+        env.stages.activate(env.mine)
+    assert env.call("analyze", env.mine, text="# a\n\nb").status_code == 403
+    assert env.message(env.mine).status_code == 403
+    assert env.call("analyze", relaunched, text="# a\n\nb").status_code == 200
+
+
+def test_同一把鑰匙不能登記兩次_撤銷之後也不能再登記(env: Env) -> None:
+    with pytest.raises(StaleKey):
+        env.stages.activate(env.mine)
+    env.stages.deactivate(env.mine)
+    with pytest.raises(StaleKey):
+        env.stages.activate(env.mine)
+    assert env.call("analyze", env.mine, text="# a\n\nb").status_code == 403
+
+
 def test_Pi_結束撤銷之後鑰匙被拒(env: Env) -> None:
     env.stages.deactivate(env.mine)
     assert env.call("analyze", env.mine, text="# a\n\nb").status_code == 403
@@ -359,6 +419,74 @@ def test_對話已有一張工單在跑_第二張被拒_跑完才能再開(env: 
     _opened(env.call("analyze", env.other, text="# 第二篇\n\n內容"))
     env.finish(first)
     _opened(env.call("analyze", env.mine, text="# 第二篇\n\n內容"))
+
+
+def test_同時送來兩篇_只開得了一張(env: Env) -> None:
+    env.desk.delay_s = 0.3
+    start = threading.Barrier(2)
+    statuses: list[int] = []
+
+    def send(article: str) -> None:
+        start.wait()
+        statuses.append(env.call("analyze", env.mine, text=article).status_code)
+
+    threads = [
+        threading.Thread(target=send, args=(f"# 第 {n} 篇\n\n內容 {n}",))
+        for n in (1, 2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(statuses) == [200, 409]
+    assert len(conversations.jobs(env.data, env.mine.conversation_id)) == 1
+
+
+def test_開了單卻沒記進_jobs_jsonl_的單也算在跑(env: Env) -> None:
+    # 開單之後、記進 jobs.jsonl 之前當掉：那張單已經在排隊，`job.md` 記著是這個對話開的
+    open_job(
+        env.data,
+        RECIPE,
+        PastedText("# 當掉前開的\n\n內容"),
+        goal=None,
+        now=NOW,
+        conversation=env.mine.conversation_id,
+    )
+    assert conversations.jobs(env.data, env.mine.conversation_id) == []
+    assert env.call("analyze", env.mine, text="# 另一篇\n\n內容").status_code == 409
+
+
+def test_有單在跑時換別的網址_抓之前就擋下(env: Env) -> None:
+    _opened(env.call("analyze", env.mine, text="# 第一篇\n\n內容"))
+    response = env.call("analyze", env.mine, url="https://example.com/other")
+    assert response.status_code == 409
+    # 工作台沒被叫到：沒有對外抓取，也沒有寫投入帳
+    assert len(env.desk.opened) == 1
+
+
+def test_有單在跑時同一篇換目標_抓了之後開新單時擋下(env: Env) -> None:
+    # 同一份素材過得了抓之前那一關（可能只是拿回在跑的那張），但目標不同要開新單，照樣擋
+    _opened(env.call("analyze", env.mine, text="# 第一篇\n\n內容"))
+    response = env.call("analyze", env.mine, text="# 第一篇\n\n內容", goal="另一個目標")
+    assert response.status_code == 409
+    assert len(env.desk.opened) == 2
+    assert len(conversations.jobs(env.data, env.mine.conversation_id)) == 1
+
+
+def test_有單在跑時帶_again_重做_也先擋下(env: Env) -> None:
+    _opened(env.call("analyze", env.mine, text="# 第一篇\n\n內容"))
+    response = env.call("analyze", env.mine, text="# 第一篇\n\n內容", again=True)
+    assert response.status_code == 409
+    assert len(env.desk.opened) == 1
+
+
+def test_工作台回別的對話的單_不記進來(env: Env) -> None:
+    theirs = _opened(env.call("analyze", env.other, text="# 別人的\n\n內容"))
+    env.desk.forged_job_id = theirs
+    response = env.call("analyze", env.mine, text="# 我的\n\n內容")
+    assert response.status_code == 500
+    assert not conversations.owns_job(env.data, env.mine.conversation_id, theirs)
+    assert env.call("read_report", env.mine, job_id=theirs).status_code == 403
 
 
 def test_同一時間在跑的工單上限可以設定(env: Env) -> None:

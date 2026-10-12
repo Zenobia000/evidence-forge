@@ -91,6 +91,7 @@ def test_ef_new_同素材同目標_印出已有的那張_不另開(
     captured = capsys.readouterr()
     assert captured.out.strip() == first
     assert "已有工單" in captured.err
+    assert "同一份配方" in captured.err
     assert len(list((ef_data / "jobs").iterdir())) == 1
 
 
