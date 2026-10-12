@@ -11,8 +11,9 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "sources": {
+      "description": "SKILL.md 要求挑 3～5 篇；額度用完或抓不到時只找到 1 篇也算這一段完成，單子是否未完成由執行器看帳本判斷（search_shortfalls）",
       "type": "array",
-      "minItems": 2,
+      "minItems": 1,
       "maxItems": 5,
       "items": {
         "type": "object",

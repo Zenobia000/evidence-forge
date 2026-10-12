@@ -1,6 +1,6 @@
 ---
 name: research
-description: Search the web along the digest's research directions, read the most useful related articles with fetch_url, and list 2 to 5 of them as extra sources in sources.json.
+description: Search the web along the digest's research directions, read the most useful related articles with fetch_url, and list 3 to 5 of them as extra sources in sources.json.
 ---
 
 # research
@@ -22,7 +22,7 @@ The article in `input/content.md` is only the seed: it sets the topic. The autho
 
 ## Choose and read
 
-- Pick 3 to 5 candidates (at least 2) that add something the seed does not have: data, a primary source, a different case, a counter-argument, an expert from another field.
+- Pick 3 to 5 candidates that add something the seed does not have: data, a primary source, a different case, a counter-argument, an expert from another field. When searches run out or pages cannot be read, list what you have, even if it is only one; never list a page you did not fetch to reach a number.
 - Prefer other sites and other authors than the seed. Leave out the seed itself and other posts of the same series or the same author, unless one of them is truly the only source for a direction.
 - If several pages retell the same announcement, paper or study, read the original and count the retellings as one source.
 - Call `fetch_url` on each one you pick. If the result says UNAVAILABLE (paywall, robots.txt, error), drop it and take the next candidate. Do not try other copies of a blocked page. Fetch at most 7 pages in total.

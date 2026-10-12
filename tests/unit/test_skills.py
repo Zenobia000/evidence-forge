@@ -5,7 +5,8 @@
 - agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾（ADR-0018）：`SKILL.md` 提到的路徑
   都要是執行器真的放進工單的（`stage_inputs.PROVIDED`）或這一段的產出目錄。
 - skill 的腳本不准寫檔，結果只印到 stdout（PR #55 審查）。
-- 預設配方 `restructure`：整理用本機（NFR-COST-07）；補料與二創用 `strong`（#70、#63），只有補料段有搜尋額度。
+- 預設配方 `restructure`：整理用本機（NFR-COST-07）。補料與二創用 `strong`（#70、#63），只有補料段有搜尋額度；
+  補料段用 `strong` 是 MVP 暫時偏離 NFR-COST-07（創作者 2026-10-12 決定），所以那條斷言不標它。
 """
 
 import json
@@ -15,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from evidence_forge.checks.format import check_schema
 from evidence_forge.checks.stages import FACT_FIELD, QUOTE_FIELD
 from evidence_forge.harness import default_harness
 from evidence_forge.runner.recipes import load_recipes
@@ -56,6 +58,59 @@ def test_compose_的_schema_每句事實句都要有_C2_認得的_fact_欄位() 
     assert FACT_FIELD in fact["required"]
     assert fact["properties"][FACT_FIELD]["type"] == "string"
     assert fact["properties"][FACT_FIELD]["minLength"] >= 1
+
+
+# research 的產出：合格的最小樣本只有一個來源（額度用完時用手上的收尾，#70 審查第 7 條）
+_RESEARCH_SOURCE = {
+    "id": "S2",
+    "url": "https://a.example/report",
+    "title": "一份報告",
+    "why": "補了種子沒有的數字",
+}
+
+
+def _research_output(**changes: object) -> dict[str, Any]:
+    """`sources.json` 的樣本：只有一個來源；`changes` 改那一個來源的欄位，值是 None 就拿掉。"""
+    source = dict(_RESEARCH_SOURCE)
+    for name, value in changes.items():
+        if value is None:
+            source.pop(name)
+        else:
+            source[name] = value
+    return {"queries": ["specific query"], "sources": [source]}
+
+
+def _research_failures(payload: object) -> set[str | None]:
+    """不符合 research schema 的位置（JSON pointer）；合格是空的。"""
+    return {
+        entry.location.pointer if entry.location is not None else None
+        for entry in check_schema(payload, _schema("research"), file="sources.json")
+        if entry.status == "fail"
+    }
+
+
+@pytest.mark.promise("FR-RS-01")
+def test_research_的_schema_只找到一個來源也合格() -> None:
+    # 單子是否未完成由 search_shortfalls 決定，不是讓這一段失敗
+    assert _research_failures(_research_output()) == set()
+
+
+@pytest.mark.promise("FR-RS-01")
+@pytest.mark.parametrize(
+    ("payload", "pointer"),
+    [
+        ({"queries": ["specific query"], "sources": []}, "/sources"),
+        (_research_output(id="S1"), "/sources/0/id"),
+        (_research_output(why=None), "/sources/0"),
+        (_research_output(note="多寫的欄位"), "/sources/0"),
+        (_research_output(url="ftp://a.example/report"), "/sources/0/url"),
+    ],
+    ids=["零個來源", "編號寫成S1", "缺why", "多一個欄位", "網址不是http"],
+)
+def test_research_的_schema_擋下不合格的來源清單(
+    payload: dict[str, Any], pointer: str
+) -> None:
+    assert _research_failures(payload) == {pointer}
 
 
 @pytest.mark.promise("FR-DG-02")
@@ -161,17 +216,29 @@ def test_skill_的腳本不寫檔_結果只印到_stdout(script: Path) -> None:
     assert writes(script.read_text(encoding="utf-8")) == []
 
 
-@pytest.mark.promise("NFR-COST-07", "FR-RC-01", "FR-RS-01")
-def test_預設配方_restructure_整理在本機_補料與二創用_strong_只有補料能搜尋() -> None:
+def _restructure_stages() -> dict[str, tuple[str, str, str | None, int]]:
     recipe = load_recipes(HARNESS, ("local", "strong", "max"))["restructure"]
-    assert [
-        (s.id, s.skill, s.tier, s.escalate_to, s.tavily_credits) for s in recipe.stages
-    ] == [
-        ("digest", "digest", "local", None, 0),
-        ("research", "research", "strong", None, 12),
-        # #63：MVP 暫用 local 的二創改回 strong
-        ("compose", "compose", "strong", None, 0),
-    ]
+    return {
+        s.id: (s.skill, s.tier, s.escalate_to, s.tavily_credits) for s in recipe.stages
+    }
+
+
+@pytest.mark.promise("NFR-COST-07")
+def test_預設配方_restructure_整理在本機() -> None:
+    assert _restructure_stages()["digest"] == ("digest", "local", None, 0)
+
+
+@pytest.mark.promise("FR-RC-01", "FR-RS-01")
+def test_預設配方_restructure_三段_補料與二創暫用_strong_只有補料能搜尋() -> None:
+    # 補料段用 strong 是暫時偏離 NFR-COST-07（PRD 要本機）：創作者 2026-10-12 決定，
+    # 為了品質與工具呼叫可靠度，S1 評估時再跟本機比。二創改回 strong 是 #63
+    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["restructure"]
+    assert _restructure_stages() == {
+        "digest": ("digest", "local", None, 0),
+        "research": ("research", "strong", None, 12),
+        "compose": ("compose", "strong", None, 0),
+    }
+    assert [s.id for s in recipe.stages] == ["digest", "research", "compose"]
     assert recipe.on_feedback == "compose"
     assert (recipe.max_attempts, recipe.auto_fix) == (2, 1)
     assert recipe.default_goal
