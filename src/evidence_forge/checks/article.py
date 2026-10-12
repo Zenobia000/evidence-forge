@@ -9,6 +9,7 @@
 全部是純函式：檔案由執行器讀好傳進來，不讀檔、不寫檔、不呼叫模型。
 """
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,10 +17,12 @@ from evidence_forge.checks.analysis import headings
 from evidence_forge.checks.format import check_markdown, check_schema
 from evidence_forge.checks.overlap import OverlapThresholds, check_overlap
 from evidence_forge.checks.report import CheckEntry, Location
-from evidence_forge.checks.text import normalize_for_match
+from evidence_forge.checks.text import normalize_for_match, normalize_url
 
 # 文章結尾那一節的標題；`harness/skills/rewrite/SKILL.md` 照這個寫
 REFERENCES_HEADING = "參考來源"
+# 參考來源裡的網址：到空白、全形標點或 Markdown 的括號為止
+_URL = re.compile(r"https?://[^\s<>\]）】」，。、；]+")
 
 
 def split_references(article: str) -> tuple[str, str | None, int | None]:
@@ -70,7 +73,12 @@ def check_references(
         ]
     if original_url:
         wanted = original_url.strip().rstrip("/")
-        if wanted not in references:
+        # 跟分析報告的來源清單用同一套網址比對（`normalize_url`）：主機大小寫、# 片段、結尾的 / 不算差別
+        listed = {
+            normalize_url(url.rstrip(").,"))
+            for url in _URL.findall(references)
+        }
+        if normalize_url(wanted) not in listed and wanted not in references:
             return [
                 _fail(
                     f"「{REFERENCES_HEADING}」沒有列原文出處：要有原文的網址 {wanted}",

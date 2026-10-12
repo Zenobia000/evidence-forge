@@ -624,8 +624,10 @@ class Runner:
             doc, result = self._run_stage(job_dir, doc, recipe, stage, progress)
             if result is not None:
                 if result.outcome == "incomplete":
-                    # 後面的段自己沒做完：搜尋沒做完整的事也一起寫，創作者才看得到全貌
+                    # 後面的段自己沒做完：搜尋沒做完整、未校準的事也一起寫，創作者才看得到全貌
                     notes = search_shortfalls(self.data, job_dir)
+                    if note := writing_mark(job_dir, doc.job, recipe):
+                        notes.append(note)
                     if notes:
                         result = JobResult(
                             outcome="incomplete",

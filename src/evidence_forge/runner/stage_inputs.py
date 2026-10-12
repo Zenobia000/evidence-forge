@@ -133,7 +133,8 @@ def carried_files(parent_dir: Path) -> dict[str, Path]:
     - 段產出只帶**過了程式檢查**的那一次（執行器寫的 `checks.vN.json`）；同一個檔名有好幾份時取最新的。
       沒過的產出（例：查證段第一次少一節的報告）不算。
     - 上一張單自己從更上一張帶來的（`input/report.md` 等）也帶：再改的工單從上一版拿報告。
-      上一張單有自己的產出時，以產出為準（再改的上一版文章是上一張寫的，不是它拿到的）。
+      上一張單有自己的產出時，以產出為準。上一版文章例外：只認上一張單自己過了檢查的文章，
+      它沒寫成就沒有，不會拿更早那一版充數（再改的意見是對上一張的文章寫的）。
     - 來源正文 `input/sources/S<n>.md` 全部帶。原文全文 `input/content.md` 不帶。
     """
     found: dict[str, Path] = {}
@@ -145,7 +146,8 @@ def carried_files(parent_dir: Path) -> dict[str, Path]:
                 found[target] = path
     for target in CARRIED.values():
         inherited = parent_dir / target
-        if target not in found and inherited.is_file():
+        # 上一版文章只算上一張單自己寫、過了檢查的那一份；它沒寫成，不拿更早那一版充數
+        if target != PREVIOUS_ARTICLE and target not in found and inherited.is_file():
             found[target] = inherited
     sources = parent_dir / SOURCES_DIR
     if sources.is_dir():
@@ -253,6 +255,9 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
         if not parent.is_dir():
             raise InputError(f"找不到上一張工單 {job.parent}")
         for relative, source in carried_files(parent).items():
+            if relative == PREVIOUS_ARTICLE and not job.feedback:
+                # 沒有意見就不是再改（例：換角色重寫）：不放上一版，免得照著上一版抄
+                continue
             put(relative, source.read_bytes())
 
     # 最後才寫：寫之前當機，下次重開會從頭再放一次（已經放好的檔沿用）

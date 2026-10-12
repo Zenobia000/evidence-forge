@@ -37,7 +37,11 @@ calibrated: true
 
 
 def _job(
-    genre: str | None, *, persona: str | None = None, parent: str | None = None
+    genre: str | None,
+    *,
+    persona: str | None = None,
+    parent: str | None = None,
+    feedback: str | None = None,
 ) -> Job:
     return Job(
         id="j1",
@@ -47,6 +51,7 @@ def _job(
         target_genre=genre,
         persona=persona,
         parent=parent,
+        feedback=feedback,
         budget=Budget(usd=0.5),
         status="queued",
     )
@@ -271,7 +276,7 @@ def test_再改從上一版重構工單開_拿到上一版文章_報告與來源
     )
     v2 = _rewrite_job_dir(data, "v2")
 
-    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1"))
+    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1", feedback="改短"))
 
     inputs = v2 / "input"
     assert (inputs / "article.md").read_text(encoding="utf-8") == "# 第一版"
@@ -339,3 +344,33 @@ def test_角色沒有目標文類的風格_標未校準_有而且校準過就不
     note = uncalibrated(plain, _job("tutorial"))
     assert note is not None and "未校準" in note and "tutorial" in note
     assert uncalibrated(styled, _job("opinion")) is None
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_上一版的文章沒過檢查_不拿更早那一版充數(tmp_path: Path) -> None:
+    # v2 帶著 v1 修到上限還沒過；再從 v2 改時，「上一版」不能悄悄變回 v1
+    data = _data(tmp_path)
+    _analysis(data)
+    v1 = _rewrite_job_dir(data, "v1")
+    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    _checked(v1, "rewrite", 1, {"article.md": "# 第一版"}, passed=True)
+    v2 = _rewrite_job_dir(data, "v2")
+    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1", feedback="改短"))
+    _checked(v2, "rewrite", 1, {"article.md": "# 第二版"}, passed=False)
+
+    assert "input/article.md" not in carried_files(v2)
+    assert "input/report.md" in carried_files(v2)
+
+
+def test_換角色重寫不帶意見_不放上一版文章(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _analysis(data)
+    v1 = _rewrite_job_dir(data, "v1")
+    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    _checked(v1, "rewrite", 1, {"article.md": "# 第一版"}, passed=True)
+    fresh = _rewrite_job_dir(data, "fresh")
+
+    prepare_inputs(HARNESS, data, fresh, _job("opinion", parent="v1"))
+
+    assert not (fresh / "input" / "article.md").exists()
+    assert (fresh / "input" / "report.md").is_file()

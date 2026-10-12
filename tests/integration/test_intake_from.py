@@ -175,3 +175,9 @@ def test_要上一張單的配方不帶_from_就不開單_不要的配方不收_
         open_job(data, REWRITE, PastedText("文章"), goal=None, now=NOW)
     with pytest.raises(ValueError, match="--from"):
         _rewrite(data, _analysis(data), recipe=ANALYZE)
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_投入新素材時指定的角色不存在_也不開單(data: DataDir) -> None:
+    with pytest.raises(ValueError, match="ghost"):
+        open_job(data, ANALYZE, PastedText("文章"), goal=None, now=NOW, persona="ghost")

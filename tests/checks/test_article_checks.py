@@ -130,3 +130,9 @@ def test_文章不是標準_Markdown_擋下() -> None:
 
 def test_article_json_不合_schema_擋下() -> None:
     assert _failed(_check(BODY + REFERENCES, output={"headline": "打錯欄位"}))
+
+
+def test_網址寫法不同但是同一個網址_也認得() -> None:
+    # 主機大小寫、結尾的 # 片段不算差別（跟分析報告的來源清單檢查用同一套比對）
+    article = BODY + f"## 參考來源\n\n- {TITLE}，https://SEED.example/posts/night-library#top\n"
+    assert not _failed(_references(article))

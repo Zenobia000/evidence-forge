@@ -269,6 +269,8 @@ def open_job(
         raise ValueError(
             f"配方 {recipe.name} 要從上一張工單接著做：用 --from 指定那張單，不投入新素材"
         )
+    if persona is not None:
+        _check_persona(data, persona)
     chosen_goal = effective_goal(recipe, goal)
     # 目標文類沒指定就用作家設定的預設文類，開單時記進 job.md（FR-CP-03、ADR-0015 §3.5）
     genre = genre or default_genre(data, persona or AUTHOR)
@@ -309,6 +311,19 @@ def open_job(
             persona,
         )
     return Intake(job=job, created=True)
+
+
+def _check_persona(data: DataDir, persona: str) -> None:
+    """角色一定要是 `authors/` 底下現有的資料夾；不是就丟 `ValueError`，列出現有的角色。
+
+    只認名單上的名字，所以 `../x` 這種會跑出 `authors/` 的寫法也一起擋掉。
+    """
+    known = personas(data)
+    if persona not in known:
+        raise ValueError(
+            f"沒有角色 {persona}（有：{'、'.join(known) or '還沒有任何角色'}）；"
+            f"角色是 {data.authors}/<角色>/ 一個資料夾"
+        )
 
 
 def open_job_from(
@@ -357,12 +372,7 @@ def open_job_from(
 
     same = parent.recipe == recipe.name
     chosen_persona = persona or (parent.persona if same else None) or AUTHOR
-    known = personas(data)
-    if chosen_persona not in known:
-        raise ValueError(
-            f"沒有角色 {chosen_persona}（有：{'、'.join(known) or '還沒有任何角色'}）；"
-            f"角色是 {data.authors}/<角色>/ 一個資料夾"
-        )
+    _check_persona(data, chosen_persona)
     chosen_goal = (
         (goal or "").strip()
         or (parent.goal if same else "")

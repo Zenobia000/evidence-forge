@@ -41,13 +41,12 @@ from evidence_forge.runner.stage_inputs import CONTENT, SOURCES_DIR, put_once
 
 # 宣告這個產出的段交的是來源清單，執行器照它放正文
 SOURCES_FILE = "sources.json"
-SEED_ID = "S1"
-# 任務說明裡「原文出處」的標題最多幾個字
+# 任務說明裡「原文出處」的標題、作者各最多幾個字
 ORIGIN_TITLE_MAX = 200
 SEED = Path(CONTENT)
 
 _PLACED = re.compile(r"^S([0-9]+)\.md$")
-# 放好的來源檔：檔頭與正文之間的分隔，與檔頭裡出處的欄位名（`render` 寫、`job_sources` 讀）
+# 放好的來源檔：檔頭與正文之間的分隔，與檔頭裡出處的欄位名（`render` 寫、`placed_sources` 讀）
 _SEPARATOR = "\n\n---\n\n"
 _TITLE = "標題"
 _URL = "網址"

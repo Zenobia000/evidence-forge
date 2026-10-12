@@ -219,6 +219,8 @@ def test_一直沒列原文出處_修到上限以未完成結束_寫明沒過的
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "incomplete"
     assert "C5" in job.result.reason
+    # 沒做完也照樣標未校準
+    assert "未校準" in job.result.reason
 
 
 @pytest.mark.promise("FR-RW-01")
