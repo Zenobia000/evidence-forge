@@ -92,14 +92,20 @@ def stage_prompt(
     `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
     `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
     `cited` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列：每個來源的編號、
-    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時一個字都不多
-    （整理段、補料段與 echo 的請求跟以前一樣）。
+    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時，種子有網址才多一行
+    原文出處（分析報告的來源清單要列，#78）；貼上的文字、上傳的檔案沒有網址，一個字都不多
+    （錄音的種子都是貼上的文字，錄好的請求照樣對得上）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
     listed = ""
-    if cited is not None and len(cited) > 1:
+    if cited is not None and len(cited) == 1:
+        seed = cited.get(sources.SEED_ID)
+        if seed is not None and seed.url:
+            # 只有種子、種子有網址：分析報告的來源清單要列原文出處（PRD §5），agent 讀不到素材項目
+            listed = f"原文出處：{seed.title}，{seed.url}\n"
+    elif cited is not None and len(cited) > 1:
         paths = "、".join(
             f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
         )
