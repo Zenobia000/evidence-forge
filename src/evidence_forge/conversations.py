@@ -15,6 +15,7 @@ $EF_DATA/conversations/<對話 id>/
 import json
 import os
 import secrets
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def create(data: DataDir, now: datetime, title: str = "新對話") -> Conversati
 
 def save(data: DataDir, conversation: Conversation) -> None:
     path = _meta(data, conversation.id)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     temporary.write_text(conversation.model_dump_json(indent=2), encoding="utf-8")
     os.replace(temporary, path)
 

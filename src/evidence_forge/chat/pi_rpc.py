@@ -173,7 +173,7 @@ class PiConversation:
         self._pending[request_id] = (done, box)
         try:
             self.send({**command, "id": request_id})
-            if not done.wait(timeout_s):
+            if not done.wait(timeout_s) or not box:
                 raise TimeoutError(f"Pi 沒有回應 {command.get('type')}")
             return box[0]
         finally:
@@ -202,6 +202,9 @@ class PiConversation:
             except Exception:
                 _log.exception("對話事件處理失敗")
         returncode = process.wait()
+        # 還在等回應的 request 不要空等到逾時：叫醒它們，它們會看到沒有回應
+        for done, _ in list(self._pending.values()):
+            done.set()
         # Pi 已經結束才撤銷：撤銷之後不會再有這把鑰匙的請求
         self._stages.deactivate(self.key)
         self._on_event({"type": "ef_pi_exit", "returncode": returncode})

@@ -116,10 +116,12 @@ class ChatHub:
         if message.startswith("/"):
             return "以 / 開頭的訊息不送（會被當成 Pi 的指令）"
         pi = self.ensure(conversation_id)
-        conversation = conversations.read(self._data, conversation_id)
-        if conversation.title == "新對話":
-            conversation.title = message[:40]
-            conversations.save(self._data, conversation)
+        # 跟 ensure 改 launches 用同一把鎖：讀改寫 conversation.json 不能交錯，不然開過幾次會被蓋回去
+        with self._lock:
+            conversation = conversations.read(self._data, conversation_id)
+            if conversation.title == "新對話":
+                conversation.title = message[:40]
+                conversations.save(self._data, conversation)
         pi.send({"type": "prompt", "message": message, "streamingBehavior": "followUp"})
         return None
 
@@ -194,6 +196,7 @@ class ChatHub:
                 self._progress[(conversation_id, job_id)] = status
                 self._emit(conversation_id, {"type": "ef_job", "at": time.time(), **status})
             if status["status"] in _FINISHED and job_id not in notified:
-                notified.add(job_id)
                 # 擴充指令：Pi 正在回答時也會馬上執行，通知本身排在回答之後（deliverAs followUp）
                 pi.send({"type": "prompt", "message": f"/ef-job-done {job_id}"})
+                # 送成功才算送過：Pi 剛好死掉時 send 會丟例外，下一輪再送
+                notified.add(job_id)
