@@ -6,6 +6,8 @@
   產出不合 schema、整理段的 C1／C5 沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
   就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
   二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
+- 搜尋額度（Tavily credits）用完不擋下那一段：agent 用已經找到的資料收尾，後面的段照跑；
+  全部段跑完時看帳本有沒有被拒的搜尋，有就以 `incomplete`（預算用完）進待審，沒有才是 `complete`。
 - 每一次（重試、升級、自動修）編號往上加，產出各自一個目錄；狀態寫在 `job.md` 的 `stage`，
   重開 `ef serve` 時從所在那段、同一次重跑，前面的請求命中閘道快取（NFR-RUN-04）。
   鑰匙跟當機前一樣，所以登記之前先殺掉前一個 `ef serve` 留下的 Pi（SEAM-12）。
@@ -32,10 +34,11 @@ import jsonschema
 
 from evidence_forge.checks import ChecksReport, SchemaError
 from evidence_forge.documents import JobDocument, read_job, write_job
+from evidence_forge.gateway import ledger
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import MODELS_YAML
 from evidence_forge.gateway.board import JobBoard
-from evidence_forge.gateway.budget import LIMIT_REASONS
+from evidence_forge.gateway.budget import CREDITS_REASON, LIMIT_REASONS
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import JobKey
 from evidence_forge.models import (
@@ -197,7 +200,24 @@ def open_tool(log_path: Path) -> str | None:
 
 
 # 後端代號 → 待審原因裡給人看的名字（「失敗：Ollama 沒回應」）
-BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic"}
+BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily"}
+
+
+def searches_refused(job_dir: Path) -> list[str]:
+    """哪幾段有搜尋因為 Tavily credits 不夠被拒（帳本裡 `search` 的 `budget_exceeded`），照先後排。
+
+    看帳本而不是告示板：這件事到全部段跑完才用得上，中間可能重開過 `ef serve`（告示板會清空）；
+    重播時閘道也照錄音記同樣的一行，結果跟錄音時一樣。
+    """
+    stages: list[str] = []
+    for entry in ledger.read(job_dir / "ledger.jsonl"):
+        if (
+            entry.kind == "search"
+            and entry.status == "budget_exceeded"
+            and entry.stage not in stages
+        ):
+            stages.append(entry.stage)
+    return stages
 
 
 def pi_error(events: Sequence[Mapping[str, object]]) -> str | None:
@@ -537,6 +557,13 @@ class Runner:
             if result is not None:
                 self._set(job_dir, doc, "review", result.reason, result=result)
                 return
+        refused = searches_refused(job_dir)
+        if refused:
+            # 搜尋額度用完：那一段用已經找到的資料收尾、後面照跑，但這張單沒做完（NFR-COST-01）
+            reason = f"{CREDITS_REASON}：{'、'.join(refused)} 段用已經找到的資料完成"
+            result = JobResult(outcome="incomplete", reason=reason)
+            self._set(job_dir, doc, "review", reason, result=result)
+            return
         self._set(
             job_dir, doc, "review", "全部段完成", result=JobResult(outcome="complete")
         )
@@ -820,19 +847,17 @@ class Runner:
     def _show_waiting(
         self, job_dir: Path, doc: JobDocument, log_path: Path
     ) -> JobDocument:
-        """合併 Pi 的事件（正在跑哪個工具）與閘道的告示板（等 GPU、限流、模型），
+        """合併閘道的告示板（等 GPU、限流、模型）與 Pi 的事件（正在跑哪個工具），
         有變才改寫 job.md（不記事件：這是進度，不是狀態轉換）。"""
         previous = doc.job.waiting
-        tool = open_tool(log_path)
-        waiting: Waiting | None
+        # 告示板優先：閘道知道得比較細。搜尋被 Tavily 限流時，Pi 的事件只說 web_search 在跑，
+        # 告示板才說它在等限流
+        waiting = self.board.waiting(job_dir.name) if self.board is not None else None
+        tool = open_tool(log_path) if waiting is None else None
         if tool is not None:
             same = previous is not None and previous.tool == tool
             since = previous.since if same and previous is not None else self.clock()
             waiting = Waiting(kind="tool", tool=tool, since=since)
-        elif self.board is not None:
-            waiting = self.board.waiting(job_dir.name)
-        else:
-            waiting = None
         if waiting == previous:
             return doc
         updated = JobDocument(

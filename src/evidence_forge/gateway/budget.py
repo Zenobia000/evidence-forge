@@ -8,6 +8,7 @@
 
 Tavily credits（`web_search`）另有一道：`job.md` 的 `budget.tavily_credits` − 這張單帳本的
 `credits` 總和 − 這張單預留中的 credits（`CreditGuard`）。credits 沒有月上限（票 #69 沒要求）。
+credits 不夠時只拒絕那一次搜尋，不擋下那一段；單子在全部段跑完後以未完成進待審（`CREDITS_REASON`）。
 
 結算的順序是「先把實際金額寫進帳本，再放掉預留」，中間沒有空檔讓這筆錢兩邊都沒算到。
 帳本寫不進去時，實際金額改留在記憶體裡照算（`BudgetGuard.release` 的 `unbooked_micros`）。
@@ -42,6 +43,9 @@ LIMIT_REASONS: dict[BudgetLimit, str] = {
     "job": "預算用完",
     "month": "本月額度用完",
 }
+# 搜尋額度（Tavily credits）用完的原因：也是這張單的預算用完，只是不擋下那一段，
+# 全部段跑完才以未完成進待審（`gateway/search.py` 模組說明第 4 點）
+CREDITS_REASON = "預算用完（搜尋額度）"
 
 
 def taipei_month(ts: datetime) -> str:
