@@ -19,6 +19,8 @@ Anthropic strong），網路是假的：`tests/fixtures/web/fake_web.py` 把自�
     EF_DATA=$D EF_SECRETS=$S EF_TAVILY_URL=http://127.0.0.1:8765 EF_GATEWAY_MODE=live \
         uv run ef serve --once
     # 把那張工單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/restructure-library/
+    # 複製前先看模型請求（kind: llm 的 request blob）裡有沒有工單 id：本機模型偶爾會 read_file
+    # 讀 job.md（工單 id、預算每次開單都不同），那份錄音重播對不上，要重錄（2026-10-12 碰過一次）
 
 重播時模型回應、搜尋、抓取都從錄音回放；讀寫工單、放來源正文、C1～C5 照樣真的跑。
 不需要 Ollama，不打任何付費 API，也不連網。
@@ -142,10 +144,14 @@ def test_自己寫的短文_重播跑完整理_補料與二創_稿子綜合多�
         body = path.read_text(encoding="utf-8").split("\n\n---\n\n", 1)[1].strip()
         assert body in bodies, path.name
 
-    # 稿子綜合了種子以外的來源（#70 之前只有 [^S1]）
+    # 稿子正文綜合了種子以外的來源（#70 之前只有 [^S1]）；註腳定義行不算
     draft = (_last_attempt(job_dir, "compose") / "draft.md").read_text(encoding="utf-8")
-    cited = {sid for sid in ("S1", *(p.stem for p in placed)) if f"[^{sid}]" in draft}
+    lines = draft.splitlines()
+    body = "\n".join(line for line in lines if not line.startswith("[^"))
+    cited = {sid for sid in ("S1", *(p.stem for p in placed)) if f"[^{sid}]" in body}
     assert len(cited - {"S1"}) >= 1 and len(cited) >= 2, cited
+    # 原作出處一律附上（PRD §6 第 7 點）：種子是貼上的文字，沒有網址，標「原文」
+    assert any(line.startswith("[^S1]: ") and "（原文）" in line for line in lines)
 
     ledger = _ledger(job_dir / "ledger.jsonl")
     assert len(ledger) == len(_ledger(RECORDING / "ledger.jsonl"))
