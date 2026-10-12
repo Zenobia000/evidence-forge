@@ -37,7 +37,9 @@ class GatewayConfig:
     replay_dir: Path | None = None
     ollama_url: str = "http://127.0.0.1:11434"
     anthropic_url: str = "https://api.anthropic.com"
-    # 雲端金鑰在 <secrets_dir>/anthropic（ADR-0014）；要用才讀
+    # web_search 打的 Tavily（#69）；測試換成本機的假後端
+    tavily_url: str = "https://api.tavily.com"
+    # 雲端金鑰在 <secrets_dir>/anthropic、<secrets_dir>/tavily（ADR-0014）；要用才讀
     secrets_dir: Path = field(default_factory=resolve_secrets_dir)
     prices: Mapping[str, Price] = field(default_factory=load_prices)
     # 每月美元上限，依 Asia/Taipei 的日曆月（Q-30、NFR-COST-01）
@@ -45,7 +47,7 @@ class GatewayConfig:
     fault: Fault | None = None
     # 等後端回應的上限（秒）；本機模型冷啟動要 75 秒（#10 第 6 題）
     backend_timeout_s: float = 600.0
-    # 雲端 429 的退避：最多重試幾次；沒有 retry-after 時從 base 開始每次加倍，單次最多等 max
+    # 雲端 429 的退避（模型與 Tavily 共用）：最多重試幾次；沒有 retry-after 時從 base 開始每次加倍，單次最多等 max
     rate_limit_retries: int = 4
     backoff_base_s: float = 1.0
     backoff_max_s: float = 60.0

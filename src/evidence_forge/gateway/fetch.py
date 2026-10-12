@@ -156,15 +156,18 @@ def cache_key(url: str) -> str:
     return hashlib.sha256(urlunsplit(parts._replace(fragment="")).encode()).hexdigest()
 
 
-def ttl_from_env(env: Mapping[str, str] | None = None) -> timedelta:
-    """`EF_FETCH_TTL_SECONDS`：抓取快取的有效期限（秒），沒設就是 7 天。"""
+def ttl_from_env(
+    env: Mapping[str, str] | None = None, *, variable: str = "EF_FETCH_TTL_SECONDS"
+) -> timedelta:
+    """快取的有效期限（秒）：抓取讀 `EF_FETCH_TTL_SECONDS`、搜尋讀 `EF_SEARCH_TTL_SECONDS`，
+    沒設就是 7 天。"""
     environ = os.environ if env is None else env
-    raw = environ.get("EF_FETCH_TTL_SECONDS", "").strip()
+    raw = environ.get(variable, "").strip()
     if not raw:
         return DEFAULT_TTL
     seconds = float(raw)
     if seconds <= 0:
-        raise ValueError(f"EF_FETCH_TTL_SECONDS 要大於 0：{raw}")
+        raise ValueError(f"{variable} 要大於 0：{raw}")
     return timedelta(seconds=seconds)
 
 

@@ -281,6 +281,43 @@ class FetchRecord(_Contract):
 
 
 # ---------------------------------------------------------------------------
+# cache/search/<請求 hash>/<搜尋時間>.json：一次 Tavily 搜尋的結果（v0.3 §4.3、#69）。只有閘道寫。
+# ---------------------------------------------------------------------------
+
+
+class SearchResult(_Contract):
+    """搜尋結果的一筆：候選網址與 Tavily 給的摘要。不是來源——要引用得先用 `fetch_url` 抓原文。"""
+
+    url: str
+    title: str = ""
+    # Tavily 給的摘要（它的 `content` 欄位）
+    content: str = ""
+    score: float | None = None
+    # Tavily 有給才有；格式照 Tavily 原樣，不解析
+    published_date: str | None = None
+
+
+class SearchRecord(_Contract):
+    """一次搜尋的結果。只有成功的搜尋才寫；快取命中、重播回放都從這份回給 agent。
+
+    不收 Tavily 的 `answer`：那是 Tavily 自己用模型寫的，不是來源。
+    """
+
+    # 正規化之後的查詢（前後空白去掉、連續空白併成一個、Unicode NFC）
+    query: str
+    max_results: PositiveInt
+    search_depth: Literal["basic"] = "basic"
+    searched_at: AwareDatetime
+    # 寫入時依當時的有效期限算的到期時間（給人看）；判斷有沒有過期用的是現在的設定值
+    expires_at: AwareDatetime | None = None
+    results: tuple[SearchResult, ...] = ()
+    # 這次搜尋 Tavily 算了幾個 credits（快取命中與重播不再算）
+    credits: NonNegativeInt = 0
+    # Tavily 原始回應本文在 blobs/ 的 hash
+    raw_hash: Sha256Hex | None = None
+
+
+# ---------------------------------------------------------------------------
 # jobs/<id>/events.jsonl 的一行（v0.3 §2.1）。只有執行器寫，只增不改。
 # ---------------------------------------------------------------------------
 

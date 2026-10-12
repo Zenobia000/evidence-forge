@@ -1,12 +1,13 @@
 """閘道的 HTTP 介面（架構草案 v0.3 §4）。
 
 - `POST /tools/<名稱>`：ef-tools 的工具呼叫（`read_file`、`list_files`、`write_file`、
-  `fetch_url`、`run_script`）。
+  `fetch_url`、`web_search`、`run_script`）。
 - `POST /v1/messages`：Pi 的模型請求（Anthropic Messages 格式），見 `messages.py`。
 - `GET /health`、`GET /health/anthropic`：執行器的開跑前檢查用（閘道活著、金鑰有效）。
 
 兩種請求都在 `x-api-key` 帶工單鑰匙；閘道只接受登記中的那一把（`ActiveStages`）。
-`fetch_url` 與 `run_script` 每呼叫一次，在這張工單的帳本記一筆（`kind: fetch`／`script`）。
+`fetch_url`、`web_search` 與 `run_script` 每呼叫一次，在這張工單的帳本記一筆
+（`kind: fetch`／`search`／`script`）。搜尋的規則在 `search.py`。
 """
 
 import json
@@ -26,6 +27,7 @@ from evidence_forge.gateway.config import GatewayConfig, require_active_key
 from evidence_forge.gateway.credentials import MissingCredential, read_anthropic_key
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.gateway.messages import add_message_routes
+from evidence_forge.gateway.search import Searcher, parse_query
 from evidence_forge.jobkey import JobKey
 from evidence_forge.ledger_models import LedgerEntry, LedgerKind, LedgerStatus
 
@@ -52,14 +54,17 @@ def create_app(
     board: JobBoard | None = None,
     *,
     fetcher: Fetcher | None = None,
+    searcher: Searcher | None = None,
     script_timeout_s: float = scripts.DEFAULT_TIMEOUT_S,
 ) -> FastAPI:
     """`board` 要跟執行器共用（`ef serve`）；不傳就自己開一個，執行器讀不到。
 
     `fetcher` 不傳就照環境變數建一個（`EF_FETCH_TTL_SECONDS`）；測試傳假 DNS 的那一個。
+    `searcher` 不傳就照設定建一個（`EF_SEARCH_TTL_SECONDS`）；測試傳逾時短的那一個。
     """
     app = FastAPI(title="evidence-forge gateway")
     fetcher = fetcher or Fetcher.from_env(config.data, clock=config.clock)
+    searcher = searcher or Searcher(config)
     blobs = fetcher.blobs
 
     def record(
@@ -112,6 +117,8 @@ def create_app(
             return {"written": written}
         if name == "fetch_url":
             return await _fetch_url(key, _string(body, "url"))
+        if name == "web_search":
+            return await searcher.search(key, parse_query(body))
         if name == "run_script":
             return await _run_script(key, body)
         raise scope.ToolRejected(404, f"沒有這個工具：{name}")
