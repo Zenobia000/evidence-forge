@@ -82,7 +82,7 @@ class ActiveStages:
         entry = self._entry(key)
         return entry.escalated_from if entry is not None else None
 
-    def online(self, key: JobKey) -> bool:
+    def online(self, key: Principal) -> bool:
         """這一段能不能用 `fetch_url`、`web_search`；鑰匙不在登記中也是不能。"""
         entry = self._entry(key)
         return entry is not None and entry.online
