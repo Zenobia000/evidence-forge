@@ -33,7 +33,7 @@
   --genre-uncalibrated: var(--color-accent-mark);
 }
 
-/* ── 聊天室的別名（ADR-0022） ── */
+/* ── 聊天室的別名（ADR-0023） ── */
 :root {
   /* 對話清單與頂列的「有新結果」：跟 Loomy 的選取底色同一個黃，意思是「這裡有東西要你看」 */
   --chat-new: var(--color-bg-selection);

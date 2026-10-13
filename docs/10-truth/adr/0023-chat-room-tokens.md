@@ -1,4 +1,4 @@
-# ADR-0022：聊天室的 token——查證四種標記、文章對照、有新結果
+# ADR-0023：聊天室的 token——查證四種標記、文章對照、有新結果
 
 > **狀態：** 已接受（創作者 2026-10-13 看過設計稿，IA 沒寫到的四處照 Product 暫定的先做；PR 合併即接受） | **日期：** 2026-10-13 | **決策者：** 專案擁有者（Product 暫定，系統架構 session 撰寫）
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。

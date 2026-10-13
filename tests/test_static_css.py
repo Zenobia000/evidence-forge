@@ -12,7 +12,7 @@ S0_CSS = CSS_DIR / "s0.css"
 ADR_0017 = (
     REPO_ROOT / "docs" / "10-truth" / "adr" / "0017-status-tokens-for-new-design.md"
 )
-ADR_0022 = REPO_ROOT / "docs" / "10-truth" / "adr" / "0022-chat-room-tokens.md"
+ADR_0023 = REPO_ROOT / "docs" / "10-truth" / "adr" / "0023-chat-room-tokens.md"
 CHAT_CSS = CSS_DIR / "chat.css"
 
 # S0 要用的四組前綴；--source-*、--license-*、--asset-* 是 S3 才加的，不在這裡檢查。
@@ -32,7 +32,7 @@ def _used(css: str) -> set[str]:
 
 
 def _adr_names() -> set[str]:
-    """ADR-0017 的名單，扣掉 ADR-0022 §3.2 退役的。"""
+    """ADR-0017 的名單，扣掉 ADR-0023 §3.2 退役的。"""
     prefixes = "|".join(S0_PREFIXES)
     names = set(
         re.findall(
@@ -59,12 +59,12 @@ def _first_cells(section: str) -> set[str]:
 
 
 def _retired_names() -> set[str]:
-    text = ADR_0022.read_text(encoding="utf-8")
+    text = ADR_0023.read_text(encoding="utf-8")
     return _first_cells(_section(text, "### 3.2 退役"))
 
 
 def _new_names() -> set[str]:
-    text = ADR_0022.read_text(encoding="utf-8")
+    text = ADR_0023.read_text(encoding="utf-8")
     return _first_cells(_section(text, "### 3.1 新增"))
 
 
@@ -104,12 +104,12 @@ def test_every_s0_status_token_in_adr_0017_is_defined(s0_css: str) -> None:
     assert not missing, f"ADR-0017 有、s0.css 沒定義：{sorted(missing)}"
 
 
-def test_adr_0022_new_tokens_are_defined_and_retired_ones_are_gone(s0_css: str) -> None:
+def test_adr_0023_new_tokens_are_defined_and_retired_ones_are_gone(s0_css: str) -> None:
     # 擋住「ADR 改了寫法、正規式抓不到」變成空檢查
     assert {"--chat-new", "--verify-disputed", "--verify-unfound", "--diff-insert"} <= _new_names()
     assert {"--job-review", "--job-approved", "--job-discarded"} == _retired_names()
-    assert not (_new_names() - _defined(s0_css)), "ADR-0022 有、s0.css 沒定義"
-    assert not (_retired_names() & _defined(s0_css)), "ADR-0022 已退役、s0.css 還留著"
+    assert not (_new_names() - _defined(s0_css)), "ADR-0023 有、s0.css 沒定義"
+    assert not (_retired_names() & _defined(s0_css)), "ADR-0023 已退役、s0.css 還留著"
 
 
 def test_chat_css_uses_only_defined_variables_and_no_hard_coded_colors(

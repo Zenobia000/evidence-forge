@@ -1,6 +1,6 @@
 /* Evidence Forge 聊天室：三欄版面與對話元件。接在 s0.css 後面載入。
    來源：聊天室設計稿（https://claude.ai/artifact/GqAyiKFvYZNd948RTmsAyT，2026-10-13 創作者看過先暫訂）的
-   project/chat.css；之後以這個檔為準。只用 Loomy 變數與 ADR-0017、ADR-0022 的別名，不寫死色碼。
+   project/chat.css；之後以這個檔為準。只用 Loomy 變數與 ADR-0017、ADR-0023 的別名，不寫死色碼。
    「有新結果」用 --chat-new；查證四種標記用 --verify-*；文章對照用 --diff-*。
    每種意思都有不同的圖示與文字，不靠顏色（ADR-0007 §3.3）。 */
 
