@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from evidence_forge.documents import JobDocument, read_job, write_job
+from evidence_forge.documents import read_job
 from evidence_forge.extract import ExtractError
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.ledger_models import IntakeEntry

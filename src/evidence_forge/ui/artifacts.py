@@ -1,0 +1,798 @@
+"""右側面板讀的東西：這個對話開過的每張工單的報告與文章（FR-UI-11、IA §5）。
+
+只讀工單資料夾，不寫、不問執行器。檔案長相（這個對話開過哪些單看對話的 `jobs.jsonl`）：
+
+- 分析：`stages/investigate/<次>/report.md`（五節）與 `sources.json`（來源、查證結果、題材），
+  `stages/brief/<次>/brief.json`（關鍵主張的原文），`input/sources/S<n>.md`（放好的來源，檔頭有抓取時間）。
+- 重構：`stages/rewrite/<次>/article.md`、`article.json`（標題），`checks/checks.vN.json`
+  （C3 的重疊條目；只顯示，不擋，PRD §7）。
+- 哪一段交什麼檔，看配方的 `output`，不看段的名字（跟 `chat/desk.py` 同一個做法）。
+
+「讀不到」一律回在結果裡（`error`），不丟例外：一個檔壞了不能讓整個面板打不開（IA §7）。
+工單狀態只有排隊、執行中、結束；舊資料夾的待審、通過、丟棄讀成結束（`models.JobStatus`）。
+"""
+
+import difflib
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal
+
+from markupsafe import Markup
+from pydantic import ValidationError
+
+from evidence_forge import conversations
+from evidence_forge.budget import micros_to_usd, usd_to_micros
+from evidence_forge.checks.text import tokenize
+from evidence_forge.conversations import ConversationJob
+from evidence_forge.documents import read_job
+from evidence_forge.models import Item, Job, Recipe
+from evidence_forge.paths import DataDir
+from evidence_forge.ui import markdown
+from evidence_forge.ui.format import genre_name, month_day_clock
+
+REPORT_FILE = "report.md"
+ARTICLE_FILE = "article.md"
+REWRITE_RECIPE = "rewrite"
+# 結果上寫了這幾個字就標「未校準」（執行器放的原因以「未校準：」開頭）
+UNCALIBRATED = "未校準"
+# 角色沒寫時當成 me（舊的 job.md 沒有 persona 這欄）
+DEFAULT_PERSONA = "me"
+
+Kind = Literal["analysis", "rewrite"]
+Verdict = Literal["disputed", "outdated", "unfound", "supported"]
+
+# 查證的排序（決定 2）：有爭議 → 過時 → 查不到 → 有佐證
+VERDICT_ORDER: tuple[Verdict, ...] = ("disputed", "outdated", "unfound", "supported")
+VERDICT_LABEL: dict[Verdict, str] = {
+    "disputed": "有爭議",
+    "outdated": "過時",
+    "unfound": "查不到",
+    "supported": "有佐證",
+}
+# sources.json 的 verdict 值 → 畫面上的種類
+_VERDICT_OF = {
+    "disputed": "disputed",
+    "outdated": "outdated",
+    "not_found": "unfound",
+    "supported": "supported",
+}
+
+SECTIONS = ("作者在說什麼", "事實與觀點", "查證", "研究題材", "來源清單")
+_CITATION = re.compile(r"\[(S\d+)\](?!\()")
+_LEAD_LABEL = re.compile(r"^\s*(?:[-*]\s*)?(?:K\d+)?\s*(?:有爭議|過時|有佐證|查不到)?\s*[:：]\s*")
+_OVERLAP = re.compile(r"^(?P<label>.+?)：\d+-gram 重疊率 (?P<rate>\d+(?:\.\d+)?)%")
+
+
+# ---------------------------------------------------------------------------
+# 這個對話的工單
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JobInfo:
+    job_id: str
+    kind: Kind
+    job: Job
+    row: ConversationJob
+    recipe: Recipe | None
+    # 第幾條版本鏈（同種工單裡，從 1 起算）與在鏈上的第幾版
+    chain: int
+    depth: int
+    label: str
+    # 這張單交出報告或文章的那一段的 id
+    stage_id: str | None
+    spent_usd: float
+
+
+def job_kind(job: Job, recipe: Recipe | None) -> Kind:
+    if recipe is not None:
+        if any(ARTICLE_FILE in stage.output for stage in recipe.stages):
+            return "rewrite"
+        return "analysis"
+    return "rewrite" if job.recipe == REWRITE_RECIPE else "analysis"
+
+
+def _output_stage(recipe: Recipe | None, kind: Kind) -> str | None:
+    if recipe is None:
+        return None
+    wanted = ARTICLE_FILE if kind == "rewrite" else REPORT_FILE
+    named = next((s.id for s in recipe.stages if wanted in s.output), None)
+    if named is not None or kind == "rewrite":
+        return named
+    # 沒有一段交 report.md 的分析配方（打通用的 echo 這類）：最後一段
+    return recipe.stages[-1].id
+
+
+def spent_micros(path: Path) -> int:
+    """一份帳本的總花費（微美元）；讀不懂的行跳過。"""
+    if not path.is_file():
+        return 0
+    total = 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            total += usd_to_micros(float(json.loads(line).get("cost_usd", 0.0)))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return total
+
+
+def conversation_jobs(
+    data: DataDir, recipes: dict[str, Recipe], conversation_id: str
+) -> list[JobInfo]:
+    """這個對話開過的工單，照開的順序；讀不懂的 `job.md` 跳過。
+
+    版本鏈：`parent`（先看對話的 `jobs.jsonl`，沒有再看 `job.md`）指到同種工單的，接在它後面；
+    其他的另開一條鏈。標籤在只有一條鏈時是 `v2`，有好幾條時是 `文章 2 v1`。
+    """
+    found: list[JobInfo] = []
+    chains = {"analysis": 0, "rewrite": 0}
+    by_id: dict[str, JobInfo] = {}
+    pending: list[tuple[ConversationJob, Job, Recipe | None, Kind]] = []
+    for row in conversations.jobs(data, conversation_id):
+        try:
+            job = read_job(data.job_dir(row.job_id) / "job.md").job
+        except (OSError, ValueError, ValidationError):
+            continue
+        recipe = recipes.get(job.recipe)
+        pending.append((row, job, recipe, job_kind(job, recipe)))
+    for row, job, recipe, kind in pending:
+        parent = by_id.get(row.parent or job.parent or "")
+        if parent is not None and parent.kind == kind:
+            chain, depth = parent.chain, parent.depth + 1
+        else:
+            chains[kind] += 1
+            chain, depth = chains[kind], 1
+        info = JobInfo(
+            job_id=row.job_id,
+            kind=kind,
+            job=job,
+            row=row,
+            recipe=recipe,
+            chain=chain,
+            depth=depth,
+            label="",
+            stage_id=_output_stage(recipe, kind),
+            spent_usd=micros_to_usd(spent_micros(data.job_dir(row.job_id) / "ledger.jsonl")),
+        )
+        by_id[row.job_id] = info
+        found.append(info)
+    many = {kind: chains[kind] > 1 for kind in chains}
+    noun = {"analysis": "報告", "rewrite": "文章"}
+    return [
+        _with_label(
+            info,
+            f"{noun[info.kind]} {info.chain} v{info.depth}" if many[info.kind] else f"v{info.depth}",
+        )
+        for info in found
+    ]
+
+
+def _with_label(info: JobInfo, label: str) -> JobInfo:
+    return JobInfo(**{**info.__dict__, "label": label})
+
+
+def latest_output_dir(data: DataDir, info: JobInfo) -> Path | None:
+    """交出報告或文章的那一段、編號最大那一次的資料夾。"""
+    if info.stage_id is None:
+        return None
+    root = data.job_dir(info.job_id) / "stages" / info.stage_id
+    if not root.is_dir():
+        return None
+    attempts = [p for p in root.iterdir() if p.is_dir() and p.name.isdigit()]
+    return max(attempts, key=lambda p: int(p.name)) if attempts else None
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _read_json(path: Path) -> Any | None:
+    text = _read(path)
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def finished_at(data: DataDir, info: JobInfo) -> datetime | None:
+    """產出檔最後寫的時間；沒有產出就沒有。"""
+    folder = latest_output_dir(data, info)
+    if folder is None:
+        return None
+    stamps = [p.stat().st_mtime for p in folder.iterdir() if p.is_file()]
+    return datetime.fromtimestamp(max(stamps)).astimezone() if stamps else None
+
+
+def original_item(data: DataDir, job: Job) -> Item | None:
+    """這張單的素材項目（原文的標題與網址）；讀不到是 None。"""
+    root = data.root.resolve()
+    path = (data.root / job.feed.item / "item.json").resolve()
+    if not path.is_relative_to(root):
+        return None
+    text = _read(path)
+    if text is None:
+        return None
+    try:
+        return Item.model_validate_json(text)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 報告
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceRef:
+    id: str
+    title: str
+    url: str | None
+    fetched_at: str | None = None
+
+
+@dataclass(frozen=True)
+class FactCheck:
+    claim_id: str
+    claim: str
+    verdict: Verdict
+    label: str
+    note_html: Markup | None
+    sources: list[SourceRef]
+
+
+@dataclass(frozen=True)
+class Topic:
+    title: str
+    note_html: Markup | None
+    sources: list[SourceRef]
+
+
+@dataclass(frozen=True)
+class ReportView:
+    job_id: str
+    label: str
+    outcome: str | None
+    reason: str
+    spent_usd: float
+    finished: datetime | None
+    error: str | None = None
+    lead: str = ""
+    intro_html: Markup = Markup("")
+    facts_html: Markup = Markup("")
+    verify_html: Markup = Markup("")
+    checks: list[FactCheck] = field(default_factory=list)
+    topics: list[Topic] = field(default_factory=list)
+    topics_html: Markup = Markup("")
+    sources: list[SourceRef] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    # 有疑慮＝有爭議＋過時（決定 2）
+    doubtful: int = 0
+    supported: int = 0
+    unfound: int = 0
+
+
+def _sections(report: str) -> dict[str, str]:
+    """報告切成五節：標題文字 → 內文。標題不是五節之一的併進前一節。"""
+    found: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in report.splitlines():
+        if line.startswith("## "):
+            heading = line[3:].strip()
+            current = next((name for name in SECTIONS if heading.startswith(name)), None)
+            if current is not None:
+                found.setdefault(current, [])
+                continue
+        if current is not None:
+            found[current].append(line)
+    return {name: "\n".join(lines).strip() for name, lines in found.items()}
+
+
+def _blocks(section: str) -> list[str]:
+    """一節裡一條一條的內容：清單的每一項，或空行隔開的段落。"""
+    blocks: list[str] = []
+    for chunk in re.split(r"\n\s*\n", section):
+        lines = chunk.splitlines()
+        if any(re.match(r"\s*(?:[-*+]|\d+[.)])\s+", line) for line in lines):
+            for line in lines:
+                if re.match(r"\s*(?:[-*+]|\d+[.)])\s+", line):
+                    blocks.append(line.strip())
+                elif blocks:
+                    blocks[-1] += " " + line.strip()
+        elif chunk.strip():
+            blocks.append(" ".join(line.strip() for line in lines))
+    return blocks
+
+
+def _link_citations(text: str, urls: dict[str, str | None]) -> str:
+    """`[S2]` 換成指到來源網址的連結；不在清單上或沒有網址的照原樣。"""
+
+    def replace(match: re.Match[str]) -> str:
+        url = urls.get(match.group(1))
+        return f"[{match.group(1)}]({url})" if url else match.group(0)
+
+    return _CITATION.sub(replace, text)
+
+
+def _first_sentence(text: str, limit: int = 120) -> str:
+    text = " ".join(text.split())
+    end = re.search(r"[。！？!?]", text)
+    sentence = text[: end.end()] if end else text
+    return sentence if len(sentence) <= limit else sentence[:limit] + "…"
+
+
+def _source_header(path: Path) -> dict[str, str]:
+    text = _read(path) or ""
+    header = text.split("\n\n---\n\n", 1)[0]
+    found: dict[str, str] = {}
+    for line in header.splitlines():
+        key, sep, value = line.partition("：")
+        if sep:
+            found[key.strip()] = value.strip()
+    return found
+
+
+def placed_sources(data: DataDir, job_id: str) -> dict[str, SourceRef]:
+    """放進工單的來源（`input/sources/S<n>.md`，檔頭有標題、網址、抓取時間）。"""
+    folder = data.job_dir(job_id) / "input" / "sources"
+    found: dict[str, SourceRef] = {}
+    if not folder.is_dir():
+        return found
+    for path in sorted(folder.glob("S*.md")):
+        header = _source_header(path)
+        fetched = header.get("抓取時間")
+        stamp = None
+        if fetched:
+            try:
+                stamp = month_day_clock(datetime.fromisoformat(fetched))
+            except ValueError:
+                stamp = None
+        found[path.stem] = SourceRef(path.stem, header.get("標題", path.stem), header.get("網址"), stamp)
+    return found
+
+
+def _source_refs(
+    ids: list[str], listed: dict[str, SourceRef], placed: dict[str, SourceRef]
+) -> list[SourceRef]:
+    refs: list[SourceRef] = []
+    for source_id in ids:
+        base = listed.get(source_id)
+        if base is None:
+            continue
+        fetched = placed.get(source_id)
+        refs.append(
+            SourceRef(
+                base.id,
+                base.title,
+                base.url,
+                fetched.fetched_at if fetched is not None else None,
+            )
+        )
+    return refs
+
+
+def report_view(data: DataDir, info: JobInfo) -> ReportView:
+    base: dict[str, Any] = {
+        "job_id": info.job_id,
+        "label": info.label,
+        "outcome": info.job.result.outcome if info.job.result else None,
+        "reason": info.job.result.reason if info.job.result else "",
+        "spent_usd": info.spent_usd,
+        "finished": finished_at(data, info),
+    }
+    folder = latest_output_dir(data, info)
+    report = _read(folder / REPORT_FILE) if folder is not None else None
+    if report is None:
+        where = (folder / REPORT_FILE) if folder is not None else data.job_dir(info.job_id)
+        return ReportView(error=f"讀不到報告 {info.label} 的檔案：{where}", **base)
+
+    sections = _sections(report)
+    placed = placed_sources(data, info.job_id)
+    listed_raw = _read_json(folder / "sources.json") if folder is not None else None
+    brief_dir = data.job_dir(info.job_id) / "stages" / "brief"
+    brief = _read_brief(brief_dir)
+
+    item = original_item(data, info.job)
+    original = SourceRef("S1", item.title if item else "原文", item.url if item else None, None)
+    if item is not None:
+        original = SourceRef("S1", item.title, item.url, month_day_clock(item.fetched_at))
+
+    listed: dict[str, SourceRef] = {}
+    if isinstance(listed_raw, dict):
+        for source in listed_raw.get("sources", []):
+            if isinstance(source, dict) and isinstance(source.get("id"), str):
+                listed[source["id"]] = SourceRef(
+                    source["id"], str(source.get("title", source["id"])), source.get("url"), None
+                )
+    urls: dict[str, str | None] = {"S1": original.url, **{k: v.url for k, v in listed.items()}}
+
+    def html(name: str) -> Markup:
+        body = sections.get(name, "")
+        return markdown.render(_link_citations(body, urls)) if body else Markup("")
+
+    verify_blocks = _blocks(sections.get("查證", ""))
+    checks = _fact_checks(listed_raw, brief, verify_blocks, listed, placed, urls)
+    topics = _topics(listed_raw, _blocks(sections.get("研究題材", "")), listed, placed, urls)
+    ordered = sorted(listed.values(), key=lambda s: int(s.id[1:]) if s.id[1:].isdigit() else 0)
+    sources = [original, *_source_refs([s.id for s in ordered], listed, placed)]
+    counts = {v: sum(1 for c in checks if c.verdict == v) for v in VERDICT_ORDER}
+    tags: list[str] = []
+    if isinstance(brief, dict):
+        genre = brief.get("genre")
+        if isinstance(genre, dict) and isinstance(genre.get("primary"), str):
+            tags.append(f"文類：{genre_name(genre['primary'])}")
+        tags += [f"主題：{t}" for t in brief.get("topics", []) if isinstance(t, str)]
+    return ReportView(
+        error=None,
+        lead=_first_sentence(sections.get("作者在說什麼", "")),
+        intro_html=html("作者在說什麼"),
+        facts_html=html("事實與觀點"),
+        verify_html=html("查證"),
+        checks=checks,
+        topics=topics,
+        topics_html=html("研究題材"),
+        sources=sources,
+        tags=tags,
+        doubtful=counts["disputed"] + counts["outdated"],
+        supported=counts["supported"],
+        unfound=counts["unfound"],
+        **base,
+    )
+
+
+def _read_brief(brief_dir: Path) -> Any | None:
+    if not brief_dir.is_dir():
+        return None
+    attempts = [p for p in brief_dir.iterdir() if p.is_dir() and p.name.isdigit()]
+    for attempt in sorted(attempts, key=lambda p: -int(p.name)):
+        parsed = _read_json(attempt / "brief.json")
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _fact_checks(
+    listed_raw: Any,
+    brief: Any,
+    blocks: list[str],
+    listed: dict[str, SourceRef],
+    placed: dict[str, SourceRef],
+    urls: dict[str, str | None],
+) -> list[FactCheck]:
+    if not isinstance(listed_raw, dict):
+        return []
+    claims: dict[str, str] = {}
+    if isinstance(brief, dict):
+        for claim in brief.get("key_claims", []):
+            if isinstance(claim, dict) and isinstance(claim.get("id"), str):
+                claims[claim["id"]] = str(claim.get("claim", ""))
+    found: list[FactCheck] = []
+    for entry in listed_raw.get("fact_checks", []):
+        if not isinstance(entry, dict):
+            continue
+        verdict = _VERDICT_OF.get(str(entry.get("verdict")))
+        claim_id = str(entry.get("claim", ""))
+        if verdict is None:
+            continue
+        text = claims.get(claim_id, claim_id)
+        ids = [s for s in entry.get("sources", []) if isinstance(s, str)]
+        found.append(
+            FactCheck(
+                claim_id=claim_id,
+                claim=text,
+                verdict=verdict,  # type: ignore[arg-type]
+                label=VERDICT_LABEL[verdict],  # type: ignore[index]
+                note_html=_note(blocks, [claim_id, text[:10]], urls),
+                sources=_source_refs(ids, listed, placed),
+            )
+        )
+    rank = {v: i for i, v in enumerate(VERDICT_ORDER)}
+    return sorted(found, key=lambda c: rank[c.verdict])
+
+
+def _note(blocks: list[str], needles: list[str], urls: dict[str, str | None]) -> Markup | None:
+    """報告原文裡講這一條的那一塊（含編號或主張開頭的字）；去掉開頭重複的「K1 有爭議：」。"""
+    for block in blocks:
+        if any(
+            needle and (re.search(rf"\b{re.escape(needle)}\b", block) if re.fullmatch(r"K\d+", needle) else needle in block)
+            for needle in needles
+        ):
+            body = _LEAD_LABEL.sub("", re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", block), count=1).strip()
+            return markdown.render_inline(_link_citations(body, urls)) if body else None
+    return None
+
+
+def _topics(
+    listed_raw: Any,
+    blocks: list[str],
+    listed: dict[str, SourceRef],
+    placed: dict[str, SourceRef],
+    urls: dict[str, str | None],
+) -> list[Topic]:
+    if not isinstance(listed_raw, dict):
+        return []
+    found: list[Topic] = []
+    for entry in listed_raw.get("topics", []):
+        if not isinstance(entry, dict) or not isinstance(entry.get("title"), str):
+            continue
+        title = entry["title"]
+        ids = [s for s in entry.get("sources", []) if isinstance(s, str)]
+        note = None
+        for block in blocks:
+            if title[:8] in block:
+                body = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", block)
+                body = body.replace(title, "", 1).lstrip("：: ，,").strip()
+                note = markdown.render_inline(_link_citations(body, urls)) if body else None
+                break
+        found.append(Topic(title, note, _source_refs(ids, listed, placed)))
+    return found
+
+
+# ---------------------------------------------------------------------------
+# 文章
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Overlap:
+    """跟所有來源（含原文）逐字重疊裡最高的那一個數字，與是哪一份。只顯示，不擋（PRD §7）。"""
+
+    rate: float
+    source: str
+    # 該份的檢查結果是不是 warn（超過提醒門檻）；畫面只當說明，不改變任何結果
+    warned: bool
+
+
+@dataclass(frozen=True)
+class ArticleView:
+    job_id: str
+    label: str
+    outcome: str | None
+    reason: str
+    spent_usd: float
+    finished: datetime | None
+    error: str | None = None
+    title: str = ""
+    text: str = ""
+    html: Markup = Markup("")
+    words: int = 0
+    persona: str = DEFAULT_PERSONA
+    genre: str = ""
+    uncalibrated: bool = False
+    uncalibrated_note: str = ""
+    overlap: Overlap | None = None
+    diff_html: Markup | None = None
+    previous_label: str | None = None
+    previous_words: int | None = None
+
+
+def _body(article: str) -> str:
+    """正文：參考來源那一節不算字數（它本來就是照抄出處）。"""
+    lines = article.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if re.match(r"#{1,6}\s*參考來源", lines[index]):
+            return "\n".join(lines[:index])
+    return article
+
+
+def count_words(article: str) -> int:
+    return len(tokenize(_body(article)))
+
+
+def _checks_entries(data: DataDir, info: JobInfo) -> list[dict[str, Any]]:
+    """這張單最後一份、屬於交文章那一段的檢查結果的條目。"""
+    folder = data.job_dir(info.job_id) / "checks"
+    if not folder.is_dir() or info.stage_id is None:
+        return []
+    best: tuple[int, int, list[dict[str, Any]]] | None = None
+    for path in folder.glob("checks.v*.json"):
+        number = re.search(r"checks\.v(\d+)\.json$", path.name)
+        report = _read_json(path)
+        if number is None or not isinstance(report, dict) or report.get("stage") != info.stage_id:
+            continue
+        entries = [e for e in report.get("entries", []) if isinstance(e, dict)]
+        key = (int(report.get("attempt", 0) or 0), int(number.group(1)))
+        if best is None or key > best[:2]:
+            best = (key[0], key[1], entries)
+    return best[2] if best is not None else []
+
+
+def overlap_of(
+    data: DataDir, info: JobInfo, placed: dict[str, SourceRef] | None = None
+) -> Overlap | None:
+    """從 C3 的總結條目（理由以「<份>：n-gram 重疊率 x%」開頭）找最高的那一份。"""
+    found: list[tuple[float, str, bool]] = []
+    for entry in _checks_entries(data, info):
+        if entry.get("check") != "C3" or entry.get("location"):
+            continue
+        match = _OVERLAP.match(str(entry.get("reason", "")))
+        if match is None:
+            continue
+        found.append((float(match["rate"]), match["label"].strip(), entry.get("status") == "warn"))
+    if not found:
+        return None
+    rate, label, warned = max(found, key=lambda f: f[0])
+    sources = placed if placed is not None else placed_sources(data, info.job_id)
+    if label in sources:
+        label = f"{label} {sources[label].title}"
+    return Overlap(rate, label, warned)
+
+
+def article_view(data: DataDir, info: JobInfo, previous: JobInfo | None) -> ArticleView:
+    base: dict[str, Any] = {
+        "job_id": info.job_id,
+        "label": info.label,
+        "outcome": info.job.result.outcome if info.job.result else None,
+        "reason": info.job.result.reason if info.job.result else "",
+        "spent_usd": info.spent_usd,
+        "finished": finished_at(data, info),
+    }
+    folder = latest_output_dir(data, info)
+    text = _read(folder / ARTICLE_FILE) if folder is not None else None
+    if text is None or folder is None:
+        where = (folder / ARTICLE_FILE) if folder is not None else data.job_dir(info.job_id)
+        return ArticleView(error=f"讀不到文章 {info.label} 的檔案：{where}", **base)
+    meta = _read_json(folder / "article.json")
+    title = meta.get("title") if isinstance(meta, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        heading = re.search(r"^#\s+(.+)$", text, flags=re.MULTILINE)
+        title = heading.group(1).strip() if heading else info.label
+    reason = base["reason"]
+    uncalibrated = UNCALIBRATED in reason
+    note = next(
+        (part.strip() for part in re.split(r"[；;]", reason) if UNCALIBRATED in part), ""
+    )
+    diff_html = None
+    previous_words = None
+    previous_label = None
+    if previous is not None:
+        prev_folder = latest_output_dir(data, previous)
+        prev_text = _read(prev_folder / ARTICLE_FILE) if prev_folder is not None else None
+        if prev_text is not None:
+            diff_html = diff_articles(prev_text, text)
+            previous_words = count_words(prev_text)
+            previous_label = previous.label
+    return ArticleView(
+        error=None,
+        title=title.strip(),
+        text=text,
+        html=markdown.render(text),
+        words=count_words(text),
+        persona=info.job.persona or DEFAULT_PERSONA,
+        genre=genre_name(info.job.target_genre),
+        uncalibrated=uncalibrated,
+        uncalibrated_note=note,
+        overlap=overlap_of(data, info),
+        diff_html=diff_html,
+        previous_label=previous_label,
+        previous_words=previous_words,
+        **base,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 跟上一版對照：新增的包 <ins>，刪掉的包 <del>（沒用顏色以外的訊號也看得出：底色與刪除線）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Unit:
+    kind: str  # h1..h6、p、li-ul、li-ol
+    text: str
+
+
+def _units(markdown_text: str) -> list[_Unit]:
+    units: list[_Unit] = []
+    paragraph: list[str] = []
+
+    def flush() -> None:
+        if paragraph:
+            units.append(_Unit("p", " ".join(paragraph)))
+            paragraph.clear()
+
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        heading = re.match(r"(#{1,6})\s+(.*)$", stripped)
+        bullet = re.match(r"([-*+])\s+(.*)$", stripped)
+        numbered = re.match(r"\d+[.)]\s+(.*)$", stripped)
+        if not stripped:
+            flush()
+        elif heading:
+            flush()
+            units.append(_Unit(f"h{len(heading.group(1))}", heading.group(2)))
+        elif bullet:
+            flush()
+            units.append(_Unit("li-ul", bullet.group(2)))
+        elif numbered:
+            flush()
+            units.append(_Unit("li-ol", numbered.group(1)))
+        else:
+            paragraph.append(stripped)
+    flush()
+    return units
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.findall(r"[^。！？!?]+[。！？!?]*", text) if s] or [text]
+
+
+def _wrap(op: str, text: str) -> str:
+    inner = markdown.render_inline(text)
+    if op == "ins":
+        return f'<ins class="ch-ins">{inner}</ins>'
+    if op == "del":
+        return f'<del class="ch-del">{inner}</del>'
+    return str(inner)
+
+
+def _inline_diff(old: str, new: str) -> str:
+    a, b = _sentences(old), _sentences(new)
+    parts: list[str] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            parts.append(_wrap("eq", "".join(b[j1:j2])))
+        else:
+            if i2 > i1:
+                parts.append(_wrap("del", "".join(a[i1:i2])))
+            if j2 > j1:
+                parts.append(_wrap("ins", "".join(b[j1:j2])))
+    return "".join(parts)
+
+
+def _open(kind: str) -> str:
+    return {"li-ul": "<ul>", "li-ol": "<ol>"}.get(kind, "")
+
+
+def diff_articles(old: str, new: str) -> Markup:
+    """兩版文章的對照 HTML。段落對不上的整段標新增或刪掉；對得上但有改的，逐句標。"""
+    a, b = _units(old), _units(new)
+    matcher = difflib.SequenceMatcher(None, [(u.kind, u.text) for u in a], [(u.kind, u.text) for u in b], autojunk=False)
+    out: list[str] = []
+    open_list: str | None = None
+
+    def emit(kind: str, inner: str) -> None:
+        nonlocal open_list
+        if kind.startswith("li-"):
+            wanted = "ul" if kind == "li-ul" else "ol"
+            if open_list != wanted:
+                if open_list:
+                    out.append(f"</{open_list}>")
+                out.append(f"<{wanted}>")
+                open_list = wanted
+            out.append(f"<li>{inner}</li>")
+            return
+        if open_list:
+            out.append(f"</{open_list}>")
+            open_list = None
+        tag = kind if kind.startswith("h") else "p"
+        out.append(f"<{tag}>{inner}</{tag}>")
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for unit in b[j1:j2]:
+                emit(unit.kind, _wrap("eq", unit.text))
+            continue
+        olds, news = a[i1:i2], b[j1:j2]
+        paired = min(len(olds), len(news)) if tag == "replace" else 0
+        for old_unit, new_unit in zip(olds[:paired], news[:paired], strict=True):
+            if old_unit.kind == new_unit.kind:
+                emit(new_unit.kind, _inline_diff(old_unit.text, new_unit.text))
+            else:
+                emit(old_unit.kind, _wrap("del", old_unit.text))
+                emit(new_unit.kind, _wrap("ins", new_unit.text))
+        for unit in olds[paired:]:
+            emit(unit.kind, _wrap("del", unit.text))
+        for unit in news[paired:]:
+            emit(unit.kind, _wrap("ins", unit.text))
+    if open_list:
+        out.append(f"</{open_list}>")
+    return Markup("\n".join(out))
+

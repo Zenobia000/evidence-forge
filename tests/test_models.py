@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.models import Event, Item, Job
 
 
