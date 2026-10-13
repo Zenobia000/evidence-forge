@@ -124,3 +124,10 @@ test("載入時串流裡就有結果卡的工單，現況事件來了不重抓",
   const { effects } = apply(seeded, job({ seq: 1, status: "done", finished: true, outcome: "complete" }));
   assert.equal(effects.some((e) => e.type === "refresh" || e.type === "seen"), false);
 });
+
+test("seedFinished 不洗掉已經收到的序號：晚到的舊事件不能把結束的工單改回跑著", () => {
+  const known = apply(createState(), job({ seq: 9, status: "done", finished: true, outcome: "complete" })).state;
+  const seeded = seedFinished(known, ["j1"]);
+  const { state } = apply(seeded, job({ seq: 4, status: "running" }));
+  assert.equal(state.jobs.j1.status, "done");
+});

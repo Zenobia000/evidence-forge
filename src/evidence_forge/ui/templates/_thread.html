@@ -57,8 +57,6 @@
 {% endif %}
 <span class="s0-mono">{{ usd(c.spent_usd) }}</span>
 </div>
-{% elif c.outcome != "failed" %}
-<div class="ch-result__facts"><span class="s0-mono">{{ usd(c.spent_usd) }}</span></div>
 {% else %}
 <div class="ch-result__facts"><span class="s0-mono">{{ usd(c.spent_usd) }}</span></div>
 {% endif %}

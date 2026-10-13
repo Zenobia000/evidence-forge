@@ -10,7 +10,7 @@ from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 from markdown_it.token import Token
 from markdown_it.utils import EnvType, OptionsDict
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 _ALLOWED_SCHEMES = ("http://", "https://", "mailto:")
 
@@ -29,16 +29,30 @@ def _link_open(
     return self.renderToken(tokens, idx, options, env)
 
 
+def _image(
+    self: RendererHTML,
+    tokens: Sequence[Token],
+    idx: int,
+    options: OptionsDict,
+    env: EnvType,
+) -> str:
+    # 圖不載入：報告與文章裡的 ![](網址) 是 agent 從抓來的網頁寫的，載圖就是一次帶資料的對外請求。
+    # 只留說明文字；要看圖就點來源連結
+    alt = tokens[idx].content.strip()
+    return str(escape(f"（圖：{alt}）" if alt else "（圖）"))
+
+
 def _build() -> MarkdownIt:
     md = MarkdownIt("commonmark", {"html": False, "linkify": False})
     md.add_render_rule("link_open", _link_open)
+    md.add_render_rule("image", _image)
     # 預設的 validateLink 已擋 javascript: 之類；這裡再收窄成白名單
     default = md.validateLink
 
     def validate(url: str) -> bool:
-        return default(url) and (
-            url.lower().startswith(_ALLOWED_SCHEMES) or url.startswith(("/", "#"))
-        )
+        # `//host` 是省略協定的外站網址，不算站內路徑
+        local = url.startswith(("/", "#")) and not url.startswith("//")
+        return default(url) and (url.lower().startswith(_ALLOWED_SCHEMES) or local)
 
     md.validateLink = validate  # type: ignore[method-assign]
     return md

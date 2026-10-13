@@ -63,7 +63,8 @@ _VERDICT_OF = {
 SECTIONS = ("作者在說什麼", "事實與觀點", "查證", "研究題材", "來源清單")
 _CITATION = re.compile(r"\[(S\d+)\](?!\()")
 _LEAD_LABEL = re.compile(r"^\s*(?:[-*]\s*)?(?:K\d+)?\s*(?:有爭議|過時|有佐證|查不到)?\s*[:：]\s*")
-_OVERLAP = re.compile(r"^(?P<label>.+?)：\d+-gram 重疊率 (?P<rate>\d+(?:\.\d+)?)%")
+# C3 總結條目的理由（`checks/overlap.py`）：「<份>：4-gram 重疊率 6.0%（提醒門檻…）」；沒有「<份>：」的舊寫法當成原文
+_OVERLAP = re.compile(r"^(?:(?P<label>[^：]+)：)?\d+-gram 重疊率 (?P<rate>\d+(?:\.\d+)?)%")
 
 
 # ---------------------------------------------------------------------------
@@ -312,12 +313,25 @@ def _blocks(section: str) -> list[str]:
     return blocks
 
 
+_SAFE_URL = re.compile(r"https?://[^\s<>\"']+")
+
+
+def safe_url(url: object) -> str | None:
+    """只放行 http、https 的網址：sources.json 是 agent 寫的，不能讓 `javascript:` 之類變成連結。"""
+    if isinstance(url, str) and _SAFE_URL.fullmatch(url.strip()):
+        return url.strip()
+    return None
+
+
 def _link_citations(text: str, urls: dict[str, str | None]) -> str:
-    """`[S2]` 換成指到來源網址的連結；不在清單上或沒有網址的照原樣。"""
+    """`[S2]` 換成指到來源網址的連結；不在清單上或沒有（安全的）網址的照原樣。"""
 
     def replace(match: re.Match[str]) -> str:
-        url = urls.get(match.group(1))
-        return f"[{match.group(1)}]({url})" if url else match.group(0)
+        url = safe_url(urls.get(match.group(1)))
+        if not url:
+            return match.group(0)
+        # 網址裡的括號會提早結束 Markdown 的連結，換成百分比編碼
+        return f"[{match.group(1)}]({url.replace('(', '%28').replace(')', '%29')})"
 
     return _CITATION.sub(replace, text)
 
@@ -355,7 +369,7 @@ def placed_sources(data: DataDir, job_id: str) -> dict[str, SourceRef]:
                 stamp = month_day_clock(datetime.fromisoformat(fetched))
             except ValueError:
                 stamp = None
-        found[path.stem] = SourceRef(path.stem, header.get("標題", path.stem), header.get("網址"), stamp)
+        found[path.stem] = SourceRef(path.stem, header.get("標題", path.stem), safe_url(header.get("網址")), stamp)
     return found
 
 
@@ -401,16 +415,16 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
     brief = _read_brief(brief_dir)
 
     item = original_item(data, info.job)
-    original = SourceRef("S1", item.title if item else "原文", item.url if item else None, None)
+    original = SourceRef("S1", item.title if item else "原文", safe_url(item.url) if item else None, None)
     if item is not None:
-        original = SourceRef("S1", item.title, item.url, month_day_clock(item.fetched_at))
+        original = SourceRef("S1", item.title, safe_url(item.url), month_day_clock(item.fetched_at))
 
     listed: dict[str, SourceRef] = {}
     if isinstance(listed_raw, dict):
         for source in listed_raw.get("sources", []):
             if isinstance(source, dict) and isinstance(source.get("id"), str):
                 listed[source["id"]] = SourceRef(
-                    source["id"], str(source.get("title", source["id"])), source.get("url"), None
+                    source["id"], str(source.get("title", source["id"])), safe_url(source.get("url")), None
                 )
     urls: dict[str, str | None] = {"S1": original.url, **{k: v.url for k, v in listed.items()}}
 
@@ -616,7 +630,8 @@ def overlap_of(
         match = _OVERLAP.match(str(entry.get("reason", "")))
         if match is None:
             continue
-        found.append((float(match["rate"]), match["label"].strip(), entry.get("status") == "warn"))
+        label = (match["label"] or "原文").strip()
+        found.append((float(match["rate"]), label, entry.get("status") == "warn"))
     if not found:
         return None
     rate, label, warned = max(found, key=lambda f: f[0])

@@ -18,6 +18,7 @@
 import asyncio
 import base64
 import binascii
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePath
@@ -27,7 +28,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from collections.abc import Mapping
 
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound
 from evidence_forge.chat.pi_rpc import PiExited
@@ -111,7 +111,7 @@ def install(
     data: DataDir,
     recipes: Mapping[str, Recipe],
     *,
-    now: Any = None,
+    now: Callable[[], datetime] | None = None,
 ) -> None:
     templates = Jinja2Templates(directory=_UI_DIR / "templates")
     templates.env.globals["usd"] = format_usd
@@ -125,8 +125,7 @@ def install(
         return host.list_conversations()
 
     def page(request: Request, name: str, context: dict[str, Any], status: int = 200) -> HTMLResponse:
-        response = templates.TemplateResponse(request, name, context, status_code=status)
-        return response
+        return templates.TemplateResponse(request, name, context, status_code=status)
 
     def new_count(rows: list[ListRow]) -> int:
         return sum(1 for r in rows if r.state == "new")
@@ -282,8 +281,10 @@ def install(
         except ConversationNotFound:
             return PlainTextResponse("沒有這個對話", status_code=404)
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
-        chosen = pick([j for j in jobs if j.kind == "rewrite"], v)
-        if chosen is None:
+        versions = [j for j in jobs if j.kind == "rewrite"]
+        chosen = pick(versions, v)
+        # 複製要的是指定的那一版：對不上就說沒有，不能悄悄給別版
+        if chosen is None or (v and chosen.job_id != v):
             return PlainTextResponse("沒有這篇文章", status_code=404)
         view = await asyncio.to_thread(artifacts.article_view, data, chosen, None)
         if view.error is not None:

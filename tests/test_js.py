@@ -28,3 +28,15 @@ def test_front_end_logic_passes_under_node() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="沒有 node：語法檢查跳過")
+def test_every_browser_module_parses() -> None:
+    # app.js 要在瀏覽器裡才跑得起來（碰 DOM），這裡至少擋住語法錯誤
+    scripts = sorted((Path(__file__).parent.parent / "src" / "evidence_forge" / "ui" / "static" / "js").glob("*.js"))
+    assert scripts
+    for script in scripts:
+        result = subprocess.run(
+            ["node", "--check", str(script)], capture_output=True, text=True, timeout=60, check=False
+        )
+        assert result.returncode == 0, f"{script.name}: {result.stderr}"

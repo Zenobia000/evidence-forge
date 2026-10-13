@@ -198,3 +198,33 @@ def test_對話花費每次工作一列_對話本身另列_合計是全部(folde
     assert cost.rows[2].escalation == "雲端（強）→雲端（最強）"
     assert cost.total_usd == pytest.approx(0.54)
     assert cost.budget_usd == 1.0
+
+
+def test_舊的工單資料夾照樣讀得進來_待審通過丟棄都當結束_舊的稿子與決定檔不礙事(folder: ChatFolder) -> None:
+    # S0 時代留下的資料夾：沒有對話、狀態是 approved、有 drafts/ 與 review/decision.v1.json
+    cid = folder.conversation()
+    folder.analysis(cid, "old1")
+    (folder.data.conversation_dir(cid) / "jobs.jsonl").write_text("", encoding="utf-8")
+    job_md = folder.data.job_dir("old1") / "job.md"
+    job_md.write_text(
+        job_md.read_text(encoding="utf-8").replace("status: done", "status: approved"), encoding="utf-8"
+    )
+    folder.write("old1", "drafts/draft.v1.md", "舊的稿子")
+    folder.write(
+        "old1",
+        "review/decision.v1.json",
+        {"action": "approve", "draft_version": 1, "created_at": at().isoformat()},
+    )
+    folder.ledger(
+        "old1",
+        [
+            {"stage": "digest", "tier": "local", "cost_usd": 0.0},
+            {"stage": "compose", "tier": "strong", "model": "c", "cost_usd": 0.3},
+        ],
+    )
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+
+    assert view.total_usd == pytest.approx(0.3)
+    assert [r.title for r in view.conversations] == ["不在對話裡的工單"]
+    assert {bar.label for bar in view.by_skill} == {"整理", "二創"}

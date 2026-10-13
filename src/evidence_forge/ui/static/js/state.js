@@ -29,7 +29,7 @@ export function reconnect(state) {
 export function seedFinished(state, jobIds) {
   const jobs = { ...state.jobs };
   for (const id of jobIds) {
-    jobs[id] = { ...(jobs[id] ?? {}), type: "ef_job", job_id: id, finished: true, seq: 0 };
+    jobs[id] = { ...(jobs[id] ?? {}), type: "ef_job", job_id: id, finished: true, seq: jobs[id]?.seq ?? 0 };
   }
   return { ...state, jobs };
 }

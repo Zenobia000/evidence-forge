@@ -4,7 +4,7 @@
 <span class="ch-vmark" data-verdict="{{ verdict }}">{{ icon(verdict) }}{{ label }}</span>
 {%- endmacro -%}
 {%- macro sources(refs) -%}
-{% if refs %}<div class="ch-vitem__src">{% for s in refs %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer"><span>{{ s.id }} {{ s.title }}</span>{% if s.fetched_at %}<span class="s0-mono s0-muted">{{ s.fetched_at }} 抓取</span>{% endif %}</a>{% endfor %}</div>{% endif %}
+{% if refs %}<div class="ch-vitem__src">{% for s in refs %}{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{% else %}<span>{% endif %}<span>{{ s.id }} {{ s.title }}</span>{% if s.fetched_at %}<span class="s0-mono s0-muted">{{ s.fetched_at }} 抓取</span>{% endif %}{% if s.url %}</a>{% else %}</span>{% endif %}{% endfor %}</div>{% endif %}
 {%- endmacro -%}
 {# 右側面板（IA §5）：報告、文章、花費三個分頁。整塊由 app.js 換進 #ch-panel。 #}
 {% if missing %}

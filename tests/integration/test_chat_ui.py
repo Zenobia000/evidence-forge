@@ -346,6 +346,16 @@ def test_複製_Markdown_給原文(world: tuple[str, ChatFolder, ConversationHos
     assert response.text == ARTICLE_V1
 
 
+def test_複製要指定的那一版_對不上就是_404_不給別版(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1", text=ARTICLE_V1)
+
+    assert httpx.get(f"{url}/ui/c/{cid}/article.md", params={"v": "w-old"}).status_code == 404
+    assert httpx.get(f"{url}/ui/c/{cid}/article.md").text == ARTICLE_V1
+
+
 def test_花費分頁_每次工作一列_對話本身另列_合計(world: tuple[str, ChatFolder, ConversationHost]) -> None:
     url, folder, _ = world
     cid = folder.conversation()

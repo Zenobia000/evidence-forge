@@ -3,6 +3,7 @@
 用手寫的假資料夾當輸入，從公開函式看輸出；舊版畫面找的 `drafts/draft.vN.md` 這裡一個都不用。
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -246,3 +247,76 @@ def test_第一版沒有對照(folder: ChatFolder) -> None:
     info = [j for j in _jobs(folder, cid) if j.kind == "rewrite"][0]
 
     assert artifacts.article_view(folder.data, info, None).diff_html is None
+
+
+def test_來源網址只放行_http_和_https_agent_寫的_javascript_不會變成連結(folder: ChatFolder) -> None:
+    sources = {
+        "queries": ["q"],
+        "sources": [
+            {"id": "S2", "url": "javascript:alert(1)", "title": "壞", "why": "w"},
+            {"id": "S3", "url": "https://ok.example/a", "title": "好", "why": "w"},
+        ],
+        "fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2", "S3"]}],
+        "topics": [],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    urls = {s.id: s.url for c in view.checks for s in c.sources}
+    assert urls == {"S2": None, "S3": "https://ok.example/a"}
+    assert "javascript:" not in str(view.intro_html) + str(view.verify_html)
+
+
+def test_重疊率讀得懂重構檢查真正寫的那一行(folder: ChatFolder) -> None:
+    # 字串是 #92 的 `check_overlap` 實際算出來的第一條（label 是 S2），不是照畫面的寫法倒推的
+    real = "S2：4-gram 重疊率 45.0%（提醒門檻 10.0%）；最長共同片段 12 個詞（提醒門檻 12）；門檻暫定（Q-28 未定）；逐字重疊偏多，只提醒、不擋"
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1")
+    path = folder.data.job_dir("w1") / "checks" / "checks.v1.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["entries"] = [
+        {"check": "C3", "status": "warn", "reason": real},
+        {"check": "C3", "status": "warn", "reason": "S2：這段 12 個詞都落在跟S2一字不差的片段裡",
+         "location": {"file": "a.md", "line": 2}, "excerpt": "x"},
+        {"check": "C3", "status": "pass", "reason": "原文：4-gram 重疊率 6.0%（提醒門檻 10.0%）；最長共同片段 3 個詞（提醒門檻 12）"},
+    ]
+    path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    info = [j for j in _jobs(folder, cid) if j.kind == "rewrite"][0]
+
+    overlap = artifacts.article_view(folder.data, info, None).overlap
+
+    assert overlap is not None
+    assert (overlap.rate, overlap.source, overlap.warned) == (45.0, "S2 價目表", True)
+
+
+def test_沒有份名的舊寫法當成原文(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1")
+    path = folder.data.job_dir("w1") / "checks" / "checks.v1.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["entries"] = [{"check": "C3", "status": "pass", "reason": "4-gram 重疊率 3.5%（提醒門檻 10.0%）"}]
+    path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    info = [j for j in _jobs(folder, cid) if j.kind == "rewrite"][0]
+
+    overlap = artifacts.article_view(folder.data, info, None).overlap
+
+    assert overlap is not None and (overlap.rate, overlap.source) == (3.5, "原文")
+
+
+def test_網址有括號的來源照樣是連結(folder: ChatFolder) -> None:
+    sources = {
+        "queries": ["q"],
+        "sources": [{"id": "S2", "url": "https://wiki.example/Foo_(bar)", "title": "條目", "why": "w"}],
+        "fact_checks": [{"claim": "K1", "verdict": "supported", "sources": ["S2"]}],
+        "topics": [],
+    }
+    report = REPORT.replace("見 [S2] 與 [S3]", "見 [S2]")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", sources=sources, report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.checks[0].sources[0].url == "https://wiki.example/Foo_(bar)"
+    assert "https://wiki.example/Foo_%28bar%29" in str(view.verify_html)
