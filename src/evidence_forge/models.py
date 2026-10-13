@@ -141,6 +141,9 @@ class Job(_Contract):
     goal: str
     # 目標文類（ADR-0015）；沒指定時由執行器依訂閱源或作家設定的預設補上。
     target_genre: str | None = None
+    # 開這張單的對話 id（ADR-0021）；命令列 `ef new` 開的是 None。投入去重的鍵含它，
+    # 兩個對話丟同一篇文章各開各的單。能不能讀這張單看對話的 `jobs.jsonl`，不看這一欄
+    conversation: str | None = None
     # 角色（`$EF_DATA/authors/<角色>/`，ADR-0015、FR-RW-02）；舊的 job.md 沒有這欄，當成 `me`
     persona: str | None = None
     # 從哪一張工單接著做（`ef new --from`，ADR-0019 §3.6）：執行器開工前把那張單的產出放進 `input/`

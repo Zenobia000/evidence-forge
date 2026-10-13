@@ -126,7 +126,7 @@ def _new(args: argparse.Namespace) -> int:
         return 1
     if not intake.created:
         print(
-            f"已有工單 {intake.job.id}（同一份素材、同樣的目標），沒有另開",
+            f"已有工單 {intake.job.id}（同一份素材、同一份配方、同樣的目標），沒有另開",
             file=sys.stderr,
         )
     print(intake.job.id)

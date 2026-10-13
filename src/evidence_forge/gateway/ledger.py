@@ -34,8 +34,8 @@ __all__ = [
 _lock = threading.Lock()
 
 
-def _append_line(path: Path, line: str) -> None:
-    """一行用一次 `O_APPEND` 的 write 寫完。
+def append_line(path: Path, line: str) -> None:
+    """一行用一次 `O_APPEND` 的 write 寫完（帳本、投入帳本，以及對話的 `jobs.jsonl`）。
 
     `ef new`（另一個程序）也會寫投入帳本；每行一次 write、檔案用 O_APPEND 開，
     兩個程序同時寫也不會把兩行交錯成一行。同一個程序裡的執行緒另外上鎖。
@@ -61,7 +61,7 @@ def _append_line(path: Path, line: str) -> None:
 
 def append(job_dir: Path, entry: LedgerEntry) -> None:
     """在 `jobs/<id>/ledger.jsonl` 加一行。"""
-    _append_line(job_dir / "ledger.jsonl", entry.model_dump_json() + "\n")
+    append_line(job_dir / "ledger.jsonl", entry.model_dump_json() + "\n")
 
 
 def append_intake(data: DataDir, entry: IntakeEntry) -> None:
@@ -70,7 +70,7 @@ def append_intake(data: DataDir, entry: IntakeEntry) -> None:
     月上限的加總會讀這份檔（`gateway/budget.py`），寫進來的金額下一次預留時就算進去。
     """
     data.intake_ledger.parent.mkdir(parents=True, exist_ok=True)
-    _append_line(data.intake_ledger, entry.model_dump_json() + "\n")
+    append_line(data.intake_ledger, entry.model_dump_json() + "\n")
 
 
 def read(path: Path) -> list[LedgerEntry]:

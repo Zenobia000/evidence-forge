@@ -1,4 +1,4 @@
-"""閘道的設定，以及每個請求共用的「確認工單鑰匙」。"""
+"""閘道的設定，以及每個請求共用的「確認鑰匙」（工單鑰匙或對話鑰匙）。"""
 
 import os
 from collections.abc import Callable, Mapping
@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Literal, cast, get_args
 from urllib.parse import urlsplit
 
+from evidence_forge.convkey import Principal, parse_principal
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import Alias, load_aliases
 from evidence_forge.gateway.credentials import resolve_secrets_dir
 from evidence_forge.gateway.prices import Price, load_prices
 from evidence_forge.gateway.scope import ToolRejected
-from evidence_forge.jobkey import InvalidJobKey, JobKey
+from evidence_forge.jobkey import InvalidJobKey
 from evidence_forge.paths import DataDir
 
 GatewayMode = Literal["live", "replay"]
@@ -52,6 +53,8 @@ class GatewayConfig:
     rate_limit_retries: int = 4
     backoff_base_s: float = 1.0
     backoff_max_s: float = 60.0
+    # 每個對話同一時間最多幾張工單在跑（排隊中也算），超過就拒絕開單（ADR-0021 §3.4）
+    chat_max_running_jobs: int = 1
     clock: Callable[[], datetime] = _utc_now
 
     def backoff_delay(self, retry_after: str | None, attempt: int) -> float:
@@ -83,6 +86,7 @@ def config_from_env(
             f"EF_GATEWAY_FAULT 只能是 {'、'.join(get_args(Fault))}：{fault}"
         )
     cap = environ.get("EF_MONTHLY_BUDGET_USD", "").strip()
+    running = environ.get("EF_CHAT_MAX_RUNNING_JOBS", "").strip()
     return GatewayConfig(
         data=data,
         mode="replay" if mode == "replay" else "live",
@@ -92,6 +96,9 @@ def config_from_env(
         secrets_dir=resolve_secrets_dir(environ),
         monthly_cap_usd=_monthly_cap(cap) if cap else 10.0,
         fault=cast(Fault, fault) if fault else None,
+        chat_max_running_jobs=_positive_int("EF_CHAT_MAX_RUNNING_JOBS", running)
+        if running
+        else 1,
     )
 
 
@@ -116,6 +123,16 @@ def _tavily_url(value: str) -> str:
     return url
 
 
+def _positive_int(name: str, value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError(f"{name} 要是正整數：{value}") from None
+    if number < 1:
+        raise ValueError(f"{name} 要是正整數：{value}")
+    return number
+
+
 def _monthly_cap(value: str) -> float:
     try:
         cap = float(value)
@@ -126,12 +143,14 @@ def _monthly_cap(value: str) -> float:
     return cap
 
 
-def require_active_key(header: str | None, stages: ActiveStages) -> JobKey:
-    """讀出並確認工單鑰匙；不是正在跑的那一把就丟 `ToolRejected(403)`。"""
+def require_active_key(header: str | None, stages: ActiveStages) -> Principal:
+    """讀出並確認鑰匙（工單的一段一次，或對話的一次開 Pi）；不是登記中的那一把就丟 `ToolRejected(403)`。"""
     try:
-        key = JobKey.parse(header or "")
+        key = parse_principal(header or "")
     except InvalidJobKey as exc:
-        raise ToolRejected(403, f"工單鑰匙不對：{exc}") from None
+        raise ToolRejected(403, f"鑰匙不對：{exc}") from None
     if not stages.is_active(key):
-        raise ToolRejected(403, f"鑰匙 {key} 不是正在跑的那一段、那一次")
+        raise ToolRejected(
+            403, f"鑰匙 {key} 不是登記中的那一把（段已結束或對話已接回）"
+        )
     return key

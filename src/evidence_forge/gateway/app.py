@@ -1,11 +1,12 @@
 """閘道的 HTTP 介面（架構草案 v0.3 §4）。
 
-- `POST /tools/<名稱>`：ef-tools 的工具呼叫（`read_file`、`list_files`、`write_file`、
-  `fetch_url`、`web_search`、`run_script`）。
+- `POST /tools/<名稱>`：ef-tools 的工具呼叫。段（工單鑰匙）用 `read_file`、`list_files`、
+  `write_file`、`fetch_url`、`web_search`、`run_script`；對話（對話鑰匙）只能用 `analyze`、
+  `read_report`、`job_status`（`chat_tools.py`、ADR-0021）。兩邊互相拿對方的工具一律 403。
 - `POST /v1/messages`：Pi 的模型請求（Anthropic Messages 格式），見 `messages.py`。
 - `GET /health`、`GET /health/anthropic`：執行器的開跑前檢查用（閘道活著、金鑰有效）。
 
-兩種請求都在 `x-api-key` 帶工單鑰匙；閘道只接受登記中的那一把（`ActiveStages`）。
+兩種請求都在 `x-api-key` 帶工單鑰匙或對話鑰匙；閘道只接受登記中的那一把（`ActiveStages`）。
 `fetch_url`、`web_search` 與 `run_script` 每呼叫一次，在這張工單的帳本記一筆
 （`kind: fetch`／`search`／`script`）。搜尋的規則在 `search.py`。
 重播模式下 `fetch_url` 與 `web_search` 只回放錄音（`fetch.RecordedFetches`、`search.py`），不連網。
@@ -21,7 +22,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from evidence_forge.convkey import ConversationKey
 from evidence_forge.gateway import ledger, scope, scripts
+from evidence_forge.gateway.chat_tools import CHAT_TOOLS, ChatTools, Desk
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
@@ -61,18 +64,21 @@ def create_app(
     fetcher: Fetcher | None = None,
     searcher: Searcher | None = None,
     script_timeout_s: float = scripts.DEFAULT_TIMEOUT_S,
+    desk: Desk | None = None,
 ) -> FastAPI:
     """`board` 要跟執行器共用（`ef serve`）；不傳就自己開一個，執行器讀不到。
 
     `fetcher` 不傳就照環境變數建一個（`EF_FETCH_TTL_SECONDS`）；測試傳假 DNS 的那一個。
     `searcher` 不傳就照設定建一個（`EF_SEARCH_TTL_SECONDS`），跟模型呼叫共用 `board`；
     測試傳逾時短的那一個，要看告示板的話建它時傳同一個 `board`。
+    `desk` 是對話的工具開單、讀結果用的那一層（對話主機注入）；不傳的話對話的工具回 503。
     """
     app = FastAPI(title="evidence-forge gateway")
     board = board or JobBoard(config.clock)
     fetcher = fetcher or Fetcher.from_env(config.data, clock=config.clock)
     searcher = searcher or Searcher(config, board=board)
     blobs = fetcher.blobs
+    chat = ChatTools(config, desk)
     # 重播模式的抓取只看錄音；正式執行是 None
     recorded: RecordedFetches | None = None
     if config.mode == "replay":
@@ -118,6 +124,14 @@ def create_app(
             raise scope.ToolRejected(400, "請求內容要是 JSON") from None
         if not isinstance(body, dict):
             raise scope.ToolRejected(400, "請求內容要是 JSON 物件")
+        # 對話鑰匙只能用對話的工具；段的工具（讀寫檔、抓網頁、搜尋、跑腳本）只給工單鑰匙（NFR-SEC-02）
+        if isinstance(key, ConversationKey):
+            if name not in CHAT_TOOLS:
+                raise scope.ToolRejected(403, f"對話不能用 {name}")
+            return await chat.handle(key, name, body)
+        if name in CHAT_TOOLS:
+            # 段不能自己開新工單、也不能讀別張單的結果
+            raise scope.ToolRejected(403, f"段不能用 {name}")
         job_dir = config.data.job_dir(key.job_id)
         if name in ONLINE_TOOLS and not stages.online(key):
             # 配方沒給這一段搜尋額度：不准上網（例：重構段不准把原文抓回來，#92 審查）。

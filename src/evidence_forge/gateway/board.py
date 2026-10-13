@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from evidence_forge.gateway.budget import BudgetLimit
-from evidence_forge.jobkey import JobKey
+from evidence_forge.convkey import Principal
 from evidence_forge.models import Waiting, WaitingKind
 
 
@@ -37,9 +37,9 @@ class JobBoard:
         self._clock = clock
         self._lock = threading.Lock()
         self._waiting: dict[str, Waiting] = {}
-        self._budget_stops: dict[JobKey, BudgetLimit] = {}
+        self._budget_stops: dict[Principal, BudgetLimit] = {}
         # 段與次 → 後端 → 故障（照碰到的先後）
-        self._outages: dict[JobKey, dict[str, Outage]] = {}
+        self._outages: dict[Principal, dict[str, Outage]] = {}
 
     # --- 等待狀態 -------------------------------------------------------------
 
@@ -60,26 +60,26 @@ class JobBoard:
 
     # --- 預算擋下 -------------------------------------------------------------
 
-    def stop_for_budget(self, key: JobKey, limit: BudgetLimit) -> None:
+    def stop_for_budget(self, key: Principal, limit: BudgetLimit) -> None:
         with self._lock:
             # 同一段同一次先被哪一道擋下就記哪一道
             self._budget_stops.setdefault(key, limit)
 
-    def budget_stop(self, key: JobKey) -> BudgetLimit | None:
+    def budget_stop(self, key: Principal) -> BudgetLimit | None:
         """這一段這一次有沒有被預算擋下、擋下的是哪一道上限。"""
         with self._lock:
             return self._budget_stops.get(key)
 
     # --- 後端故障 -------------------------------------------------------------
 
-    def report_outage(self, key: JobKey, backend: str, message: str) -> None:
+    def report_outage(self, key: Principal, backend: str, message: str) -> None:
         with self._lock:
             # 同一段同一次、同一個後端先碰到哪一個故障就記哪一個
             self._outages.setdefault(key, {}).setdefault(
                 backend, Outage(backend, message)
             )
 
-    def recovered(self, key: JobKey, backend: str) -> None:
+    def recovered(self, key: Principal, backend: str) -> None:
         """同一段同一次，這個後端後來有一次成功的呼叫：它先前的故障是暫時的，不算數。
         別的後端的故障照留。"""
         with self._lock:
@@ -90,7 +90,7 @@ class JobBoard:
             if not found:
                 del self._outages[key]
 
-    def outage(self, key: JobKey) -> Outage | None:
+    def outage(self, key: Principal) -> Outage | None:
         """這一段這一次有沒有碰到還沒恢復的後端故障；好幾個的話回最早碰到的那一個。"""
         with self._lock:
             found = self._outages.get(key)
