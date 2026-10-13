@@ -1,11 +1,11 @@
 """指令列 `ef`。
 
 - `ef new --url <網址> | --text "<內容>" | --file <md|txt|pdf>`：先抓取與抽文字，在
-  `inbox/manual/` 寫一個素材項目，開一張排隊中的工單；可帶 `--goal`、`--recipe`、
+  `inbox/manual/` 寫一個素材項目，開一張排隊中的工單；配方預設 `analyze`（先分析，#78）；可帶 `--goal`、`--recipe`、
   `--genre`、`--budget-usd`、`--budget-credits`（Tavily credits；沒給就用配方各段的總和）。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
   網址讀不到（403、付費牆、robots、內網位址）不開單，結束碼 1，提示改用 `--text` 或 `--file`。
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
-  啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01）；同時最多跑 `--parallel` 張（預設 2）；
+  啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01，含 `harness/pi/` 的 Pi 有沒有裝）；同時最多跑 `--parallel` 張（預設 2）；
   重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
   還有對話主機（#85，`chat/host.py`）與給畫面的 API（`chat/api.py`，`--chat-port`，預設 8790，也只綁 127.0.0.1）：
   對話的 Pi 閒置 `--chat-idle-minutes`（預設 10）分鐘就關掉，`analyze` 開 `--chat-recipe`（預設 analyze）。
@@ -155,7 +155,7 @@ def _serve(args: argparse.Namespace) -> int:
     data = resolve_data_dir()
     config = config_from_env(data)
     gateway_url = f"http://127.0.0.1:{args.port}"
-    preflight = Preflight(config, gateway_url)
+    preflight = Preflight(config, gateway_url, pi_bin=harness.pi.pi_bin)
     problems = preflight.startup()
     if problems:
         # 故障注入、資料目錄不可寫、硬碟滿：怎麼等都不會自己好，直接不啟動
@@ -263,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--text", help="文章內容")
     source.add_argument("--file", help="Markdown、純文字或 PDF 檔")
     new.add_argument("--goal", help="這張工單的目標（沒填就用配方的預設目標）")
-    new.add_argument("--recipe", default="echo", help="配方名稱（預設 echo）")
+    new.add_argument("--recipe", default="analyze", help="配方名稱（預設 analyze）")
     new.add_argument("--genre", help="目標文類（例：explainer）")
     new.add_argument(
         "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"

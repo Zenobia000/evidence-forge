@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "brief 段的產出 brief.json",
+  "description": "brief 裡要給程式讀的欄位（FR-AN-01、ADR-0020）：文類、主題標籤、關鍵主張。給人與下一段讀的內容在 brief.md。不附逐字引句。",
+  "type": "object",
+  "properties": {
+    "genre": {
+      "type": "object",
+      "properties": {
+        "primary": { "$ref": "#/$defs/genre_id" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["primary", "confidence"],
+      "additionalProperties": false
+    },
+    "topics": {
+      "description": "主題標籤；之後知識庫依它分類（replan §6）",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "key_claims": {
+      "description": "撐起論點的事實主張，查證段只查這些。SKILL.md 要 3～6 條；文章真的不到 3 條可查的事實時照實少列，不逼它把觀點寫成事實（PRD §5）",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^K[1-6]$" },
+          "claim": { "type": "string", "minLength": 1 }
+        },
+        "required": ["id", "claim"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["genre", "topics", "key_claims"],
+  "additionalProperties": false,
+  "$defs": {
+    "genre_id": {
+      "enum": ["news", "hot-take", "tutorial", "tips", "explainer", "deep-dive", "notes", "review", "case-study", "opinion", "story", "roundup"]
+    }
+  }
+}

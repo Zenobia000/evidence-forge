@@ -69,6 +69,8 @@ from evidence_forge.transitions import transition
 from evidence_forge.write_once import write_once
 
 TAIPEI = ZoneInfo("Asia/Taipei")
+# 任務說明裡「原文出處」的標題最多幾個字
+ORIGIN_TITLE_MAX = 200
 
 _log = logging.getLogger(__name__)
 
@@ -92,14 +94,24 @@ def stage_prompt(
     `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
     `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
     `cited` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列：每個來源的編號、
-    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時一個字都不多
-    （整理段、補料段與 echo 的請求跟以前一樣）。
+    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時，種子有網址才多一行
+    原文出處（分析報告的來源清單要列，#78）；貼上的文字、上傳的檔案沒有網址，一個字都不多
+    （錄音的種子都是貼上的文字，錄好的請求照樣對得上）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
     listed = ""
-    if cited is not None and len(cited) > 1:
+    if cited is not None and len(cited) == 1:
+        seed = cited.get(sources.SEED_ID)
+        if seed is not None and seed.url:
+            # 只有種子、種子有網址：分析報告的來源清單要列原文出處（PRD §5），agent 讀不到素材項目
+            # 標題可能是網頁的 og:title：壓成一行、限制長度，不讓它拆亂或塞爆任務說明
+            title = " ".join(seed.title.split())
+            if len(title) > ORIGIN_TITLE_MAX:
+                title = title[:ORIGIN_TITLE_MAX] + "…"
+            listed = f"原文出處：{title}，{seed.url}\n"
+    elif cited is not None and len(cited) > 1:
         paths = "、".join(
             f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
         )
@@ -827,6 +839,7 @@ class Runner:
             reason = LIMIT_REASONS[limit]
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="incomplete", reason=reason))
+        placement: sources.Placement | None = None
         if result.timed_out:
             self._stage_event(job_dir, stage.id, attempt, "Pi 逾時")
             problems = [f"Pi 超過 {self.pi_timeout_s:.0f} 秒沒結束，已停止"]
@@ -847,14 +860,16 @@ class Runner:
                 self._stage_event(job_dir, stage.id, attempt, reason)
                 return _Tried(stop=JobResult(outcome="failed", reason=reason))
             if not problems and sources.collects_sources(stage):
-                # 補料段：照 sources.json 放來源正文；網址這一次沒抓過就算不合格（#70）
-                problems = sources.place_sources(
+                # 交來源清單的段：照 sources.json 算好要放的來源正文；網址這一次沒抓過就算不合格（#70）。
+                # 等程式檢查也過了才放（見下面），檢查沒過重試時才換得了來源
+                placement = sources.plan_sources(
                     self.data,
                     job_dir,
                     stage,
                     attempt,
                     seed=seed,
                 )
+                problems = list(placement.problems)
             error = pi_error(result.events)
             if problems and error is not None:
                 # Pi 的模型呼叫失敗時結束碼還是 0，真正的原因只在它的事件裡
@@ -880,6 +895,7 @@ class Runner:
                 self.harness.schema_file(stage.skill),
                 self.clock,
                 seed,
+                upstream_outputs(job_dir, recipe, stage),
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因進待審
@@ -887,6 +903,8 @@ class Runner:
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))
         if report is None or report.passed:
+            if placement is not None:
+                sources.put_sources(job_dir, placement)
             self._stage_event(job_dir, stage.id, attempt, "產出合格")
             return _Tried()
         self._stage_event(

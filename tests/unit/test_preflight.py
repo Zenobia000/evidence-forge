@@ -173,3 +173,23 @@ def test_啟動時的檢查只看跟配方無關的項目(tmp_path: Path) -> Non
     assert any("EF_GATEWAY_FAULT" in p for p in problems)
     assert any(p.startswith("資料目錄不可寫") for p in problems)
     assert not fake.called("ollama")
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_Pi_沒裝_啟動就擋_訊息說要在_harness_pi_跑_npm_ci(tmp_path: Path) -> None:
+    # #68：沒裝 Pi 時 `ef serve` 照樣啟動，等第一張單開 Pi 才失敗，同素材同目標的單又被去重
+    preflight = _preflight(tmp_path, FakeProbes())
+    preflight.pi_bin = tmp_path / "harness" / "pi" / "node_modules" / ".bin" / "pi"
+    problems = preflight.startup()
+    assert len(problems) == 1
+    assert problems[0].startswith("Pi 沒裝")
+    assert "npm ci" in problems[0] and str(preflight.pi_bin) in problems[0]
+    # 每張單開跑前也查（事件紀錄寫得到原因）
+    assert preflight(_recipe())[0].startswith("Pi 沒裝")
+
+
+def test_Pi_裝好了就不擋(tmp_path: Path) -> None:
+    preflight = _preflight(tmp_path, FakeProbes())
+    preflight.pi_bin = tmp_path / "pi"
+    preflight.pi_bin.write_text("", encoding="utf-8")
+    assert preflight.startup() == []

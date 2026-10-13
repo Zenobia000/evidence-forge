@@ -98,11 +98,29 @@ def test_種子是貼上的文字_沒有網址_註腳標原文() -> None:
     assert "[^S1]: 夜間圖書館（原文）\n" in prompt
 
 
-def test_只有種子一個來源時_任務說明不多一個字() -> None:
-    # 整理段、補料段、echo 都只有種子：錄好的請求不能因為這一行而對不上
-    only_seed = {
-        "S1": Source(Path("input/content.md"), "夜間圖書館", "https://s.example")
-    }
+def test_只有種子一個來源_而且是貼上的文字時_任務說明不多一個字() -> None:
+    # 錄音的種子都是貼上的文字（沒有網址）：錄好的請求不能因為多一行而對不上
+    only_seed = {"S1": Source(Path("input/content.md"), "夜間圖書館")}
     assert stage_prompt(
         RECIPE, RECIPE.stages[0], 1, "寫一篇", cited=only_seed
     ) == stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇")
+
+
+def test_種子有網址時_還沒放來源的段也拿得到原文出處() -> None:
+    # 分析報告的來源清單要列原文的網址（PRD §5），agent 只看得到 input/content.md 的正文
+    only_seed = {
+        "S1": Source(Path("input/content.md"), "夜間圖書館", "https://s.example/a")
+    }
+    prompt = stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇", cited=only_seed)
+    assert "素材在 input/content.md。\n原文出處：夜間圖書館，https://s.example/a\n" in prompt
+
+
+def test_原文出處的標題壓成一行_太長就截短() -> None:
+    # 標題可能是網頁的 og:title：換行會把任務說明拆亂，超長的會塞爆提示
+    title = "第一行\n  第二行\t" + "長" * 300
+    only_seed = {"S1": Source(Path("input/content.md"), title, "https://s.example/a")}
+    prompt = stage_prompt(RECIPE, RECIPE.stages[0], 1, "寫一篇", cited=only_seed)
+    [line] = [x for x in prompt.splitlines() if x.startswith("原文出處：")]
+    assert line.startswith("原文出處：第一行 第二行 長長")
+    assert line.endswith("…，https://s.example/a")
+    assert len(line) < 200 + len("原文出處：…，https://s.example/a") + 1
