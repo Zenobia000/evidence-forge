@@ -269,7 +269,7 @@ def test_面板的版本參數不是這個對話的工單就當沒給(world: tup
     cid = folder.conversation()
     folder.analysis(cid, "a1")
 
-    for hostile in ("../../etc/passwd", "no-such", ""):
+    for hostile in ("../../outside/job", "no-such", ""):
         response = httpx.get(f"{url}/ui/c/{cid}/panel", params={"tab": "report", "v": hostile})
         assert response.status_code == 200
         assert "作者在說什麼" in response.text
