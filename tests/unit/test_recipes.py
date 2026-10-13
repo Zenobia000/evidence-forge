@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from evidence_forge.models import TIER_ORDER
 from evidence_forge.harness import Harness, default_harness
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.runner.recipes import RecipeError, load_recipes
 
 TIERS = ("local",)
