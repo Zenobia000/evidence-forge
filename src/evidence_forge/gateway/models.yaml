@@ -14,8 +14,9 @@ local:
   max_tokens: 16384
   thinking: { type: disabled }
   concurrency: 1
-  # 上下文長度（提示＋輸出）。要跟 Ollama 容器的 OLLAMA_CONTEXT_LENGTH 一樣（容器開的時候帶
-  # -e OLLAMA_CONTEXT_LENGTH=32768）；容器開得比這裡小，閘道就擋不住被截掉的提示。
+  # 上下文長度（提示＋輸出）。Ollama 沒設 OLLAMA_CONTEXT_LENGTH 時依顯示卡記憶體自己決定
+  # 預設值（3090 的 24 GB 是 32768，/api/ps 的 context_length 看得到）。Ollama 實際的比這裡小，
+  # 閘道就擋不住被截掉的提示，所以開跑前檢查會讀 /api/ps 核對，小了就不開跑。
   # 輸出留 max_tokens，提示估起來超過剩下的 16,384 token 就不送、升級（ADR-0022）
   context_window: 32768
 fast:

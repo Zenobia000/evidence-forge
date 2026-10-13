@@ -186,6 +186,23 @@ def test_升級鏈_一級一級往上_照寫的順序讀進來() -> None:
     assert parse_recipe(text).stages[3].escalate_to == ("fast", "strong")
 
 
+def test_每一次嘗試的搜尋上限_這一段的額度平分給所有嘗試_至少_1() -> None:
+    recipe = parse_recipe(
+        RESTRUCTURE_RECIPE.replace(
+            "tavily_credits: 10 }",
+            "tavily_credits: 10, escalate_to: [fast, strong] }",
+        )
+    )
+    research = recipe.stages[1]
+    # 本機 max_attempts 2 次＋升級鏈兩級各一次＝4 次：10 // 4 = 2
+    assert recipe.search_credits_per_attempt(research) == 2
+    # 額度比嘗試次數少，每一次至少還能搜 1 次
+    stingy = research.model_copy(update={"tavily_credits": 3})
+    assert recipe.search_credits_per_attempt(stingy) == 1
+    # 沒有搜尋額度的段不能上網，上限是 0
+    assert recipe.search_credits_per_attempt(recipe.stages[0]) == 0
+
+
 def test_read_recipe_reads_the_file(tmp_path: Path) -> None:
     path = tmp_path / "restructure.md"
     path.write_text(RESTRUCTURE_RECIPE, encoding="utf-8")

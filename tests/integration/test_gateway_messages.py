@@ -467,6 +467,9 @@ def test_提示大到本機模型的上下文放不下_不轉送_回請求錯誤
     # Ollama 一個請求都沒收到；不是後端故障，執行器照「產出不合格」重試、升級
     assert ollama.received == []
     assert board.outage(KEY) is None
+    # 告示板記下「放不下」：執行器據此不在本機再試，直接升級
+    too_long = board.too_long(KEY)
+    assert too_long is not None and "上下文" in too_long
     [entry] = _ledger(data)
     assert (entry.tier, entry.status, entry.cost_usd) == ("local", "error", 0)
 

@@ -35,7 +35,8 @@ class Alias(BaseModel):
     thinking: dict[str, Any]
     # 同時服務幾個請求；沒寫就不限。本機 GPU 一次一個（NFR-PAR-02）
     concurrency: PositiveInt | None = None
-    # 後端的上下文長度（token，提示加輸出）；要跟 Ollama 伺服器的 OLLAMA_CONTEXT_LENGTH 一樣。
+    # 後端的上下文長度（token，提示加輸出）；不能比 Ollama 載入模型時實際的上下文大
+    # （沒設 OLLAMA_CONTEXT_LENGTH 時 Ollama 依顯示卡記憶體決定；開跑前檢查讀 /api/ps 核對）。
     # 沒寫就不檢查（雲端模型的上下文是 1M，遠大於我們的請求）
     context_window: PositiveInt | None = None
 

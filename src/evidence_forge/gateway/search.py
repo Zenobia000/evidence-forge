@@ -12,8 +12,8 @@
    沒錄過就報錯。
 3. 快取：`cache/search/<請求 hash>/` 裡最新的一筆還在有效期限內，直接用；不扣 credits、
    不需要預算，帳本記 `cache_hit`。快取跨工單共用。
-4. 先預留：這張單 `budget.tavily_credits` 剩下的不夠 1 credit 就拒絕（402），帳本記
-   `budget_exceeded`（NFR-COST-01）。這一段不停：agent 照錯誤訊息用已經找到的資料收尾，
+4. 先預留：這張單 `budget.tavily_credits` 剩下的不夠 1 credit，或這一段這一次用到執行器登記的
+   上限（ADR-0022），就拒絕（402），帳本記 `budget_exceeded`（NFR-COST-01）。這一段不停：agent 照錯誤訊息用已經找到的資料收尾，
    後面的段照跑；全部段跑完時執行器看到帳本裡這一行，把單子以「未完成：預算用完」送進待審
    （`research.feature`〈搜尋額度用完就停〉、`runner/runner.py`）。
 5. 送 `POST <tavily>/search`，金鑰放在 `Authorization` 標頭（每次用才讀檔）。429 照 ADR-0011 退避，
@@ -250,8 +250,17 @@ class Searcher:
 
     # --- 對外 ---------------------------------------------------------------
 
-    async def search(self, key: JobKey, query: SearchQuery) -> dict[str, Any]:
-        """搜尋一次並記帳。拿不到結果丟 `ToolRejected`（帳本已經記好）。"""
+    async def search(
+        self,
+        key: JobKey,
+        query: SearchQuery,
+        *,
+        attempt_credits: int | None = None,
+    ) -> dict[str, Any]:
+        """搜尋一次並記帳。拿不到結果丟 `ToolRejected`（帳本已經記好）。
+
+        `attempt_credits` 是這一段這一次最多用幾個 credits（執行器登記的）；None 只看工單的上限。
+        """
         call = _Call(key, query.request_hash, time.monotonic())
         self._store(query.request_bytes(), "搜尋的請求本文")
         if self._recorded_blobs is not None:
@@ -268,6 +277,8 @@ class Searcher:
                 key.job_id,
                 job_credits=self._job_credits(key.job_id),
                 credits=BASIC_CREDITS,
+                attempt=(key.stage, key.attempt),
+                attempt_credits=attempt_credits,
             )
         except BudgetExceeded as exc:
             refused = SearchFailure(

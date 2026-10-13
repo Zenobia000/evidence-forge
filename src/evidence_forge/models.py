@@ -256,6 +256,17 @@ class Recipe(_Contract):
     # 檢查沒過時，自動回寫作段修幾次
     auto_fix: NonNegativeInt = 1
 
+    def search_credits_per_attempt(self, stage: RecipeStage) -> int:
+        """這一段每一次嘗試最多用幾個 Tavily credits（閘道照它擋，ADR-0022）。
+
+        這一段的額度平分給它所有的嘗試：本級 `max_attempts` 次＋升級鏈每一級一次，
+        本機那幾次才用不光，升上來的那一級還有得搜。至少 1；這一段沒有額度就是 0（不能上網）。
+        """
+        if stage.tavily_credits == 0:
+            return 0
+        attempts = self.max_attempts + len(stage.escalate_to)
+        return max(1, stage.tavily_credits // attempts)
+
     @model_validator(mode="after")
     def _stages_consistent(self) -> Self:
         ids = [stage.id for stage in self.stages]

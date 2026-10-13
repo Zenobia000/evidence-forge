@@ -25,6 +25,8 @@ class FakeProbes:
     gateway_problem: str | None = None
     key_problem: str | None = None
     writable_problem: str | None = None
+    # Ollama 的 /api/ps 回報載入中的模型上下文多長；None 是模型沒載入（或沒回報）
+    context: int | None = 32768
     free: int = 50 * GIB
     calls: list[tuple[str, object]] = field(default_factory=list)
 
@@ -32,6 +34,10 @@ class FakeProbes:
         def ollama(url: str, model: str, timeout_s: float) -> str | None:
             self.calls.append(("ollama", (url, model, timeout_s)))
             return self.ollama_problem
+
+        def ollama_context(url: str, model: str) -> int | None:
+            self.calls.append(("ollama_context", (url, model)))
+            return self.context
 
         def gateway(url: str) -> str | None:
             self.calls.append(("gateway", url))
@@ -50,6 +56,7 @@ class FakeProbes:
 
         return Probes(
             ollama=ollama,
+            ollama_context=ollama_context,
             gateway=gateway,
             anthropic_key=anthropic_key,
             free_bytes=free_bytes,
@@ -105,6 +112,32 @@ def test_Ollama_沒回應_不開跑並點名這一項(tmp_path: Path) -> None:
     fake = FakeProbes(ollama_problem="連不上 http://127.0.0.1:11434")
     problems = _preflight(tmp_path, fake)(_recipe())
     assert len(problems) == 1 and problems[0].startswith("Ollama 沒回應")
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_Ollama_載入的上下文比對照表小_不開跑_說怎麼修(tmp_path: Path) -> None:
+    # Ollama 依顯示卡記憶體自己決定預設上下文；比 models.yaml 的 context_window 小，
+    # 閘道就擋不住會被截掉的提示（ADR-0022）
+    fake = FakeProbes(context=8192)
+    problems = _preflight(tmp_path, fake)(_recipe())
+    assert len(problems) == 1 and problems[0].startswith("Ollama 上下文太小")
+    assert "8192" in problems[0] and "32768" in problems[0]
+    assert "OLLAMA_CONTEXT_LENGTH=32768" in problems[0]
+
+
+@pytest.mark.promise("NFR-RUN-01")
+def test_Ollama_模型沒載入_不為了查上下文去載_記一筆警告照樣開跑(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeProbes(context=None)
+    assert _preflight(tmp_path, fake)(_recipe()) == []
+    assert "上下文" in caplog.text
+
+
+def test_配方沒用到本機等級_不查_Ollama_的上下文(tmp_path: Path) -> None:
+    fake = FakeProbes(context=1024)
+    assert _preflight(tmp_path, fake)(_recipe("strong")) == []
+    assert not fake.called("ollama_context")
 
 
 @pytest.mark.promise("NFR-RUN-01")

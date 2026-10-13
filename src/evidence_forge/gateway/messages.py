@@ -543,15 +543,15 @@ def add_message_routes(
         # 帳本的 request_hash 仍是 Pi 送來的原文，見模組說明
         blobs.put(content)
         if not alias.fits(content):
-            # 本機模型的上下文放不下：Ollama 會默默截掉提示的前面。不轉送，回請求錯誤；
-            # 這不是後端故障（不告訴告示板），執行器當成這一次不合格，照升級鏈往上（ADR-0022）
-            return fail(
-                call,
-                "error",
-                400,
+            # 本機模型的上下文放不下：Ollama 會默默截掉提示的前面。不轉送，回請求錯誤。
+            # 這不是後端故障（不記成故障）；告示板記下「放不下」，執行器就不在同一級
+            # 再試，直接升級鏈的下一級（ADR-0022）
+            message = (
                 f"提示太長，{call.tier}（{alias.model}）的上下文 {alias.context_window} "
-                "token 放不下；這一次不送出",
+                "token 放不下；這一次不送出"
             )
+            board.report_too_long(call.key, message)
+            return fail(call, "error", 400, message)
 
         if call.price is not None:
             try:

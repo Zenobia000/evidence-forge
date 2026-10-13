@@ -131,22 +131,26 @@ write("summary.json", {"summary": "fast 才對"} if ATTEMPT == "3" else {"x": 1}
     assert [entry.tier for entry in world.ledger(job_id)] == ["local", "local", "fast"]
 
 
-@pytest.mark.promise("NFR-RUN-03", "FR-MD-01")
-def test_提示大到本機模型的上下文放不下_算這一次不合格_升到_fast_做完(
-    world_for: Callable[..., World],
-) -> None:
-    # 閘道估起來放不下就不轉送給 Ollama（不讓它默默截掉提示），也不算後端故障
-    script = (
-        FAKE_PI_LIB
-        + """
+_TOO_LONG_FOR_LOCAL = (
+    FAKE_PI_LIB
+    + """
 status, _ = ask("長" * 20000 if TIER == "local" else None)
 if status == 200:
     write("summary.json", {"summary": "雲端讀得下全部"})
 event(type="agent_end")
 """
-    )
+)
+
+
+@pytest.mark.promise("NFR-RUN-03", "FR-MD-01")
+def test_提示大到本機模型的上下文放不下_本機不再試第二次_直接升到_fast_做完(
+    world_for: Callable[..., World],
+) -> None:
+    # 閘道估起來放不下就不轉送給 Ollama（不讓它默默截掉提示），也不算後端故障；
+    # 同一份輸入在本機再試一次也一樣放不下，所以直接升級鏈的下一級
     world = world_for(
-        script, recipes={"retry": _recipe(escalate_to=["fast", "strong"])}
+        _TOO_LONG_FOR_LOCAL,
+        recipes={"retry": _recipe(escalate_to=["fast", "strong"])},
     )
     job_id = world.job(recipe="retry")
 
@@ -154,8 +158,25 @@ event(type="agent_end")
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete"
-    calls = [(entry.tier, entry.status) for entry in world.ledger(job_id)]
-    assert calls == [("local", "error"), ("local", "error"), ("fast", "ok")]
+    calls = [
+        (entry.attempt, entry.tier, entry.status) for entry in world.ledger(job_id)
+    ]
+    assert calls == [(1, "local", "error"), (2, "fast", "ok")]
+
+
+@pytest.mark.promise("NFR-RUN-03")
+def test_本機的上下文放不下又沒有升級鏈_試一次就失敗_原因寫上下文(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(_TOO_LONG_FOR_LOCAL, recipes={"retry": _recipe(escalate_to=None)})
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "failed"
+    assert "上下文" in job.result.reason
+    assert [entry.attempt for entry in world.ledger(job_id)] == [1]
 
 
 @pytest.mark.promise("NFR-RUN-03")

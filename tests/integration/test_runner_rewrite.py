@@ -213,10 +213,19 @@ def test_參考來源沒列原文_帶著檢查結果回去修_第二次合格就
     assert "自動檢查沒過：C5" in fix and SEED_URL in fix
 
 
-@pytest.mark.promise("FR-RW-01")
-def test_一直沒列原文出處_修到上限以未完成結束_寫明沒過的檢查(
+def _llm_calls(world: World, job_id: str) -> list[tuple[int, str | None, str | None]]:
+    return [
+        (entry.attempt, entry.tier, entry.escalated_from)
+        for entry in world.ledger(job_id)
+        if entry.kind == "llm"
+    ]
+
+
+@pytest.mark.promise("FR-RW-01", "FR-MD-01")
+def test_一直沒列原文出處_每一級都修到上限才升級_最後一級也沒過以未完成結束(
     world_for: Callable[[str], World],
 ) -> None:
+    # 配方：本機起跑、升級鏈 fast、strong、auto_fix 1。每一級寫一次、修一次，修不好才往上（ADR-0022）
     world = world_for(_script(article=NO_ORIGINAL))
     job_id = _rewrite(world, _analysis(world))
     world.runner.run_once()
@@ -226,6 +235,33 @@ def test_一直沒列原文出處_修到上限以未完成結束_寫明沒過的
     assert "C5" in job.result.reason
     # 沒做完也照樣標未校準
     assert "未校準" in job.result.reason
+    assert _llm_calls(world, job_id) == [
+        (1, "local", None),
+        (2, "local", None),
+        (3, "fast", "local"),
+        (4, "fast", "local"),
+        (5, "strong", "local"),
+        (6, "strong", "local"),
+    ]
+
+
+@pytest.mark.promise("FR-RW-01", "FR-MD-01")
+def test_本機寫的修不好_升到_fast_重寫就合格_不再往上(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_script(article=NO_ORIGINAL, by_attempt={"3": ARTICLE}))
+    job_id = _rewrite(world, _analysis(world))
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+    assert _llm_calls(world, job_id) == [
+        (1, "local", None),
+        (2, "local", None),
+        (3, "fast", "local"),
+    ]
+    # 升上來的那一次是重寫，不是修：任務說明不帶上一級的檢查結果
+    assert "自動檢查沒過" not in _prompts(world)[2]
 
 
 @pytest.mark.promise("FR-RW-01")

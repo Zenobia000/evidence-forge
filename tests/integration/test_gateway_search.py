@@ -255,6 +255,34 @@ def test_credits_不夠就拒絕_不送出_帳本記_budget_exceeded(
 
 
 @pytest.mark.promise("NFR-COST-01")
+def test_每一次嘗試有自己的搜尋上限_用完只拒絕這一次_下一次照樣能搜(
+    gateway: Start, data: DataDir, tavily: Tavily
+) -> None:
+    # 工單有 10 credits，執行器登記每一次最多 2：本機那一次用不光整張單的額度，
+    # 升級上來的那一次還有得搜（ADR-0022）
+    job_id = _job(data, credits=10)
+    first = JobKey(job_id, "research", 1)
+    stages = ActiveStages()
+    stages.activate(first, online=True, search_credits=2)
+    with gateway(stages) as gw:
+        replies = [gw.search(first, query=f"第 {n} 個") for n in range(3)]
+        second = JobKey(job_id, "research", 2)
+        stages.activate(second, online=True, search_credits=2)
+        again = gw.search(second, query="下一次")
+    assert [r.status_code for r in replies] == [200, 200, 402]
+    message = replies[2].json()["error"]
+    assert message.startswith("budget_exceeded") and "這一次" in message
+    assert again.status_code == 200
+    assert len(tavily.received) == 3
+    assert [(e.attempt, e.status, e.credits) for e in _ledger(data, job_id)] == [
+        (1, "ok", 1),
+        (1, "ok", 1),
+        (1, "budget_exceeded", 0),
+        (2, "ok", 1),
+    ]
+
+
+@pytest.mark.promise("NFR-COST-01")
 def test_預設的工單沒有_credits_不能搜尋(
     gateway: Start, data: DataDir, tavily: Tavily
 ) -> None:

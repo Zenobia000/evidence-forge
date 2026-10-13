@@ -66,8 +66,12 @@ def ollama(serve: Callable[[Any], AbstractContextManager[str]]) -> Iterator[Any]
 
     @stub.get("/api/ps")
     async def loaded() -> dict[str, Any]:
-        # 開跑前檢查問「模型載入了沒」
-        return {"models": [{"name": "qwen3.5:9b", "model": "qwen3.5:9b"}]}
+        # 開跑前檢查問「模型載入了沒」與載入時的上下文（ADR-0022）
+        return {
+            "models": [
+                {"name": "qwen3.5:9b", "model": "qwen3.5:9b", "context_length": 32768}
+            ]
+        }
 
     with serve(stub) as url:
         yield url, calls

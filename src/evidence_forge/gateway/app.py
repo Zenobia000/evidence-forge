@@ -153,7 +153,9 @@ def create_app(
         if name == "fetch_url":
             return await _fetch_url(key, _string(body, "url"))
         if name == "web_search":
-            return await searcher.search(key, parse_query(body))
+            return await searcher.search(
+                key, parse_query(body), attempt_credits=stages.search_credits(key)
+            )
         if name == "run_script":
             return await _run_script(key, body)
         raise scope.ToolRejected(404, f"沒有這個工具：{name}")
