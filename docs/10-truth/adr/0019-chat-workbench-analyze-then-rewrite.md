@@ -4,6 +4,7 @@
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **取代：** ADR-0013（給目標就自動做完，人只審結果）。**修正：** ADR-0010（工單仍是資料夾裡的執行單位，但不再是使用者看到的東西）。
 > 規劃原文：`30-snapshot/plans/2026-10-13-chat-workbench-replan.md`。
+> **後續修正：ADR-0022**——流程不變；分析（brief、查證與找題材）與重構每一段都先用本機模型，失敗照 `fast`（Haiku 5.5）、`strong`（Sonnet 5.5）一級一級往上，對話的 Pi 預設 `fast`。
 
 ## 1. 背景與問題
 
