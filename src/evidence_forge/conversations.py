@@ -28,9 +28,11 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     ValidationError,
+    field_validator,
 )
 
 from evidence_forge.gateway.ledger import append_line
+from evidence_forge.jobkey import check_name
 from evidence_forge.paths import DataDir
 
 DEFAULT_BUDGET_USD = 1.0
@@ -72,6 +74,14 @@ class ConversationJob(BaseModel):
     ts: AwareDatetime
     version: PositiveInt = 1
     parent: str | None = None
+
+    @field_validator("job_id", "parent")
+    @classmethod
+    def _is_a_job_id(cls, value: str | None) -> str | None:
+        # 會拿來拼 `jobs/<id>/`：跟 `Job.id`、工單鑰匙同一條字元規則，`../` 之類在這裡就進不來
+        if value is not None:
+            check_name("工單 id", value)
+        return value
 
 
 def _folder(data: DataDir, conversation_id: str) -> Path:
@@ -142,8 +152,15 @@ def jobs(data: DataDir, conversation_id: str) -> list[ConversationJob]:
             row = ConversationJob.model_validate_json(line)
         except ValidationError:
             continue
+        if not _inside_jobs(data, row.job_id):
+            continue
         found.setdefault(row.job_id, row)
     return list(found.values())
+
+
+def _inside_jobs(data: DataDir, job_id: str) -> bool:
+    """這張單的資料夾真的在 `jobs/` 底下：`jobs/<id>` 是指到外面的符號連結就不算。"""
+    return (data.jobs / job_id).resolve().is_relative_to(data.jobs.resolve())
 
 
 def owns_job(data: DataDir, conversation_id: str, job_id: str) -> bool:

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { buildMessage, fileProblem, suggestions, toBase64 } from "../../src/evidence_forge/ui/static/js/compose.js";
+import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "../../src/evidence_forge/ui/static/js/compose.js";
 
 test("只有打的字：原樣送出，去掉前後空白", () => {
   assert.equal(buildMessage("  幫我分析這篇  "), "幫我分析這篇");
@@ -45,4 +45,16 @@ test("建議按鈕：剛分析完和剛寫完各三個；其他時候沒有", ()
 test("base64 跟 node 自己算的一樣（含大檔分段）", () => {
   const bytes = new Uint8Array(70000).map((_, i) => i % 251);
   assert.equal(toBase64(bytes), Buffer.from(bytes).toString("base64"));
+});
+
+test("送不出去：打的字和附檔放回去，不用重打", () => {
+  const kept = [{ name: "a.md", text: "內容" }];
+  const back = restoreAfterFailure({ text: "請分析", typedSince: "", kept, addedSince: [] });
+  assert.deepEqual(back, { input: "請分析", attachments: kept });
+});
+
+test("送不出去的這段期間又打了新的一句：舊的在前、新的在後，不蓋掉", () => {
+  const back = restoreAfterFailure({ text: "第一句", typedSince: "第二句", kept: [], addedSince: [{ name: "b.txt", text: "x" }] });
+  assert.equal(back.input, "第一句\n第二句");
+  assert.deepEqual(back.attachments.map((a) => a.name), ["b.txt"]);
 });

@@ -6,6 +6,7 @@
    這裡先放好外框和清單，沒有 script 也看得到清單、點得進對話。 #}
 <div class="ch-shell" id="ch-shell"
      data-conversation="{{ conversation_id or '' }}"
+     data-loose="{{ 'true' if loose else 'false' }}"
      data-initial-tab="{{ initial_tab }}"
      data-panel="closed">
 
@@ -24,7 +25,7 @@
 <button class="ch-iconbtn ch-narrow-only" type="button" id="ch-list-toggle" aria-label="打開對話清單" aria-expanded="false">{{ icon("menu") }}</button>
 <h1 class="ch-convo__title" id="ch-title">{{ conversation_title or "新對話" }}</h1>
 </div>
-<span class="s0-small" id="ch-spent-wrap"{% if not conversation_id %} hidden{% endif %}>這個對話花了 <span class="s0-mono" id="ch-spent">—</span></span>
+<span class="s0-small" id="ch-spent-wrap"{% if not conversation_id %} hidden{% endif %}>{% if loose %}這些工單花了{% else %}這個對話花了{% endif %} <span class="s0-mono" id="ch-spent">—</span></span>
 </div>
 
 <div class="ch-stream" id="ch-stream">
@@ -46,7 +47,7 @@
 </div>
 </div>
 
-<div class="ch-compose">
+<div class="ch-compose"{% if loose %} hidden{% endif %}>
 <div class="ch-compose__inner">
 <div class="ch-suggest" id="ch-suggest" aria-label="建議"></div>
 <div class="ch-attached" id="ch-attached" hidden></div>

@@ -3,6 +3,7 @@
 金額都是手寫的字面值，不是用被測程式的算法再算一次。
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -228,3 +229,84 @@ def test_舊的工單資料夾照樣讀得進來_待審通過丟棄都當結束_
     assert view.total_usd == pytest.approx(0.3)
     assert [r.title for r in view.conversations] == ["不在對話裡的工單"]
     assert {bar.label for bar in view.by_skill} == {"整理", "二創"}
+
+
+# --- 第一輪審查補的 -------------------------------------------------------------------------
+
+
+def test_每個對話的報告文章數只算這個月有花費的工單_跟頂部的數字對得上(folder: ChatFolder) -> None:
+    cid = _world(folder)
+    # 這個對話還有一篇九月寫的文章 v3：十月沒有任何花費
+    folder.article(cid, "w3", parent="w2", persona="me", version=3, minutes=30)
+    folder.ledger("w3", [{"stage": "rewrite", "tier": "strong", "model": "c", "cost_usd": 0.5, "ts": "2026-09-30T10:00:00+08:00"}])
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+    row = view.conversations[0]
+
+    assert (row.reports, row.articles, row.versions) == (1, 1, 2)
+    assert view.articles == 1 and view.total_usd == pytest.approx(0.54)
+
+
+def test_投入抓取自己一列_分項加起來等於總數(folder: ChatFolder) -> None:
+    _world(folder)
+    intake = folder.data.intake_ledger
+    intake.parent.mkdir(parents=True, exist_ok=True)
+    intake.write_text(
+        json.dumps({"ts": at().isoformat(), "kind": "fetch", "url": "https://seed.example/post", "cost_usd": 0.02, "latency_ms": 5, "status": "ok"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+
+    assert view.total_usd == pytest.approx(0.56)
+    assert sum(b.usd for b in view.by_skill) == pytest.approx(0.56)
+    assert sum(b.usd for b in view.by_model) == pytest.approx(0.56)
+    assert sum(w.usd for w in view.by_where) == pytest.approx(0.56)
+    assert {b.label for b in view.by_skill} >= {"投入抓取"}
+    assert [r.title for r in view.conversations][-1] == "投入抓取"
+
+
+def test_分項加起來等於總數_含不在對話裡的工單(folder: ChatFolder) -> None:
+    _world(folder)
+    folder.analysis(None, "cli1")
+    folder.ledger("cli1", [{"stage": "brief", "tier": "strong", "model": "c", "cost_usd": 0.25}])
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+
+    assert view.total_usd == pytest.approx(0.79)
+    assert sum(b.usd for b in view.by_skill) == pytest.approx(0.79)
+    assert sum(r.usd for r in view.conversations) == pytest.approx(0.79)
+    loose = [r for r in view.conversations if r.title == "不在對話裡的工單"][0]
+    assert (loose.conversation_id, loose.reports) == ("loose", 1)
+
+
+def test_對話資料夾的設定檔壞了_帳照樣算_掛在對話_id_底下並列進壞行(folder: ChatFolder) -> None:
+    cid = _world(folder)
+    (folder.data.conversation_dir(cid) / "conversation.json").write_text("壞掉了", encoding="utf-8")
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+
+    assert view.total_usd == pytest.approx(0.54)
+    assert [r.title for r in view.conversations] == [cid]
+    assert any(b.where.endswith("conversation.json") and b.line == 0 for b in view.bad_lines)
+
+
+def test_只有帳本的對話資料夾也算(folder: ChatFolder) -> None:
+    folder.ledger("c-orphan", [{"stage": "chat", "attempt": 1, "tier": "strong", "model": "c", "cost_usd": 0.07}], conversation=True)
+
+    view = bills.month_view(folder.data, RECIPES, MONTH, now=at())
+
+    assert view.total_usd == pytest.approx(0.07)
+    assert [r.title for r in view.conversations] == ["c-orphan"]
+
+
+def test_不在對話裡的花費分頁_每張工單一列_沒有對話本身(folder: ChatFolder) -> None:
+    folder.analysis(None, "cli1")
+    folder.ledger("cli1", [{"stage": "brief", "tier": "strong", "model": "c", "cost_usd": 0.25}])
+
+    cost = bills.conversation_cost(folder.data, RECIPES, "loose")
+
+    assert [r.label for r in cost.rows] == ["分析 v1"]
+    assert cost.total_usd == pytest.approx(0.25)
+    assert cost.budget_usd is None

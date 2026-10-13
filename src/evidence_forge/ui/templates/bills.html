@@ -25,7 +25,7 @@
 </div>
 
 {% if view.bad_lines %}
-<div class="s0-alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有 {{ view.bad_lines|length }} 行讀不懂，已略過</p><p class="s0-small" style="margin: 0">{% for b in view.bad_lines[:5] %}<span class="s0-mono">{{ b.where }}:{{ b.line }}</span>{% if not loop.last %}、{% endif %}{% endfor %}{% if view.bad_lines|length > 5 %} 等{% endif %}。其餘照算，這些行的金額沒有算進總數，所以總數可能偏低。</p></div></div>
+<div class="s0-alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有 {{ view.bad_lines|length }} 行讀不懂，已略過</p><p class="s0-small" style="margin: 0">{% for b in view.bad_lines[:5] %}<span class="s0-mono">{{ b.where }}{% if b.line %}:{{ b.line }}{% else %}（整個檔案讀不懂）{% endif %}</span>{% if not loop.last %}、{% endif %}{% endfor %}{% if view.bad_lines|length > 5 %} 等{% endif %}。其餘照算，這些行的金額沒有算進總數，所以總數可能偏低。</p></div></div>
 {% endif %}
 
 <div class="s0-stats">

@@ -86,6 +86,8 @@ class JobInfo:
     # 這張單交出報告或文章的那一段的 id
     stage_id: str | None
     spent_usd: float
+    # 同一條版本鏈上的上一版（對照用）；第一版或換了角色另開一條鏈就是 None
+    previous_id: str | None = None
 
 
 def job_kind(job: Job, recipe: Recipe | None) -> Kind:
@@ -120,32 +122,61 @@ def spent_micros(path: Path) -> int:
     return total
 
 
-def conversation_jobs(
-    data: DataDir, recipes: dict[str, Recipe], conversation_id: str
-) -> list[JobInfo]:
-    """這個對話開過的工單，照開的順序；讀不懂的 `job.md` 跳過。
+# 不在任何對話裡的工單（命令列 `ef new` 開的、對話功能之前的）借用的對話 id：
+# 真的對話 id 是 `c-…`，不會撞上；畫面把它當成一個唯讀的「對話」，右側面板照樣讀得到報告與文章
+LOOSE = "loose"
 
-    版本鏈：`parent`（先看對話的 `jobs.jsonl`，沒有再看 `job.md`）指到同種工單的，接在它後面；
-    其他的另開一條鏈。標籤在只有一條鏈時是 `v2`，有好幾條時是 `文章 2 v1`。
+
+def owned_job_ids(data: DataDir) -> set[str]:
+    """列在任何一個對話的 `jobs.jsonl` 裡的工單。對話資料夾讀不懂 `conversation.json` 也算：帳不能掉。"""
+    owned: set[str] = set()
+    if data.conversations.is_dir():
+        for folder in sorted(data.conversations.iterdir()):
+            if not folder.is_dir():
+                continue
+            try:
+                owned |= {row.job_id for row in conversations.jobs(data, folder.name)}
+            except ValueError:
+                continue  # 資料夾名字不合規則：不是對話
+    return owned
+
+
+def _persona_of(job: Job) -> str:
+    return job.persona or DEFAULT_PERSONA
+
+
+def _build_infos(
+    data: DataDir,
+    recipes: dict[str, Recipe],
+    entries: list[tuple[ConversationJob, Job]],
+    *,
+    only_outputs: bool = False,
+) -> list[JobInfo]:
+    """工單排成版本鏈與標籤。
+
+    版本鏈：`parent`（先看 `jobs.jsonl` 的列，沒有再看 `job.md`）指到同種工單的，接在它後面；
+    重構還要角色相同——換角色是另一篇文章，另開一條鏈（CONTEXT.md〈版本鏈〉）。
+    標籤在只有一條鏈時是 `v2`，有好幾條時是 `文章 2 v1`。
     """
     found: list[JobInfo] = []
     chains = {"analysis": 0, "rewrite": 0}
     by_id: dict[str, JobInfo] = {}
-    pending: list[tuple[ConversationJob, Job, Recipe | None, Kind]] = []
-    for row in conversations.jobs(data, conversation_id):
-        try:
-            job = read_job(data.job_dir(row.job_id) / "job.md").job
-        except (OSError, ValueError, ValidationError):
-            continue
+    for row, job in entries:
         recipe = recipes.get(job.recipe)
-        pending.append((row, job, recipe, job_kind(job, recipe)))
-    for row, job, recipe, kind in pending:
+        kind = job_kind(job, recipe)
+        if only_outputs and (recipe is None or not _delivers(recipe)):
+            continue
         parent = by_id.get(row.parent or job.parent or "")
-        if parent is not None and parent.kind == kind:
-            chain, depth = parent.chain, parent.depth + 1
+        linked = (
+            parent is not None
+            and parent.kind == kind
+            and (kind == "analysis" or _persona_of(parent.job) == _persona_of(job))
+        )
+        if linked and parent is not None:
+            chain, depth, previous = parent.chain, parent.depth + 1, parent.job_id
         else:
             chains[kind] += 1
-            chain, depth = chains[kind], 1
+            chain, depth, previous = chains[kind], 1, None
         info = JobInfo(
             job_id=row.job_id,
             kind=kind,
@@ -157,6 +188,7 @@ def conversation_jobs(
             label="",
             stage_id=_output_stage(recipe, kind),
             spent_usd=micros_to_usd(spent_micros(data.job_dir(row.job_id) / "ledger.jsonl")),
+            previous_id=previous,
         )
         by_id[row.job_id] = info
         found.append(info)
@@ -171,19 +203,69 @@ def conversation_jobs(
     ]
 
 
+def _delivers(recipe: Recipe) -> bool:
+    """這份配方交報告或文章：舊配方（打通用的 echo、整理加二創的 restructure）的單沒有可以放進面板的東西。"""
+    return any(REPORT_FILE in stage.output or ARTICLE_FILE in stage.output for stage in recipe.stages)
+
+
+def conversation_jobs(
+    data: DataDir, recipes: dict[str, Recipe], conversation_id: str
+) -> list[JobInfo]:
+    """這個對話開過的工單，照開的順序；讀不懂的 `job.md` 跳過。"""
+    if conversation_id == LOOSE:
+        return loose_jobs(data, recipes)
+    entries: list[tuple[ConversationJob, Job]] = []
+    for row in conversations.jobs(data, conversation_id):
+        try:
+            entries.append((row, read_job(data.job_dir(row.job_id) / "job.md").job))
+        except (OSError, ValueError, ValidationError):
+            continue
+    return _build_infos(data, recipes, entries)
+
+
+def loose_jobs(data: DataDir, recipes: dict[str, Recipe]) -> list[JobInfo]:
+    """不在任何對話裡的工單（命令列開的），照工單 id（開單時間）排；只收交報告或文章的配方。
+
+    版本鏈照 `job.md` 的 `parent`。讀不懂的 `job.md`、資料夾名字不合規則的跳過。
+    """
+    if not data.jobs.is_dir():
+        return []
+    owned = owned_job_ids(data)
+    entries: list[tuple[ConversationJob, Job]] = []
+    root = data.jobs.resolve()
+    for folder in sorted(data.jobs.iterdir()):
+        if folder.name in owned or not folder.is_dir() or not folder.resolve().is_relative_to(root):
+            continue
+        try:
+            job = read_job(folder / "job.md").job
+            stamp = datetime.fromtimestamp((folder / "job.md").stat().st_mtime).astimezone()
+            entries.append((ConversationJob(job_id=folder.name, ts=stamp, parent=job.parent), job))
+        except (OSError, ValueError, ValidationError):
+            continue
+    return _build_infos(data, recipes, entries, only_outputs=True)
+
+
 def _with_label(info: JobInfo, label: str) -> JobInfo:
     return JobInfo(**{**info.__dict__, "label": label})
 
 
 def latest_output_dir(data: DataDir, info: JobInfo) -> Path | None:
-    """交出報告或文章的那一段、編號最大那一次的資料夾。"""
+    """交出報告或文章的那一段的資料夾：編號最大、而且真的有那個檔的那一次。
+
+    最後一次可能是當掉、沒寫完的（沒有 `article.md`），那就往前找有交出東西的；都沒有才給編號最大的。
+    """
     if info.stage_id is None:
         return None
     root = data.job_dir(info.job_id) / "stages" / info.stage_id
     if not root.is_dir():
         return None
-    attempts = [p for p in root.iterdir() if p.is_dir() and p.name.isdigit()]
-    return max(attempts, key=lambda p: int(p.name)) if attempts else None
+    attempts = sorted(
+        (p for p in root.iterdir() if p.is_dir() and p.name.isdigit()),
+        key=lambda p: -int(p.name),
+    )
+    wanted = ARTICLE_FILE if info.kind == "rewrite" else REPORT_FILE
+    delivered = next((p for p in attempts if (p / wanted).is_file()), None)
+    return delivered or (attempts[0] if attempts else None)
 
 
 def _read(path: Path) -> str | None:

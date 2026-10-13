@@ -48,3 +48,10 @@ export function toBase64(bytes) {
   }
   return btoa(binary);
 }
+
+// 送不出去：打的字和附檔放回輸入框。失敗的這段期間人可能已經開始打下一句，不蓋掉他新打的：
+// 舊的接在前面、新的在後面。回新的輸入框內容與附檔
+export function restoreAfterFailure({ text, typedSince, kept, addedSince }) {
+  const input = typedSince ? `${text}\n${typedSince}` : text;
+  return { input, attachments: [...kept, ...addedSince] };
+}

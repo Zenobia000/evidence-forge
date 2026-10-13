@@ -7,7 +7,7 @@
 // - 跟 API 同源（#94 審查）：所有請求都用相對路徑。
 // - 沒有輪詢工單：清單每 15 秒與視窗重新取得焦點時重抓一次，因為別的分頁、別的入口也會改清單。
 
-import { buildMessage, fileProblem, suggestions, toBase64 } from "./compose.js";
+import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
 
@@ -33,6 +33,8 @@ const els = {
 };
 
 let conversationId = shell.dataset.conversation || "";
+// 不在任何對話裡的工單：唯讀，沒有 Pi、沒有事件串流、不能送訊息
+const loose = shell.dataset.loose === "true";
 let state = createState();
 let source = null;
 let attachments = [];
@@ -200,6 +202,7 @@ function renderSuggestions(root) {
 
 let lastSeen = null;
 async function reportSeen(root) {
+  if (loose) return;
   const latest = root.dataset.latestJob;
   if (!latest || root.dataset.latestDone !== "true" || root.dataset.latestFailed === "true") return;
   if (lastSeen === `${conversationId}:${latest}`) return;
@@ -312,10 +315,13 @@ function applyEffects(effects) {
 }
 
 function connect() {
-  if (!conversationId || source) return;
+  if (!conversationId || source || loose) return;
   source = new EventSource(`/api/conversations/${encodeURIComponent(conversationId)}/events`);
   source.onopen = () => {
     state = reconnect(state);
+    // 每次連上（第一次，也包括斷線重連）都重抓一次串流：主機重開、積太多被斷開、
+    // 第一次載入到連上之間漏掉的事件，都靠完整紀錄補回來（#94 審查）
+    refreshThread();
   };
   source.onmessage = (message) => {
     let event;
@@ -436,9 +442,12 @@ async function startConversation() {
   return conversationId;
 }
 
-async function send(text) {
+// restore：送不出去（503、400、409、斷線）時把打的字和附檔放回輸入框，不讓人重打；
+// 輸入框以外送的（「重試」按鈕）沒有東西要放回
+async function send(text, { restore = false } = {}) {
   const message = buildMessage(text, attachments);
   if (!message) return;
+  const keptAttachments = attachments;
   els.send.disabled = true;
   try {
     if (!conversationId) await startConversation();
@@ -454,6 +463,14 @@ async function send(text) {
   } catch (error) {
     pending.pop();
     showPending();
+    if (restore) {
+      // 失敗的這段期間人可能已經開始打下一句：不蓋掉他新打的
+      const back = restoreAfterFailure({ text, typedSince: els.input.value, kept: keptAttachments, addedSince: attachments });
+      els.input.value = back.input;
+      attachments = back.attachments;
+      renderAttached();
+      autoGrow();
+    }
     showNote("error", error.message);
   } finally {
     els.send.disabled = false;
@@ -496,13 +513,13 @@ async function addFiles(files) {
 
 // ── 綁事件 ───────────────────────────────────────────────────────
 
-els.send.addEventListener("click", () => send(els.input.value));
+els.send.addEventListener("click", () => send(els.input.value, { restore: true }));
 els.input.addEventListener("input", autoGrow);
 els.input.addEventListener("keydown", (event) => {
   // 輸入法選字時的 Enter 不送出
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    send(els.input.value);
+    send(els.input.value, { restore: true });
   }
 });
 els.input.addEventListener("paste", (event) => {

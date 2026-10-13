@@ -11,13 +11,14 @@
 {% else %}
 <ul class="ch-list__items">
 {% for r in rows %}
+{% if r.loose %}<li class="ch-list__divider" aria-hidden="true"><span>唯讀</span></li>{% endif %}
 <li><a class="ch-row" href="/c/{{ r.conversation_id }}" data-conversation="{{ r.conversation_id }}" data-title="{{ r.title }}"{% if r.current %} aria-current="page"{% endif %}{% if r.state == "new" %} data-new=""{% endif %}>
 <p class="ch-row__title">{{ r.title }}</p>
 <div class="ch-row__meta">
 {%- if r.state == "analyzing" %}<span class="s0-badge">{{ icon("clock") }}分析中</span>
 {%- elif r.state == "writing" %}<span class="s0-badge">{{ icon("pencil") }}寫作中</span>
 {%- elif r.state == "new" %}<span class="s0-badge" data-tone="new">{{ icon("new") }}有新結果</span>
-{%- elif r.state == "failed" %}<span class="s0-badge" data-tone="failed">{{ icon("x") }}失敗</span>{% endif %}
+{%- elif r.state == "failed" %}<span class="s0-badge" data-tone="failed">{{ icon("x") }}失敗</span>{% elif r.loose %}<span class="s0-badge">命令列開的單</span>{% endif %}
 <span class="s0-mono">{{ r.stamp }}</span><span class="s0-mono">{{ r.spent }}</span>
 </div>
 </a></li>

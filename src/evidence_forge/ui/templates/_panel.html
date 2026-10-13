@@ -121,17 +121,17 @@
 {% else %}
 <div class="ch-panel__body">
 <div class="ch-cost">
-{% if cost.bad_lines %}<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有讀不懂的行，已略過</p><p class="s0-small" style="margin: 0">{% for b in cost.bad_lines %}<span class="s0-mono">{{ b.where }}:{{ b.line }}</span>{% if not loop.last %}、{% endif %}{% endfor %}。其餘照算，總數可能偏低。</p></div></div>{% endif %}
+{% if cost.bad_lines %}<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有讀不懂的行，已略過</p><p class="s0-small" style="margin: 0">{% for b in cost.bad_lines %}<span class="s0-mono">{{ b.where }}{% if b.line %}:{{ b.line }}{% else %}（整個檔案讀不懂）{% endif %}</span>{% if not loop.last %}、{% endif %}{% endfor %}。其餘照算，總數可能偏低。</p></div></div>{% endif %}
 <div class="s0-tablewrap">
 <table class="s0-table">
 <thead><tr><th>工作</th><th>模型</th><th>升級</th><th>時間</th><th class="num">金額</th></tr></thead>
 <tbody>
 {% for r in cost.rows %}<tr><td>{{ r.label }}</td><td>{{ r.models }}</td><td>{{ r.escalation }}</td><td class="s0-mono">{{ r.when|mdhm if r.when else "—" }}</td><td class="num">{{ usd(r.usd) }}</td></tr>{% endfor %}
 </tbody>
-<tfoot><tr><td colspan="4">這個對話合計（對話本身的預算 {{ budget }}）</td><td class="num">{{ usd(cost.total_usd) }}</td></tr></tfoot>
+<tfoot><tr><td colspan="4">{% if budget %}這個對話合計（對話本身的預算 {{ budget }}）{% else %}合計{% endif %}</td><td class="num">{{ usd(cost.total_usd) }}</td></tr></tfoot>
 </table>
 </div>
-<p class="s0-small" style="margin: 0">補查與每一版文章的錢都算在同一個對話裡。「對話本身」是 agent 讀報告、回你話、聽懂你要什麼的花費，不屬於哪一次工作。</p>
+<p class="s0-small" style="margin: 0">{% if budget %}補查與每一版文章的錢都算在同一個對話裡。「對話本身」是 agent 讀報告、回你話、聽懂你要什麼的花費，不屬於哪一次工作。{% else %}這些工單不屬於任何對話（命令列開的），只列工單自己的花費。{% endif %}</p>
 </div>
 </div>
 {% endif %}

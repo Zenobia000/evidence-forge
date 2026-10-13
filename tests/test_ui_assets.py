@@ -105,3 +105,16 @@ def test_the_old_board_pieces_are_gone() -> None:
     assert names.isdisjoint({"board.html", "job.html", "_board.html", "_job_view.html", "_card.html"})
     assert not (STATIC / "js" / "htmx.min.js").exists()
     assert not (UI_DIR / "app.py").exists() and not (UI_DIR / "detail.py").exists()
+
+
+def test_every_event_stream_connect_refetches_the_thread() -> None:
+    # 第一次連上和每次重連都重抓串流（主機重開、積太多被斷開、載入到連上之間的空檔）；
+    # app.js 要在瀏覽器裡才跑得起來，這裡擋住有人把那一行拿掉
+    text = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    onopen = re.search(r"source\.onopen = \(\) => \{(.*?)\n  \};", text, re.S)
+    assert onopen is not None and "refreshThread()" in onopen.group(1)
+
+
+def test_a_failed_send_puts_the_text_back() -> None:
+    text = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    assert "restoreAfterFailure" in text and "restore: true" in text

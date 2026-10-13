@@ -320,3 +320,107 @@ def test_網址有括號的來源照樣是連結(folder: ChatFolder) -> None:
 
     assert view.checks[0].sources[0].url == "https://wiki.example/Foo_(bar)"
     assert "https://wiki.example/Foo_%28bar%29" in str(view.verify_html)
+
+
+# --- 不在任何對話裡的工單（命令列開的） -----------------------------------------------------
+
+
+def test_不在對話裡的工單讀得到報告和文章_版本鏈照_parent(folder: ChatFolder) -> None:
+    folder.analysis(None, "20261013-100000-aaaa")
+    folder.article(None, "20261013-110000-bbbb", parent="20261013-100000-aaaa", text=ARTICLE_V1)
+    folder.article(None, "20261013-120000-cccc", parent="20261013-110000-bbbb", text=ARTICLE_V2, version=2)
+
+    jobs = artifacts.loose_jobs(folder.data, RECIPES)
+
+    assert [(j.job_id[-4:], j.kind, j.label) for j in jobs] == [
+        ("aaaa", "analysis", "v1"),
+        ("bbbb", "rewrite", "v1"),
+        ("cccc", "rewrite", "v2"),
+    ]
+    latest = artifacts.article_view(folder.data, jobs[2], jobs[1])
+    assert latest.title == "長上下文不會取代檢索" and latest.diff_html is not None
+    assert artifacts.report_view(folder.data, jobs[0]).checks
+
+
+def test_已經在某個對話裡的工單不算不在對話裡(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "mine")
+    folder.analysis(None, "loose1")
+
+    assert [j.job_id for j in artifacts.loose_jobs(folder.data, RECIPES)] == ["loose1"]
+    assert [j.job_id for j in artifacts.conversation_jobs(folder.data, RECIPES, artifacts.LOOSE)] == ["loose1"]
+
+
+def test_舊配方的單_沒有報告也沒有文章_不放進不在對話裡的清單(folder: ChatFolder) -> None:
+    folder.job(None, "old-echo", recipe="echo")
+
+    assert artifacts.loose_jobs(folder.data, RECIPES) == []
+
+
+def test_文章在第三次嘗試的資料夾_不是永遠第一次(folder: ChatFolder) -> None:
+    folder.analysis(None, "a1")
+    folder.article(None, "w1", parent="a1", text=ARTICLE_V1)
+    job_dir = folder.data.job_dir("w1")
+    (job_dir / "stages" / "rewrite" / "1" / "article.md").rename(job_dir / "stages" / "rewrite" / "3.tmp")
+    folder.write("w1", "stages/rewrite/3/article.md", ARTICLE_V2)
+    folder.write("w1", "stages/rewrite/3/article.json", {"title": "第三次", "title_candidates": ["第三次"]})
+    # 第四次當掉、沒寫出文章：往前找有交出東西的那一次
+    (job_dir / "stages" / "rewrite" / "4").mkdir()
+    info = [j for j in artifacts.loose_jobs(folder.data, RECIPES) if j.kind == "rewrite"][0]
+
+    assert artifacts.article_view(folder.data, info, None).title == "第三次"
+
+
+# --- jobs.jsonl 裡的工單 id 不能拿來走出工單資料夾 ---------------------------------------------
+
+
+def test_jobs_jsonl_的工單_id_有路徑字元或指到外面就跳過(folder: ChatFolder, tmp_path: Path) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "good")
+    ledger = folder.data.conversation_dir(cid) / "jobs.jsonl"
+    rows = [
+        {"job_id": "../../etc", "ts": "2026-10-13T15:00:00+08:00"},
+        {"job_id": "a/b", "ts": "2026-10-13T15:00:00+08:00"},
+        {"job_id": "..", "ts": "2026-10-13T15:00:00+08:00"},
+        {"job_id": "with space", "ts": "2026-10-13T15:00:00+08:00"},
+        {"job_id": "evil", "ts": "2026-10-13T15:00:00+08:00"},
+        {"job_id": "good", "ts": "2026-10-13T15:00:00+08:00", "parent": "../x"},
+    ]
+    with ledger.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    # jobs/evil 是符號連結，指到資料目錄外面一個有 job.md 的資料夾
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "job.md").write_text((folder.data.job_dir("good") / "job.md").read_text(encoding="utf-8"), encoding="utf-8")
+    (folder.data.jobs / "evil").symlink_to(outside, target_is_directory=True)
+
+    assert [j.job_id for j in _jobs(folder, cid)] == ["good"]
+
+
+# --- 換角色是另一條版本鏈 -------------------------------------------------------------------
+
+
+def test_換角色就是新的一篇_即使_parent_有填(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1", persona="me", text=ARTICLE_V1, minutes=1)
+    folder.article(cid, "w2", parent="w1", persona="b2b", text=ARTICLE_V2, version=2, minutes=2)
+    folder.article(cid, "w3", parent="w2", persona="b2b", text=ARTICLE_V1, version=3, minutes=3)
+    first, second, third = [j for j in _jobs(folder, cid) if j.kind == "rewrite"]
+
+    assert first.chain != second.chain and second.chain == third.chain
+    assert (first.previous_id, second.previous_id, third.previous_id) == (None, None, "w2")
+    assert [j.label for j in (first, second, third)] == ["文章 1 v1", "文章 2 v1", "文章 2 v2"]
+
+
+def test_上一版跟著_parent_走_不是列表的上一個(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1", persona="me", minutes=1)
+    folder.article(cid, "w2", parent="a1", persona="b2b", minutes=2)
+    folder.article(cid, "w3", parent="w1", persona="me", version=2, minutes=3)
+    by_id = {j.job_id: j for j in _jobs(folder, cid)}
+
+    # 列表順序是 w1、w2、w3，但 w3 的上一版是 w1，不是 w2
+    assert by_id["w3"].previous_id == "w1"

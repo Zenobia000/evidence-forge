@@ -147,7 +147,7 @@ class ChatFolder:
 
     def job(
         self,
-        conversation_id: str,
+        conversation_id: str | None,
         job_id: str,
         *,
         recipe: str = "analyze",
@@ -200,11 +200,12 @@ class ChatFolder:
                 ),
                 encoding="utf-8",
             )
-        add_job(
-            self.data,
-            conversation_id,
-            ConversationJob(job_id=job_id, ts=at(minutes), version=version, parent=parent),
-        )
+        if conversation_id is not None:
+            add_job(
+                self.data,
+                conversation_id,
+                ConversationJob(job_id=job_id, ts=at(minutes), version=version, parent=parent),
+            )
         return job_dir
 
     def write(self, job_id: str, relative: str, content: str | object) -> None:
@@ -215,7 +216,7 @@ class ChatFolder:
 
     def analysis(
         self,
-        conversation_id: str,
+        conversation_id: str | None,
         job_id: str,
         *,
         report: str = REPORT,
@@ -247,7 +248,7 @@ class ChatFolder:
 
     def article(
         self,
-        conversation_id: str,
+        conversation_id: str | None,
         job_id: str,
         *,
         text: str = ARTICLE_V1,

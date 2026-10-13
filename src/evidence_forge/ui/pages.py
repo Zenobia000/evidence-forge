@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from evidence_forge.chat.desk import MAX_FILE_CHARS
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.extract import ExtractError, pdf_to_text
@@ -42,6 +43,7 @@ _UI_DIR = Path(__file__).resolve().parent
 # 上傳檔案的上限：原始位元組。文章不會比這大；PDF 也一樣
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 _TEXT_SUFFIXES = (".md", ".markdown", ".txt")
+NO_CONVERSATION_TITLE = "不在對話裡的工單"
 TABS = ("report", "article", "cost")
 
 
@@ -54,6 +56,8 @@ class ListRow:
     stamp: str
     spent: str
     current: bool
+    # 「不在對話裡的工單」那一列：沒有 Pi、不能送訊息
+    loose: bool = False
 
 
 def _badge(summary: dict[str, Any], current: bool) -> str | None:
@@ -130,6 +134,26 @@ def install(
     def new_count(rows: list[ListRow]) -> int:
         return sum(1 for r in rows if r.state == "new")
 
+    def with_loose(rows: list[ListRow], current: str | None) -> list[ListRow]:
+        """清單最後多一列「不在對話裡的工單」（命令列開的，P1 的分析、重構都在這裡）；沒有這種工單就不列。"""
+        infos = artifacts.loose_jobs(data, recipe_map)
+        if not infos:
+            return rows
+        latest = max(infos, key=lambda i: i.row.ts)
+        spent = sum(i.spent_usd for i in infos)
+        return [
+            *rows,
+            ListRow(
+                conversation_id=artifacts.LOOSE,
+                title=NO_CONVERSATION_TITLE,
+                state=None,
+                stamp=relative_day(latest.row.ts, clock()),
+                spent=format_usd(spent),
+                current=current == artifacts.LOOSE,
+                loose=True,
+            ),
+        ]
+
     async def shell(request: Request, conversation_id: str | None) -> HTMLResponse:
         try:
             found = await asyncio.to_thread(summaries)
@@ -137,7 +161,10 @@ def install(
         except OSError as exc:
             found, error = [], str(exc)
         title = None
-        if conversation_id is not None:
+        loose = conversation_id == artifacts.LOOSE
+        if loose:
+            title = NO_CONVERSATION_TITLE
+        elif conversation_id is not None:
             match = next((s for s in found if s["id"] == conversation_id), None)
             if match is None:
                 return page(
@@ -155,10 +182,12 @@ def install(
             title = match["title"]
         rows = list_rows(found, conversation_id, clock())
         count = new_count(rows)
+        rows = await asyncio.to_thread(with_loose, rows, conversation_id)
         return page(
             request,
             "chat.html",
             {
+                "loose": loose,
                 "nav": "chat",
                 "new_count": count,
                 "rows": rows,
@@ -186,14 +215,36 @@ def install(
         except OSError as exc:
             return page(request, "_list.html", {"rows": [], "list_error": str(exc), "data_root": str(data.root), "new_count": 0})
         rows = list_rows(found, current, clock())
+        count = new_count(rows)
+        rows = await asyncio.to_thread(with_loose, rows, current)
         return page(
             request,
             "_list.html",
-            {"rows": rows, "list_error": None, "data_root": str(data.root), "new_count": new_count(rows)},
+            {"rows": rows, "list_error": None, "data_root": str(data.root), "new_count": count},
         )
 
     @app.get("/ui/c/{conversation_id}/thread", response_class=HTMLResponse)
     async def thread_fragment(request: Request, conversation_id: str) -> HTMLResponse:
+        if conversation_id == artifacts.LOOSE:
+            # 沒有對話、沒有 Pi：只列工單的結果卡，唯讀
+            jobs = await asyncio.to_thread(artifacts.loose_jobs, data, recipe_map)
+            blocks = await asyncio.to_thread(thread.build, data, jobs, [])
+            return page(
+                request,
+                "_thread.html",
+                {
+                    "blocks": blocks,
+                    "title": NO_CONVERSATION_TITLE,
+                    "spent": format_usd(sum(j.spent_usd for j in jobs)),
+                    "persona": first_persona(data),
+                    "latest_job": "",
+                    "latest_done": False,
+                    "latest_failed": False,
+                    "last_kind": "",
+                    "has_report": any(j.kind == "analysis" for j in jobs),
+                    "has_article": any(j.kind == "rewrite" for j in jobs),
+                },
+            )
         try:
             history = await asyncio.to_thread(host.history, conversation_id)
         except ConversationNotFound:
@@ -236,10 +287,11 @@ def install(
         v: str | None = None,
         diff: str | None = None,
     ) -> HTMLResponse:
-        try:
-            await asyncio.to_thread(host.summary, conversation_id)
-        except ConversationNotFound:
-            return page(request, "_panel.html", {"missing": True, "tab": "report"}, 404)
+        if conversation_id != artifacts.LOOSE:
+            try:
+                await asyncio.to_thread(host.summary, conversation_id)
+            except ConversationNotFound:
+                return page(request, "_panel.html", {"missing": True, "tab": "report"}, 404)
         if tab not in TABS:
             tab = "report"
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
@@ -247,7 +299,8 @@ def install(
         context: dict[str, Any] = {"tab": tab, "conversation_id": conversation_id, "missing": False}
         if tab == "cost":
             context["cost"] = await asyncio.to_thread(bills.conversation_cost, data, recipe_map, conversation_id)
-            context["budget"] = format_usd(context["cost"].budget_usd)
+            budget = context["cost"].budget_usd
+            context["budget"] = format_usd(budget) if budget is not None else None
         else:
             versions = [j for j in jobs if j.kind == kinds[tab]]
             chosen = pick(versions, v)
@@ -257,15 +310,8 @@ def install(
                 if tab == "report":
                     context["report"] = await asyncio.to_thread(artifacts.report_view, data, chosen)
                 else:
-                    index = versions.index(chosen)
-                    before = next(
-                        (
-                            j
-                            for j in reversed(versions[:index])
-                            if j.chain == chosen.chain
-                        ),
-                        None,
-                    )
+                    # 上一版跟著版本鏈走（`parent`、同一個角色），不是列表的上一個
+                    before = next((j for j in versions if j.job_id == chosen.previous_id), None)
                     context["article"] = await asyncio.to_thread(artifacts.article_view, data, chosen, before)
                     context["diff"] = diff == "1"
         context["counts"] = {
@@ -276,10 +322,11 @@ def install(
 
     @app.get("/ui/c/{conversation_id}/article.md")
     async def article_markdown(conversation_id: str, v: str | None = None) -> Response:
-        try:
-            await asyncio.to_thread(host.summary, conversation_id)
-        except ConversationNotFound:
-            return PlainTextResponse("沒有這個對話", status_code=404)
+        if conversation_id != artifacts.LOOSE:
+            try:
+                await asyncio.to_thread(host.summary, conversation_id)
+            except ConversationNotFound:
+                return PlainTextResponse("沒有這個對話", status_code=404)
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
         versions = [j for j in jobs if j.kind == "rewrite"]
         chosen = pick(versions, v)
@@ -347,4 +394,13 @@ def install(
         text = text.strip()
         if not text:
             return JSONResponse({"error": f"{short} 沒有文字內容"}, status_code=422)
+        if len(text) > MAX_FILE_CHARS:
+            # 整份會放進對話、再交給 analyze：太長會塞爆對話的上下文，所以說清楚，不悄悄截掉
+            return JSONResponse(
+                {
+                    "error": f"{short} 抽出來有 {len(text):,} 字，超過上限 {MAX_FILE_CHARS:,} 字。"
+                    "請截短、或拆成幾份再丟",
+                },
+                status_code=413,
+            )
         return JSONResponse({"name": short, "text": text, "chars": len(text)})

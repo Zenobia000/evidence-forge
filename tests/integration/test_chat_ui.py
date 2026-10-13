@@ -484,3 +484,96 @@ def test_頁面也只接受本機的請求(world: tuple[str, ChatFolder, Convers
     assert same.status_code == 200
     # 直接在網址列打開（沒有 Sec-Fetch-Site 或是 none）也行
     assert httpx.get(f"{url}/", headers={"sec-fetch-site": "none"}).status_code == 200
+
+
+# --- 不在對話裡的工單（命令列開的）：唯讀看得到報告與文章 ----------------------------------------
+
+
+def _loose_world(folder: ChatFolder) -> None:
+    folder.analysis(None, "20261013-100000-aaaa")
+    folder.ledger("20261013-100000-aaaa", [{"stage": "investigate", "tier": "strong", "model": "c", "cost_usd": 0.2}])
+    folder.article(None, "20261013-110000-bbbb", parent="20261013-100000-aaaa", text=ARTICLE_V1)
+    folder.article(None, "20261013-120000-cccc", parent="20261013-110000-bbbb", text=ARTICLE_V2, version=2)
+
+
+def test_清單最後多一列不在對話裡的工單_沒有這種工單就不列(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    folder.conversation("甲")
+    assert "不在對話裡的工單" not in httpx.get(f"{url}/ui/list").text
+
+    _loose_world(folder)
+    fragment = httpx.get(f"{url}/ui/list").text
+
+    titles = re.findall(r'class="ch-row__title">([^<]+)<', fragment)
+    assert titles == ["甲", "不在對話裡的工單"]
+    assert 'href="/c/loose"' in fragment and "命令列開的單" in fragment
+
+
+def test_不在對話裡的工單_頁面_串流_面板都讀得到_最新一次嘗試的文章(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    _loose_world(folder)
+    # 今天真的長相：文章在 stages/rewrite/3/，不是第 1 次
+    job_dir = folder.data.job_dir("20261013-120000-cccc")
+    (job_dir / "stages" / "rewrite" / "1" / "article.md").rename(job_dir / "stages" / "rewrite" / "3.x")
+    folder.write("20261013-120000-cccc", "stages/rewrite/3/article.md", ARTICLE_V2)
+
+    page = httpx.get(f"{url}/c/loose")
+    thread = httpx.get(f"{url}/ui/c/loose/thread", timeout=15).text
+    report = httpx.get(f"{url}/ui/c/loose/panel", params={"tab": "report"}).text
+    article = httpx.get(f"{url}/ui/c/loose/panel", params={"tab": "article", "diff": "1"}).text
+    cost = httpx.get(f"{url}/ui/c/loose/panel", params={"tab": "cost"}).text
+    copied = httpx.get(f"{url}/ui/c/loose/article.md")
+
+    assert page.status_code == 200 and 'data-loose="true"' in page.text and "不在對話裡的工單" in page.text
+    assert "分析報告 v1" in thread and "文章 v2" in thread
+    assert "作者在說什麼" in report and "有爭議" in report
+    assert "結論先講" in article and '<ins class="ch-ins">' in article  # 跟 v1 對照，沿著 parent
+    assert "分析 v1" in cost and "US$0.20" in cost and "對話本身" not in cost
+    assert copied.status_code == 200 and copied.text == ARTICLE_V2
+
+
+def test_不在對話裡的頁面沒有輸入框和事件串流可用(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, host = world
+    _loose_world(folder)
+
+    page = httpx.get(f"{url}/c/loose").text
+
+    assert re.search(r'<div class="ch-compose" hidden>', page)
+    assert host.live_pid("loose") is None  # 沒有為它開 Pi
+
+
+def test_換角色是新的一條鏈_面板的對照只跟自己的上一版比(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1", persona="me", text=ARTICLE_V1, minutes=1)
+    folder.article(cid, "w2", parent="w1", persona="b2b", text=ARTICLE_V2, version=2, minutes=2)
+
+    html = httpx.get(f"{url}/ui/c/{cid}/panel", params={"tab": "article", "v": "w2"}).text
+
+    assert "文章 2 v1" in html and "對照" not in html  # b2b 另開一篇，沒有上一版可比
+
+
+# --- 上傳字數上限 ---------------------------------------------------------------------------
+
+
+def test_上傳抽出來太長就說明字數與上限_不悄悄截掉(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, _, _ = world
+
+    over = _upload(url, "long.txt", ("字" * 20_001).encode())
+    exact = _upload(url, "ok.txt", ("字" * 20_000).encode())
+
+    assert over.status_code == 413
+    assert "20,001" in over.json()["error"] and "20,000" in over.json()["error"]
+    assert exact.status_code == 200 and exact.json()["chars"] == 20_000
+
+
+def test_面板的版本參數不能挑到別的對話的工單(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    mine, other = folder.conversation("甲"), folder.conversation("乙")
+    folder.analysis(mine, "a1")
+    folder.analysis(other, "b1")
+
+    html = httpx.get(f"{url}/ui/c/{mine}/panel", params={"tab": "report", "v": "b1"}).text
+
+    assert 'value="a1" selected' in html and "b1" not in html

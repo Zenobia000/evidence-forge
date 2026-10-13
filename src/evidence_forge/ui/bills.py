@@ -42,7 +42,7 @@ SKILL_LABEL = {
 }
 TIER_LABEL: dict[Tier, str] = {"local": "本機", "strong": "雲端（強）", "max": "雲端（最強）"}
 NO_CONVERSATION = "不在對話裡的工單"
-INTAKE = "投入時的抓取"
+INTAKE = "投入抓取"
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,7 @@ class ConversationRow:
 @dataclass(frozen=True)
 class BadLine:
     where: str
+    # 第幾行；0 是整個檔案讀不懂（例：`conversation.json` 壞了，帳照樣算）
     line: int
 
 
@@ -173,6 +174,22 @@ def _bars(totals: dict[str, int]) -> list[Bar]:
     ]
 
 
+def _bucket_label(entry: LedgerEntry) -> str:
+    """本機／雲端表的列：本機、雲端、搜尋、其他工具（抓取、腳本、圖片）。"""
+    if entry.kind == "search":
+        return "搜尋（Tavily）"
+    if entry.kind == "llm":
+        return "本機" if entry.tier == "local" else "雲端"
+    return "其他工具"
+
+
+def _conversation_folders(data: DataDir) -> list[Path]:
+    """對話資料夾全部掃一遍，不管 `conversation.json` 讀不讀得懂：帳不能掉。"""
+    if not data.conversations.is_dir():
+        return []
+    return [p for p in sorted(data.conversations.iterdir()) if p.is_dir()]
+
+
 def month_view(
     data: DataDir, recipes: dict[str, Recipe], month: str, *, now: datetime
 ) -> MonthView:
@@ -185,91 +202,119 @@ def month_view(
     report_chains: dict[tuple[str, int], int] = {}
     article_chains: dict[tuple[str, int], int] = {}
     total = 0
-    in_conversation: set[str] = set()
 
     def count(entry: LedgerEntry) -> int:
+        """一行帳進所有分項：skill、模型、本機／雲端。回它的微美元。"""
         micros = usd_to_micros(entry.cost_usd)
-        skills[SKILL_LABEL.get(entry.stage, entry.stage)] = (
-            skills.get(SKILL_LABEL.get(entry.stage, entry.stage), 0) + micros
-        )
+        skill = SKILL_LABEL.get(entry.stage, entry.stage)
+        skills[skill] = skills.get(skill, 0) + micros
         label = _model_label(entry)
         models[label] = models.get(label, 0) + micros
-        if entry.kind == "search":
-            bucket = where["搜尋（Tavily）"]
-            bucket[0] += entry.credits
-        elif entry.kind == "llm" and entry.tier == "local":
-            bucket = where["本機"]
-            bucket[0] += 1
+        bucket = where.setdefault(_bucket_label(entry), [0, 0.0, 0])
+        bucket[0] += entry.credits if entry.kind == "search" else 1
+        if entry.kind == "llm" and entry.tier == "local":
             bucket[1] += entry.gpu_seconds
-        elif entry.kind == "llm":
-            bucket = where["雲端"]
-            bucket[0] += 1
-        else:
-            return micros
         bucket[2] += micros
         return micros
 
-    for conversation in conversations.list_all(data):
-        infos = artifacts.conversation_jobs(data, recipes, conversation.id)
-        monthly: dict[str, list[LedgerEntry]] = {}
-        own = [
-            e
-            for e in _read_ledger(data.conversation_dir(conversation.id) / "ledger.jsonl", data, bad)
-            if month_of(e.ts) == month
-        ]
+    def account(
+        group: str, infos: list[artifacts.JobInfo], monthly: dict[str, list[LedgerEntry]]
+    ) -> tuple[int, int, int]:
+        """把這個月有花費的工單算進報告、文章、角色的統計。回（報告幾份、文章幾篇、文章幾版）。"""
+        reports: set[int] = set()
+        articles: set[int] = set()
+        versions = 0
         for info in infos:
-            monthly[info.job_id] = [
-                e
-                for e in _read_ledger(data.job_dir(info.job_id) / "ledger.jsonl", data, bad)
-                if month_of(e.ts) == month
-            ]
-            in_conversation.add(info.job_id)
+            entries = monthly.get(info.job_id, [])
+            if not entries:
+                continue
+            micros = sum(usd_to_micros(e.cost_usd) for e in entries)
+            key = (group, info.chain)
+            if info.kind == "analysis":
+                reports.add(info.chain)
+                report_chains[key] = report_chains.get(key, 0) + micros
+                continue
+            articles.add(info.chain)
+            versions += 1
+            article_chains[key] = article_chains.get(key, 0) + micros
+            stats = persona_stats.setdefault(info.job.persona or artifacts.DEFAULT_PERSONA, _PersonaStats())
+            stats.chains.add(key)
+            stats.versions += 1
+            if info.job.result is not None and artifacts.UNCALIBRATED in info.job.result.reason:
+                stats.uncalibrated.add(key)
+            stats.micros += micros
+        return len(reports), len(articles), versions
+
+    def in_month(entries: list[LedgerEntry]) -> list[LedgerEntry]:
+        return [e for e in entries if month_of(e.ts) == month]
+
+    for folder in _conversation_folders(data):
+        try:
+            data.conversation_dir(folder.name)
+        except ValueError:
+            continue  # 資料夾名字不合規則：不是對話
+        infos = artifacts.conversation_jobs(data, recipes, folder.name)
+        own = in_month(_read_ledger(folder / "ledger.jsonl", data, bad))
+        monthly = {
+            info.job_id: in_month(_read_ledger(data.job_dir(info.job_id) / "ledger.jsonl", data, bad))
+            for info in infos
+        }
         entries = [*own, *(e for rows_ in monthly.values() for e in rows_)]
         if not entries:
             continue
+        try:
+            title = conversations.read(data, folder.name).title
+        except (OSError, ValueError):
+            # 設定檔壞了也不能讓帳掉：掛在對話 id 底下，並列進壞掉的檔
+            title = folder.name
+            bad.append(BadLine((folder / "conversation.json").relative_to(data.root).as_posix(), 0))
         spend = sum(count(e) for e in entries)
         total += spend
-        last = max(e.ts for e in entries)
-        for info in infos:
-            micros = sum(usd_to_micros(e.cost_usd) for e in monthly[info.job_id])
-            if not monthly[info.job_id]:
-                continue
-            chains = report_chains if info.kind == "analysis" else article_chains
-            key = (conversation.id, info.chain)
-            chains[key] = chains.get(key, 0) + micros
-            if info.kind == "rewrite":
-                stats = persona_stats.setdefault(
-                    info.job.persona or artifacts.DEFAULT_PERSONA, _PersonaStats()
-                )
-                stats.chains.add(key)
-                stats.versions += 1
-                if info.job.result is not None and artifacts.UNCALIBRATED in info.job.result.reason:
-                    stats.uncalibrated.add(key)
-                stats.micros += micros
-        all_chains = {(i.kind, i.chain) for i in infos}
+        reports, articles, versions = account(folder.name, infos, monthly)
         rows.append(
             ConversationRow(
-                conversation_id=conversation.id,
-                title=conversation.title,
-                reports=sum(1 for kind, _ in all_chains if kind == "analysis"),
-                articles=sum(1 for kind, _ in all_chains if kind == "rewrite"),
-                versions=sum(1 for i in infos if i.kind == "rewrite"),
-                last_activity=last,
+                conversation_id=folder.name,
+                title=title,
+                reports=reports,
+                articles=articles,
+                versions=versions,
+                last_activity=max(e.ts for e in entries),
                 usd=micros_to_usd(spend),
             )
         )
 
-    # 沒有列在任何對話的工單（命令列開的）與投入時的抓取
-    loose = 0
-    loose_last: datetime | None = None
+    # 不在任何對話裡的工單（命令列開的）：交報告或文章的算進報告與文章，其他的只算花費
+    owned = artifacts.owned_job_ids(data)
+    loose_infos = artifacts.loose_jobs(data, recipes)
+    loose_monthly: dict[str, list[LedgerEntry]] = {}
     if data.jobs.is_dir():
         for folder in sorted(data.jobs.iterdir()):
-            if folder.name in in_conversation:
+            if folder.name in owned or not folder.is_dir():
                 continue
-            for entry in _read_ledger(folder / "ledger.jsonl", data, bad):
-                if month_of(entry.ts) == month:
-                    loose += count(entry)
-                    loose_last = max(loose_last, entry.ts) if loose_last else entry.ts
+            found = in_month(_read_ledger(folder / "ledger.jsonl", data, bad))
+            if found:
+                loose_monthly[folder.name] = found
+    loose_entries = [e for rows_ in loose_monthly.values() for e in rows_]
+    if loose_entries:
+        spend = sum(count(e) for e in loose_entries)
+        total += spend
+        reports, articles, versions = account(artifacts.LOOSE, loose_infos, loose_monthly)
+        rows.append(
+            ConversationRow(
+                conversation_id=artifacts.LOOSE,
+                title=NO_CONVERSATION,
+                reports=reports,
+                articles=articles,
+                versions=versions,
+                last_activity=max(e.ts for e in loose_entries),
+                usd=micros_to_usd(spend),
+            )
+        )
+
+    # 投入時的抓取（那時還沒有工單）：自己一列，分項才加得起來
+    fetched = 0
+    fetch_calls = 0
+    fetch_last: datetime | None = None
     intake = data.intake_ledger
     if intake.is_file():
         for number, line in enumerate(intake.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
@@ -281,10 +326,15 @@ def month_view(
                 bad.append(BadLine(intake.relative_to(data.root).as_posix(), number))
                 continue
             if month_of(row.ts) == month:
-                loose += usd_to_micros(row.cost_usd)
-    if loose:
-        total += loose
-        rows.append(ConversationRow(None, NO_CONVERSATION, 0, 0, 0, loose_last, micros_to_usd(loose)))
+                fetch_calls += 1
+                fetched += usd_to_micros(row.cost_usd)
+                fetch_last = max(fetch_last, row.ts) if fetch_last else row.ts
+    if fetch_calls:
+        total += fetched
+        skills[INTAKE] = skills.get(INTAKE, 0) + fetched
+        models[INTAKE] = models.get(INTAKE, 0) + fetched
+        where[INTAKE] = [fetch_calls, 0.0, fetched]
+        rows.append(ConversationRow(None, INTAKE, 0, 0, 0, fetch_last, micros_to_usd(fetched)))
 
     rows.sort(key=lambda r: r.last_activity or datetime.min.replace(tzinfo=TAIPEI), reverse=True)
     reports, articles = len(report_chains), len(article_chains)
@@ -304,7 +354,7 @@ def month_view(
         previous_month=_shift(month, -1),
         next_month=_shift(month, 1) if month < current else None,
         total_usd=micros_to_usd(total),
-        conversation_count=sum(1 for r in rows if r.conversation_id is not None),
+        conversation_count=sum(1 for r in rows if r.conversation_id not in (None, artifacts.LOOSE)),
         reports=reports,
         articles=articles,
         report_average=micros_to_usd(sum(report_chains.values())) / reports if reports else 0.0,
@@ -345,7 +395,8 @@ class CostRow:
 class ConversationCost:
     rows: list[CostRow]
     total_usd: float
-    budget_usd: float
+    # 不在對話裡的工單沒有對話本身，也沒有預算
+    budget_usd: float | None
     bad_lines: list[BadLine]
 
 
@@ -376,7 +427,10 @@ def _escalations(entries: list[LedgerEntry]) -> str:
 def conversation_cost(
     data: DataDir, recipes: dict[str, Recipe], conversation_id: str
 ) -> ConversationCost:
-    """這個對話的花費：每次工作一列（分析 v1、文章 v1…），對話本身另列一行，合計是全部（不分月）。"""
+    """這個對話的花費：每次工作一列（分析 v1、文章 v1…），對話本身另列一行，合計是全部（不分月）。
+
+    `loose`（不在任何對話裡的工單）沒有對話本身，也沒有預算。
+    """
     bad: list[BadLine] = []
     rows: list[CostRow] = []
     total = 0
@@ -394,6 +448,8 @@ def conversation_cost(
                 micros_to_usd(micros),
             )
         )
+    if conversation_id == artifacts.LOOSE:
+        return ConversationCost(rows=rows, total_usd=micros_to_usd(total), budget_usd=None, bad_lines=bad)
     own = _read_ledger(data.conversation_dir(conversation_id) / "ledger.jsonl", data, bad)
     own_micros = sum(usd_to_micros(e.cost_usd) for e in own)
     total += own_micros
