@@ -34,14 +34,21 @@
    - 這一段的等級試滿 `max_attempts` 次；
    - 還不合格，照升級鏈的順序一級各試一次；
    - 鏈的最後一級也不合格，這一段才算失敗。
-   - 程式檢查沒過「回去修」（`auto_fix`）用的是當下那一級，不另外升級。
+   - 程式檢查沒過「回去修」（`auto_fix`）在當下那一級做，每一級最多 `auto_fix` 次；這一級修完還沒過，
+     鏈上還有更高的一級就升上去重寫（重試與自動修的次數都從 0 算起），最後一級也修不好才以未完成結束。
    - 帳本的 `escalated_from` 記這一段在配方上的等級（例：`fast` 那次與 `strong` 那次都記 `local`）。
    - 基礎設施故障照舊不升級（ADR-0011 §3.3）。
 4. **分析與重構的每一段都是 `tier: local, escalate_to: [fast, strong]`。** 查證段每一次最多搜 6 次，四次嘗試（本機兩次、`fast`、`strong` 各一次），搜尋額度從 12 提高到 24。
+   - 搜尋額度是整張單共用的，本機那幾次可能把它用光，升上來的那一級就沒得搜。所以每一次嘗試另有上限：
+     這一段的額度 ÷（`max_attempts`＋升級鏈的級數），無條件捨去，至少 1（查證段是 24 ÷ 4 = 6）。
+     執行器開 Pi 時登記這個上限，閘道照它擋；不另外加配方欄位。
+   - 某一次搜到上限被拒，只有那一段**最後一次**也被拒，單子才以「預算用完（搜尋額度）」結束；
+     前面幾次的產出已經丟掉，它們搜不夠不影響交出去的東西。
 5. **本機模型的上下文放不下就算這一次失敗，不讓它被默默截掉。** Ollama 遇到超過上下文的提示會丟掉前面、只讀後半段，產出看起來正常但內容是缺的。
-   - 閘道對照表的 `local` 寫 `context_window: 32768`，要跟 Ollama 容器的 `OLLAMA_CONTEXT_LENGTH` 一樣。
+   - 閘道對照表的 `local` 寫 `context_window: 32768`。Ollama 容器沒設 `OLLAMA_CONTEXT_LENGTH`，Ollama 依顯示卡記憶體自己決定預設上下文：3090 的 24 GB 是 32768（`/api/ps` 的 `context_length`、Ollama 日誌的 `vram-based default context` 都看得到）。
+   - 開跑前檢查核對兩邊：用到本機等級、模型又載入中時，讀 `GET /api/ps` 的 `context_length`，比 `context_window` 小就不開跑，訊息說怎麼修。模型沒載入就記一筆警告，不為了查它去載（載一次吃掉 Windows 約 14 GB 的認可記憶體）。
    - 閘道轉送前估提示有多長（位元組數 ÷ 3；錄音裡 Qwen 平均 3.6 個位元組一個 token，所以這樣估偏多），加上 `max_tokens` 超過上下文就不送，回請求錯誤。
-   - 這不是後端故障：執行器當成這一次不合格，照升級鏈往上。
+   - 這不是後端故障：執行器當成這一次不合格。同一份輸入在本機再試也一樣放不下，所以不用試滿 `max_attempts`，直接升級鏈的下一級（閘道在告示板上記一筆「放不下」，執行器照它判斷）。
 6. **對話的 Pi 預設用 `fast`。** 對話主機（PR #94）原本預設 `strong`，這份 ADR 合併之後改成 `fast`。
 
 ## 4. 後果
@@ -51,7 +58,9 @@
   - 舊配方、舊工單、舊帳本都照樣讀得進來。
 - **負面：**
   - 本機失敗的那幾次要花時間（查證段本機可能跑兩次才升級），一次分析等得比較久。
-  - 本機的上下文要靠人把 Ollama 容器設對；容器開得比對照表小，閘道就擋不住被截掉的提示。
+  - 本機的上下文是 Ollama 依顯示卡記憶體決定的；換了顯示卡或改了 Ollama 設定，對照表要跟著改。開跑前檢查擋得住「Ollama 比對照表小」，但模型沒載入時查不到，只記警告。
+  - 每一次嘗試的搜尋上限是平分的：本機那一次就算還有得搜，也不能多用後面幾級的份。
+  - 部署時如果有工單正跑到一半，而那一段在舊配方是 `strong`、新配方是 `local`，重開之後會被當成「已經升級上來」：只剩升級鏈裡比 `strong` 高的級可以試。部署前先等佇列清空。
   - 估提示長度是粗估：估多了會白白升級（多花一點錢），估少的情況目前沒看過。
   - 錄音裡的請求帶著等級別名，現有的錄音是照舊等級錄的；重播測試先用錄音當時的配方等級，之後要照新配方重錄。
-- **影響範圍：** `src/evidence_forge/models.py`（`Tier`、`RecipeStage.escalate_to`）、`gateway/models.yaml`、`gateway/prices.yaml`、`gateway/prices.py`、`gateway/aliases.py`、`gateway/messages.py`、`runner/runner.py`、`runner/preflight.py`、`harness/pi/agent/models.json`、`harness/recipes/analyze.md`、`harness/recipes/rewrite.md`、PRD 的 FR-MD-01 與 NFR-COST-07。
+- **影響範圍：** `src/evidence_forge/models.py`（`Tier`、`RecipeStage.escalate_to`）、`gateway/models.yaml`、`gateway/prices.yaml`、`gateway/prices.py`、`gateway/aliases.py`、`gateway/messages.py`、`gateway/board.py`、`gateway/active.py`、`gateway/budget.py`、`gateway/search.py`、`runner/runner.py`、`runner/preflight.py`、`harness/pi/agent/models.json`、`harness/recipes/analyze.md`、`harness/recipes/rewrite.md`、PRD 的 FR-MD-01 與 NFR-COST-07。

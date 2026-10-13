@@ -26,7 +26,8 @@ auto_fix: 0
    執行器檢查五節依序都在、查證與題材引用的編號都在清單上、清單上的網址都是這一段這一次真的抓過的
    （`runner/sources.py`），全部過了才把來源正文放進 `input/sources/S<n>.md`。
    `tavily_credits: 24` 是這一段在整張單裡的總額、含重試與升級：skill 一次最多搜 6 次 ×
-   4 次嘗試（本機 `max_attempts: 2` 次、`fast` 一次、`strong` 一次）。
+   4 次嘗試（本機 `max_attempts: 2` 次、`fast` 一次、`strong` 一次）。閘道另外擋每一次最多
+   24 ÷ 4 = 6 個，本機那兩次用不光整張單的額度（ADR-0022）。
 
 報告貼回對話（P2）之前，就留在工單資料夾 `stages/investigate/<次>/report.md`。
 `auto_fix: 0`：兩段的檢查沒過都算那一次失敗，走重試與升級，沒有「回去修」這一步。

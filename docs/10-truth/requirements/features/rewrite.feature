@@ -53,7 +53,21 @@ Feature: 重構：用角色與文體，從分析報告寫一篇新文章
   @sad-path
   Scenario: 重構先用本機模型，不合格才一級一級往上
     Given 重構段是 local，升級鏈是 fast、strong
-    And 本機模型兩次都交不出合格的文章，或輸入大到本機模型的上下文放不下
+    And 本機模型兩次都交不出合格的文章
     When 執行器處理第二次失敗
     Then 改用 fast 再試一次，還不行再用 strong 試一次
-    And 程式檢查沒過的「回去修」用當下那一級，不另外升級
+
+  @sad-path
+  Scenario: 輸入大到本機模型的上下文放不下，直接升級
+    Given 重構段是 local，升級鏈是 fast、strong
+    And 這一次的提示估起來超過本機模型的上下文
+    When 閘道擋下這一次
+    Then 不在本機再試，直接改用 fast
+
+  @sad-path
+  Scenario: 每一級修完還沒過，才升到下一級
+    Given 重構段是 local，升級鏈是 fast、strong，auto_fix 是 1
+    And 本機寫的文章沒列原文出處，修一次還是沒列
+    When 執行器處理修完的那一次
+    Then 改用 fast 重寫，重試與自動修的次數重新算
+    And strong 也修完還沒過，才以未完成結束
