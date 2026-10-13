@@ -3,7 +3,7 @@
 - 整理段後跑 C1、C5：沒過算這段這次失敗，走重試與升級，用完是 `failed`。
 - 二創段後跑 C2～C5：沒過帶著結果回二創段修，到 `auto_fix` 上限是 `incomplete`。
 - 結果寫 `checks/checks.vN.json`；agent 自己寫的 `checks.json` 不採用。
-- 檢查本身跑不動（skill 的 schema 壞掉）時，工單帶著原因進待審，不重試，其他工單照常跑。
+- 檢查本身跑不動（skill 的 schema 壞掉）時，工單帶著原因結束，不重試，其他工單照常跑。
 """
 
 import json
@@ -123,7 +123,7 @@ def _reports(world: World, job_id: str) -> list[ChecksReport]:
 
 
 @pytest.mark.promise("FR-VF-01", "FR-DG-01")
-def test_整理段的引句是捏造的_重試到上限仍沒過_工單以失敗進待審(
+def test_整理段的引句是捏造的_重試到上限仍沒過_工單以失敗結束(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(_pi(repr(FAKE_QUOTE), repr(GOOD_FACT)))
@@ -163,7 +163,7 @@ def test_整理段第一次捏造_第二次照原文_通過後接著跑二創(
 
 
 @pytest.mark.promise("FR-VF-01", "FR-CP-01")
-def test_二創的引用對不到來源_自動修到上限仍沒過_以未完成進待審並列出沒過的檢查(
+def test_二創的引用對不到來源_自動修到上限仍沒過_以未完成結束並列出沒過的檢查(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(_pi(repr(REAL_QUOTE), repr(BAD_FACT)), auto_fix=1)
@@ -226,7 +226,7 @@ def write(name, content):
 
 
 @pytest.mark.promise("FR-VF-01")
-def test_skill_的_schema_是壞掉的_JSON_工單帶著原因進待審_其他工單照常跑(
+def test_skill_的_schema_是壞掉的_JSON_工單帶著原因結束_其他工單照常跑(
     world_for: Callable[..., World], harness_root: Path
 ) -> None:
     (harness_root / "skills" / "digest" / "schema.json").write_text(
@@ -256,7 +256,7 @@ def test_skill_的_schema_是壞掉的_JSON_工單帶著原因進待審_其他�
     assert world.runner.run_once() == healthy
 
     job = world.read(broken)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert "schema" in job.result.reason
     # 只跑了一次，不重試

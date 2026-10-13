@@ -1,7 +1,7 @@
 """執行器開段時放參考資料進 `input/`，agent 只從那裡讀（ADR-0015 §3.7、ADR-0018）。
 
 用假 Pi 確認：Pi 開起來之前，文類定義與作家聲音已經在工單裡，而且 agent 經閘道讀得到；
-放不進去（目標文類不存在）時不開 Pi，工單以失敗進待審並寫明原因。
+放不進去（目標文類不存在）時不開 Pi，工單以失敗結束並寫明原因。
 """
 
 import json
@@ -70,7 +70,7 @@ def test_開段前文類與作家設定已經在_input_agent_經閘道讀得到(
     assert job.result is not None and job.result.outcome == "complete", job.result
 
 
-def test_目標文類不存在_不開_Pi_以失敗進待審並寫明原因(
+def test_目標文類不存在_不開_Pi_以失敗結束並寫明原因(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(READS_INPUTS)
@@ -79,7 +79,7 @@ def test_目標文類不存在_不開_Pi_以失敗進待審並寫明原因(
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert "poem" in job.result.reason
     assert world.backend_calls == []

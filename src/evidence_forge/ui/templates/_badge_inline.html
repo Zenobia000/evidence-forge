@@ -1,2 +1,0 @@
-{% from "_icons.html" import icon %}
-<span class="s0-badge"{% if badge.tone in ("incomplete", "failed", "complete", "pending", "genre") %} data-tone="{{ badge.tone }}"{% endif %}>{{ icon(badge.icon) }}{{ badge.text }}</span>

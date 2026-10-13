@@ -26,7 +26,7 @@ feed: { connector: rss, name: some-newsletter, item: inbox/some-newsletter/abc12
 goal: 把這篇的核心主張整理成給台灣 PM 看的 1,500 字觀點文，補一個反例
 target_genre: opinion
 budget: { usd: 0.50, tavily_credits: 20 }
-status: running            # queued | running | review | approved | discarded
+status: running            # queued | running | done
 stage: { id: compose, index: 3, total: 4, attempt: 1, started_at: 2026-10-10T14:03:11+08:00 }
 waiting: { kind: gpu, since: 2026-10-10T14:05:00+08:00 }
 result: null

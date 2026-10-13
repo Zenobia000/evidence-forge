@@ -1,2 +1,0 @@
-{# 導覽列上的待審張數。看板輪詢時用 hx-swap-oob 連它一起換掉。 #}
-<span id="nav-count" class="s0-nav__count"{% if review_count == 0 %} hidden{% endif %}{% if oob %} hx-swap-oob="true"{% endif %}>待審 {{ review_count }}</span>

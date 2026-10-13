@@ -1,9 +1,9 @@
 """SEAM-05（整合）：補料段的搜尋碰到 credits 用完或 Tavily 故障時，執行器怎麼收尾。
 
 - credits 用完（NFR-COST-01、`research.feature`〈搜尋額度用完就停〉）：這一段用已經找到的資料收尾，
-  後面的段照跑，單子最後以「未完成：預算用完」進待審。
+  後面的段照跑，單子最後以「未完成：預算用完」結束。
 - Tavily 故障（NFR-RUN-05）：這一段交不出合格產出才標失敗，不重試、不升級；
-  產出合格的話以產出為準，故障不會害一個收得了尾的段失敗，但單子最後以未完成進待審
+  產出合格的話以產出為準，故障不會害一個收得了尾的段失敗，但單子最後以未完成結束
   （跟 credits 用完一樣，#70）。同一次後來又搜成功、或只是查詢本身被 Tavily 退回（400），不算。
 
 假 Pi 直接打閘道的 `/tools/web_search`（跟 ef-tools 送的一樣），Tavily 是本機 stub。
@@ -83,7 +83,7 @@ event(type="agent_end")
 
 
 @pytest.mark.promise("NFR-COST-01", "FR-RS-01")
-def test_credits_用完_補料段照樣收尾_後面的段照跑_單子以未完成進待審(
+def test_credits_用完_補料段照樣收尾_後面的段照跑_單子以未完成結束(
     world_for: Callable[..., World],
 ) -> None:
     recipe = _recipe(_stage("research", credits=1), _stage("compose"))
@@ -93,7 +93,7 @@ def test_credits_用完_補料段照樣收尾_後面的段照跑_單子以未完
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "incomplete"
     assert job.result.reason.startswith("預算用完"), job.result.reason
     assert "research" in job.result.reason
@@ -139,7 +139,7 @@ event(type="agent_end")
 
 
 @pytest.mark.promise("NFR-RUN-05", "FR-MD-01")
-def test_Tavily_故障而這一段交不出合格產出_以失敗進待審_不重試也不升級(
+def test_Tavily_故障而這一段交不出合格產出_以失敗結束_不重試也不升級(
     world_for: Callable[..., World], tavily: Tavily
 ) -> None:
     tavily.replies = [status(500)] * 10
@@ -161,7 +161,7 @@ def test_Tavily_故障而這一段交不出合格產出_以失敗進待審_不�
 
 
 @pytest.mark.promise("NFR-RUN-05", "NFR-COST-01")
-def test_Tavily_故障但這一段用手上的資料交出合格產出_這段算過_單子以未完成進待審(
+def test_Tavily_故障但這一段用手上的資料交出合格產出_這段算過_單子以未完成結束(
     world_for: Callable[..., World], tavily: Tavily
 ) -> None:
     # 段算過（後面照跑），但創作者要知道補料沒做完整：跟 credits 用完一樣標未完成（#70）

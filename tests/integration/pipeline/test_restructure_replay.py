@@ -111,7 +111,7 @@ def test_自己寫的短文_重播跑完整理_補料與二創_稿子綜合多�
     job_dir: Path,
 ) -> None:
     job = read_job(job_dir / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "complete", job.result
 
     reports = _reports(job_dir)

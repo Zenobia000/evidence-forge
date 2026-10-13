@@ -330,19 +330,6 @@ def test_沒填目標等於手打配方預設目標(data: DataDir) -> None:
     assert not typed.created and not blank.created
 
 
-@pytest.mark.promise("FR-IN-01")
-def test_原來那張已丟棄_同內容同目標再投入會開新單(data: DataDir) -> None:
-    first = _submit(data, PastedText("同一篇文章"))
-    path = data.job_dir(first.job.id) / "job.md"
-    doc = read_job(path)
-    write_job(path, JobDocument(job=doc.job.model_copy(update={"status": "discarded"})))
-
-    again = _submit(data, PastedText("同一篇文章"))
-    assert again.created
-    assert again.job.id != first.job.id
-    assert read_job(path).job.status == "discarded"
-
-
 @pytest.mark.promise("FR-IN-01", "NFR-COST-03")
 def test_同一個網址同樣目標再投入_不重抓_回傳已有工單(
     data: DataDir, fetcher: Fetcher, fake_web: "FakeWeb"

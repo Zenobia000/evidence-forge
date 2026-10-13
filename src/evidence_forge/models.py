@@ -12,11 +12,12 @@
 放在檔名含 ledger、budget 的模組，改它們的 PR 會被當成 T3。
 """
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     NonNegativeInt,
@@ -27,11 +28,23 @@ from pydantic import (
 
 # 預算的格式在檔名含 budget 的模組（改它是 T3）；Job 用到它，這裡照舊 import 得到（明確轉出）。
 from evidence_forge.budget import Budget as Budget
+from evidence_forge.jobkey import check_name
 
-# 工單只有這五種狀態（NFR-RUN-02、ADR-0010）。
-JobStatus = Literal["queued", "running", "review", "approved", "discarded"]
+# 舊版（ADR-0010）的待審、通過、丟棄：現在一律讀成 done，舊的工單資料夾不報錯（ADR-0019 §3.4）
+_LEGACY_DONE = frozenset({"review", "approved", "discarded"})
 
-# 進待審時的結果：做完、沒做完（預算用完、檢查修不好）、失敗（系統錯誤）。
+
+def _read_old_status(value: Any) -> Any:
+    return "done" if value in _LEGACY_DONE else value
+
+
+# 工單只有這三種狀態：排隊、執行中、結束（NFR-RUN-02、ADR-0019 §3.4）。
+# 結束附結果（complete／incomplete／failed）與原因，看 `Job.result`。
+JobStatus = Annotated[
+    Literal["queued", "running", "done"], BeforeValidator(_read_old_status)
+]
+
+# 結束時的結果：做完、沒做完（預算用完、檢查修不好）、失敗（系統錯誤）。
 Outcome = Literal["complete", "incomplete", "failed"]
 
 # 模型等級的別名，對到哪個實際模型由閘道決定（ADR-0011）。由低到高排列。
@@ -113,7 +126,7 @@ class Waiting(_Contract):
 
 
 class JobResult(_Contract):
-    """進待審時的結果與原因。沒做完或失敗一定要寫原因。"""
+    """結束時的結果與原因。沒做完或失敗一定要寫原因。"""
 
     outcome: Outcome
     reason: str = ""
@@ -143,6 +156,12 @@ class Job(_Contract):
     # 開這張單的對話 id（ADR-0021）；命令列 `ef new` 開的是 None。投入去重的鍵含它，
     # 兩個對話丟同一篇文章各開各的單。能不能讀這張單看對話的 `jobs.jsonl`，不看這一欄
     conversation: str | None = None
+    # 角色（`$EF_DATA/authors/<角色>/`，ADR-0015、FR-RW-02）；舊的 job.md 沒有這欄，當成 `me`
+    persona: str | None = None
+    # 從哪一張工單接著做（`ef new --from`，ADR-0019 §3.6）：執行器開工前把那張單的產出放進 `input/`
+    parent: str | None = None
+    # 再改時創作者對上一版的一句意見（FR-RW-03）；寫進任務說明
+    feedback: str | None = None
     budget: Budget
     status: JobStatus
     stage: StageProgress | None = None
@@ -151,9 +170,16 @@ class Job(_Contract):
     versions: Versions = Versions()
 
     @model_validator(mode="after")
+    def _parent_is_a_job_id(self) -> Self:
+        # 會拿來拼 jobs/<id>/ 路徑：跟工單鑰匙同一條字元規則（#92 審查）
+        if self.parent is not None:
+            check_name("工單 id", self.parent)
+        return self
+
+    @model_validator(mode="after")
     def _status_consistency(self) -> Self:
-        if self.status == "review" and self.result is None:
-            raise ValueError("待審的工單一定要有結果（complete／incomplete／failed）")
+        if self.status == "done" and self.result is None:
+            raise ValueError("結束的工單一定要有結果（complete／incomplete／failed）")
         if self.waiting is not None and self.status != "running":
             raise ValueError("只有執行中的工單會在等東西")
         return self
@@ -337,8 +363,8 @@ class SearchFailure(_Contract):
 # jobs/<id>/events.jsonl 的一行（v0.3 §2.1）。只有執行器寫，只增不改。
 # ---------------------------------------------------------------------------
 
-# status：狀態轉換；stage：某段開始、結束、重試、升級；decision：套用或略過審稿決定；
-# error：出錯。細節寫在 message。
+# status：狀態轉換；stage：某段開始、結束、重試、升級；decision：舊版審稿決定（已拿掉，
+# 舊的 events.jsonl 還有這種行，讀得進來）；error：出錯。細節寫在 message。
 EventKind = Literal["status", "stage", "decision", "error"]
 
 
@@ -361,36 +387,4 @@ class Event(_Contract):
             self.from_status is not None or self.to_status is not None
         ):
             raise ValueError("只有 status 事件帶 from_status／to_status")
-        return self
-
-
-# ---------------------------------------------------------------------------
-# jobs/<id>/review/decision.vN.json：決定檔（S0 UI IA §4.1、§8）。只有 UI 寫。
-# ---------------------------------------------------------------------------
-
-# approve 通過；reject 退件（附意見、選重跑段）；discard 丟棄；
-# retry 失敗後重試；reedit 通過後又想改。
-DecisionAction = Literal["approve", "reject", "discard", "retry", "reedit"]
-
-
-class Decision(_Contract):
-    """創作者在待審做的一個決定，由執行器讀了套用。
-
-    `draft_version` 是做決定時看的稿子版本（還沒有稿子是 0）。兩個分頁同時審同一張單時，
-    執行器只套用版本對得上的第一份，其餘標已失效（S0 開發計畫 S0.9）。
-    """
-
-    action: DecisionAction
-    comment: str = ""
-    # 退件或再改時從哪一段重跑；沒寫就用配方的 on_feedback
-    rerun_stage: str | None = None
-    draft_version: NonNegativeInt
-    created_at: AwareDatetime
-
-    @model_validator(mode="after")
-    def _fields_fit_the_action(self) -> Self:
-        if self.action == "reject" and not self.comment.strip():
-            raise ValueError("退件要寫一句意見")
-        if self.rerun_stage is not None and self.action not in ("reject", "reedit"):
-            raise ValueError(f"{self.action} 不選重跑的段")
         return self

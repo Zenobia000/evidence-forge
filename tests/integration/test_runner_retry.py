@@ -1,4 +1,4 @@
-"""SEAM-05（整合）：產出不合格時，同一級重試、到上限依配方升級、仍失敗就進待審。
+"""SEAM-05（整合）：產出不合格時，同一級重試、到上限依配方升級、仍失敗就結束。
 
 基礎設施故障（後端連不上）不重試也不升級。用假 Pi 打真的閘道，後端是本機 stub。
 """
@@ -56,7 +56,7 @@ def world_for(
 
 
 @pytest.mark.promise("NFR-RUN-03", "FR-MD-01")
-def test_產出一直不合格_本級試到上限再升一級試一次_仍失敗就以失敗進待審(
+def test_產出一直不合格_本級試到上限再升一級試一次_仍失敗就以失敗結束(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(BAD_OUTPUT, recipes={"retry": _recipe()})
@@ -65,7 +65,7 @@ def test_產出一直不合格_本級試到上限再升一級試一次_仍失敗
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert "第 3 次" in job.result.reason and "summary.json" in job.result.reason
     # 每次嘗試有自己的目錄；帳本：本級兩次，第三次是升上來的 strong
@@ -145,7 +145,7 @@ event(type="agent_end")
 
 
 @pytest.mark.promise("NFR-RUN-05", "FR-MD-01")
-def test_後端連不上_不重試也不升級_以失敗進待審_原因是_Ollama_沒回應(
+def test_後端連不上_不重試也不升級_以失敗結束_原因是_Ollama_沒回應(
     down_world_for: Callable[..., World],
 ) -> None:
     world = down_world_for(GIVES_UP_QUIETLY, recipes={"retry": _recipe()})
@@ -154,7 +154,7 @@ def test_後端連不上_不重試也不升級_以失敗進待審_原因是_Olla
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert job.result.reason.startswith("Ollama 沒回應")
     assert [entry.tier for entry in world.ledger(job_id)] == ["local"]
@@ -217,7 +217,7 @@ def test_後端回_200_但串流裡是_overloaded_error_算後端故障_不重�
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert job.result.reason.startswith("Ollama 沒回應"), job.result.reason
     assert "overloaded_error" in job.result.reason
@@ -246,7 +246,7 @@ def test_碰過一次後端故障但_Pi_自己重試成功_產出合格就算這
 
 
 @pytest.mark.promise("NFR-RUN-03")
-def test_skill_少了_schema_json_產出沒辦法驗_以失敗進待審_不重試(
+def test_skill_少了_schema_json_產出沒辦法驗_以失敗結束_不重試(
     world_for: Callable[..., World], tmp_path: Path
 ) -> None:
     # 配方直接交給執行器（不經 load_recipes），模擬跑到一半 schema.json 被刪掉

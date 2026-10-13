@@ -10,7 +10,7 @@
 
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
 `checks.json` 都不讀。檢查本身跑不動（原文是空的、schema 壞掉、路徑跑出工單資料夾）時丟
-`ChecksUnavailable`：重跑模型修不好，執行器直接帶著原因送進待審。
+`ChecksUnavailable`：重跑模型修不好，執行器直接帶著原因結束。
 """
 
 import json

@@ -9,7 +9,7 @@
    - 檔案：只收 Markdown、純文字、PDF；PDF 抽不到文字就報錯。
 3. 同一個內容 hash 只建一份素材項目（`item.json`、`content.md`、`raw/` 原檔），重複投入沿用。
 4. 同一份素材、同一份配方、同樣的目標、**同一個對話**已有排隊中、執行中或完成的工單，就回傳那一張，
-   不另開；其中一樣不同就開新的。失敗、未完成、丟棄的單不拿回：再丟一次就是要重新分析。
+   不另開；其中一樣不同就開新的。失敗、未完成的單不拿回：再丟一次就是要重新分析。
    `again`（重做）一律不走去重。
    兩個對話丟同一篇文章各開各的單（ADR-0021 §3.6）；命令列 `ef new` 沒有對話（None），
    只跟同樣沒有對話的工單去重。
@@ -76,7 +76,7 @@ class SourceUnreadable(Exception):
 @dataclass(frozen=True)
 class Intake:
     job: Job
-    # False：同一份素材、同樣的目標已有沒丟棄的工單，回傳的是那一張
+    # False：同一份素材、同樣的目標已有可以拿回的工單，回傳的是那一張
     created: bool
 
 
@@ -227,15 +227,11 @@ def _reusable(job: Job) -> bool:
     """去重拿得回來的單：排隊中、執行中，或跑完而且完成。
 
     失敗與未完成的拿回來，那篇文章在這個對話裡就再也分析不了（ADR-0021 §3.6）。
-    不靠「排除丟棄」：工單狀態收成三種之後，丟棄的單讀起來就是跑完了（#89）。
+    工單狀態收成三種之後沒有「丟棄」：舊資料的丟棄讀成結束，有完整結果就拿得回來（ADR-0019 §3.4）。
     """
     if job.status in ("queued", "running"):
         return True
-    return (
-        job.status != "discarded"
-        and job.result is not None
-        and job.result.outcome == "complete"
-    )
+    return job.result is not None and job.result.outcome == "complete"
 
 
 def same_source(data: DataDir, job: Job, source: Source) -> bool:

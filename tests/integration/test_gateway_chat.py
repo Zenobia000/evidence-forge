@@ -181,12 +181,12 @@ class Env:
     def finish(
         self, job_id: str, outcome: str = "complete", reason: str = "跑完"
     ) -> None:
-        """把工單改成跑完（待審）：執行器會做的事，這裡直接寫 `job.md`。"""
+        """把工單改成跑完（結束）：執行器會做的事，這裡直接寫 `job.md`。"""
         path = self.data.job_dir(job_id) / "job.md"
         job = read_job(path).job
         done = job.model_copy(
             update={
-                "status": "review",
+                "status": "done",
                 "result": JobResult.model_validate(
                     {"outcome": outcome, "reason": reason}
                 ),

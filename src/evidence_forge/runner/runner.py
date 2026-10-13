@@ -1,4 +1,4 @@
-"""執行器：拿最舊的排隊中工單，照配方一段一段開 Pi，驗證產出，送進待審（v0.3 §5）。
+"""執行器：拿最舊的排隊中工單，照配方一段一段開 Pi，驗證產出，結束（v0.3 §5）。
 
 每一段（S0.6）：
 - 開 Pi 之前記下版本（`provenance.py`）；Pi 跑的時候把「在等什麼」寫進 `job.md`。
@@ -8,14 +8,14 @@
   二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
 - 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
   後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
-  Tavily 故障之後沒再搜成功過，就以 `incomplete` 進待審，都沒有才是 `complete`。
+  Tavily 故障之後沒再搜成功過，就以 `incomplete` 結束，都沒有才是 `complete`。
 - 每一次（重試、升級、自動修）編號往上加，產出各自一個目錄；狀態寫在 `job.md` 的 `stage`，
   重開 `ef serve` 時從所在那段、同一次重跑，前面的請求命中閘道快取（NFR-RUN-04）。
   鑰匙跟當機前一樣，所以登記之前先殺掉前一個 `ef serve` 留下的 Pi（SEAM-12）。
 
-沒預料到的例外一律接住，工單帶著原因進待審，不卡在 `running`，迴圈也不停。
+沒預料到的例外一律接住，工單帶著原因結束，不卡在 `running`，迴圈也不停。
 同時跑幾張是 `max_parallel`；開跑前檢查沒過就不認領（`preflight.py`）。
-不套用審稿決定（S0.9）。`job.md` 與 `events.jsonl` 只有這裡寫（NFR-KEEP-02）。
+`job.md` 與 `events.jsonl` 只有這裡寫（NFR-KEEP-02）。
 """
 
 import json
@@ -151,7 +151,7 @@ def validate_outputs(
     """檢查這一段宣告的產出：每個檔都要在、不能是空的；`.json` 檔要符合 skill 的 schema。
 
     回傳問題清單，空的表示合格。schema.json 驗的是這一段的 JSON 產出。
-    skill 的 schema 不在或壞了丟 `SchemaError`：重跑模型修不好，執行器直接送進待審。
+    skill 的 schema 不在或壞了丟 `SchemaError`：重跑模型修不好，執行器直接結束。
     不在的時候不能當成「不用驗」，不然任何不是空的 JSON 都會被當成合格。
     """
     try:
@@ -186,7 +186,7 @@ def validate_outputs(
 
 @dataclass(frozen=True)
 class _Tried:
-    """一段一次的結果：產出的問題（照重試規則）、要直接進待審的結果、要回去修的檢查結果。"""
+    """一段一次的結果：產出的問題（照重試規則）、要直接結束的結果、要回去修的檢查結果。"""
 
     problems: list[str] = field(default_factory=list)
     stop: JobResult | None = None
@@ -219,12 +219,12 @@ def open_tool(log_path: Path) -> str | None:
     return list(running.values())[-1] if running else None
 
 
-# 後端代號 → 待審原因裡給人看的名字（「失敗：Ollama 沒回應」）
+# 後端代號 → 結束的原因裡給人看的名字（「失敗：Ollama 沒回應」）
 BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily"}
 
 
 def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
-    """補料沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
+    """補料沒做完整的原因（給結果卡看），照先後排；沒有就是空的。從帳本判斷：
 
     - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
     - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
@@ -456,13 +456,13 @@ class Runner:
         recipe = self.recipes.get(
             read_job(self.data.job_dir(job_id) / "job.md").job.recipe
         )
-        # 配方不見的單照樣認領：執行時直接以失敗進待審，不卡住佇列
+        # 配方不見的單照樣認領：執行時直接以失敗結束，不卡住佇列
         return self.preflight(recipe) if recipe is not None else []
 
     # --- 執行 ---------------------------------------------------------------
 
     def run_once(self) -> str | None:
-        """在這條執行緒跑一張單到待審；沒有可以跑的單（或開跑前檢查沒過）回傳 None。"""
+        """在這條執行緒跑一張單到結束；沒有可以跑的單（或開跑前檢查沒過）回傳 None。"""
         job_id = self._claim()
         if job_id is None:
             return None
@@ -507,7 +507,7 @@ class Runner:
             return sorted(self._inflight)
 
     def finished(self) -> list[str]:
-        """上次問到現在跑完（進待審）的工單。"""
+        """上次問到現在跑完（結束）的工單。"""
         with self._lock:
             done, self._finished = self._finished, []
         return done
@@ -520,7 +520,7 @@ class Runner:
             thread.join(timeout_s)
 
     def run_job(self, job_id: str) -> None:
-        """跑一張單到待審。任何沒預料到的例外都接住：工單帶著原因進待審（失敗），
+        """跑一張單到結束。任何沒預料到的例外都接住：工單帶著原因結束（失敗），
         不卡在 `running`，也不讓整個執行器停下。"""
         try:
             self._run_job(job_id)
@@ -538,7 +538,7 @@ class Runner:
                 self._set(
                     job_dir,
                     doc,
-                    "review",
+                    "done",
                     reason,
                     result=JobResult(outcome="failed", reason=reason[:2000]),
                 )
@@ -560,13 +560,13 @@ class Runner:
         doc = read_job(job_dir / "job.md")
         recipe = self.recipes.get(doc.job.recipe)
         if recipe is None:
-            # 開單時配方還在、之後被刪了；直接以失敗進待審，不卡住佇列
+            # 開單時配方還在、之後被刪了；直接以失敗結束，不卡住佇列
             if doc.job.status == "queued":
                 doc = self._set(job_dir, doc, "running", "開始")
             self._set(
                 job_dir,
                 doc,
-                "review",
+                "done",
                 "配方不存在",
                 result=JobResult(
                     outcome="failed", reason=f"找不到配方 {doc.job.recipe}"
@@ -584,7 +584,7 @@ class Runner:
             self._set(
                 job_dir,
                 doc,
-                "review",
+                "done",
                 reason,
                 result=JobResult(outcome="failed", reason=reason),
             )
@@ -625,7 +625,7 @@ class Runner:
                             outcome="incomplete",
                             reason="；".join([result.reason, *notes])[:2000],
                         )
-                self._set(job_dir, doc, "review", result.reason, result=result)
+                self._set(job_dir, doc, "done", result.reason, result=result)
                 return
         notes = search_shortfalls(self.data, job_dir)
         if notes:
@@ -633,10 +633,10 @@ class Runner:
             # 但這張單沒做完（NFR-COST-01、#70）
             reason = "；".join(notes)
             result = JobResult(outcome="incomplete", reason=reason)
-            self._set(job_dir, doc, "review", reason, result=result)
+            self._set(job_dir, doc, "done", reason, result=result)
             return
         self._set(
-            job_dir, doc, "review", "全部段完成", result=JobResult(outcome="complete")
+            job_dir, doc, "done", "全部段完成", result=JobResult(outcome="complete")
         )
 
     def _set_aside(self, job_dir: Path, progress: StageProgress) -> None:
@@ -882,7 +882,7 @@ class Runner:
                 seed,
             )
         except hard_checks.ChecksUnavailable as exc:
-            # 重跑模型修不好：不重試，帶著原因進待審
+            # 重跑模型修不好：不重試，帶著原因結束
             reason = f"{stage.id} 段第 {attempt} 次的自動檢查沒辦法跑：{exc}"
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))

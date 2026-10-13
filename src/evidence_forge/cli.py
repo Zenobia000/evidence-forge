@@ -233,7 +233,7 @@ def _serve(args: argparse.Namespace) -> int:
             # 重開之後先接著跑沒跑完的單，再照開單順序拿排隊單，同時最多 --parallel 張
             started = runner.start_available()
             for job_id in runner.finished():
-                print(f"工單 {job_id} 已進待審", flush=True)
+                print(f"工單 {job_id} 已結束", flush=True)
             if runner.blocked != blocked:
                 blocked = runner.blocked
                 if blocked is not None:

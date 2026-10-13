@@ -70,13 +70,13 @@ def _ledger(job_dir: Path) -> list[LedgerEntry]:
 
 
 @pytest.mark.promise("FR-RC-01", "NFR-COST-06", "NFR-KEEP-02")
-def test_貼文字開單_真的_Pi_經閘道重播跑完_echo_段_工單進待審且結果完成(
+def test_貼文字開單_真的_Pi_經閘道重播跑完_echo_段_工單結束且結果完成(
     ef_data: Path, capsys: pytest.CaptureFixture[str], port: int
 ) -> None:
     job_dir = _run_tracer(ef_data, capsys, port)
 
     job = read_job(job_dir / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "complete", job.result
     summary = json.loads(
         (job_dir / "stages" / "echo" / "1" / "summary.json").read_text(encoding="utf-8")
