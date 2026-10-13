@@ -8,7 +8,11 @@
      標成讀不到的素材項目、寫明原因，丟 `SourceUnreadable`，**不開工單**。
    - 檔案：只收 Markdown、純文字、PDF；PDF 抽不到文字就報錯。
 3. 同一個內容 hash 只建一份素材項目（`item.json`、`content.md`、`raw/` 原檔），重複投入沿用。
-4. 同一份素材、同樣的目標已有沒丟棄的工單，就回傳那一張，不另開；目標不同才開新的。
+4. 同一份素材、同一份配方、同樣的目標、**同一個對話**已有排隊中、執行中或完成的工單，就回傳那一張，
+   不另開；其中一樣不同就開新的。失敗、未完成、丟棄的單不拿回：再丟一次就是要重新分析。
+   `again`（重做）一律不走去重。
+   兩個對話丟同一篇文章各開各的單（ADR-0021 §3.6）；命令列 `ef new` 沒有對話（None），
+   只跟同樣沒有對話的工單去重。
 
 工單的 `job.md` 與 `events.jsonl` 只有執行器寫，所以開單放在 runner。
 """
@@ -18,7 +22,7 @@ import hashlib
 import json
 import shutil
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -197,8 +201,10 @@ def _publish_item(item_dir: Path, item: Item, material: _Material) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _open_job_for(data: DataDir, item_path: str, goal: str) -> Job | None:
-    """同一份素材、同樣目標、還沒丟棄的工單；沒有就是 None。"""
+def _open_job_for(
+    data: DataDir, item_path: str, recipe: str, goal: str, conversation: str | None
+) -> Job | None:
+    """同一份素材、同一份配方、同樣目標、同一個對話，而且拿回來有用的工單；沒有就是 None。"""
     if not data.jobs.is_dir():
         return None
     for job_dir in sorted(data.jobs.iterdir()):
@@ -208,11 +214,51 @@ def _open_job_for(data: DataDir, item_path: str, goal: str) -> Job | None:
             continue  # 正在建立或壞掉的工單不算
         if (
             job.feed.item == item_path
-            and job.status != "discarded"
+            and job.recipe == recipe
+            and _reusable(job)
             and job.goal.strip() == goal
+            and job.conversation == conversation
         ):
             return job
     return None
+
+
+def _reusable(job: Job) -> bool:
+    """去重拿得回來的單：排隊中、執行中，或跑完而且完成。
+
+    失敗與未完成的拿回來，那篇文章在這個對話裡就再也分析不了（ADR-0021 §3.6）。
+    不靠「排除丟棄」：工單狀態收成三種之後，丟棄的單讀起來就是跑完了（#89）。
+    """
+    if job.status in ("queued", "running"):
+        return True
+    return (
+        job.status != "discarded"
+        and job.result is not None
+        and job.result.outcome == "complete"
+    )
+
+
+def same_source(data: DataDir, job: Job, source: Source) -> bool:
+    """這張單是不是從同一份素材開的；不抓網頁、不寫任何東西。
+
+    閘道在對話已有單在跑時，先用它判斷這次會不會只是去重拿回那一張，不會的話抓之前就擋下。
+    貼的文字比內容 hash；網址比素材項目記的網址（同一個網址內容變了，就等真的抓了再說）。
+    """
+    match source:
+        case PastedText(text=text):
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            item_dir = data.inbox / MANUAL_FEED / content_hash[:16]
+            return job.feed.item == item_dir.relative_to(data.root).as_posix()
+        case WebPage(url=url):
+            try:
+                item = Item.model_validate_json(
+                    (data.root / job.feed.item / "item.json").read_text("utf-8")
+                )
+            except (OSError, ValueError):
+                return False
+            return item.url == url.strip()
+        case UploadedFile():
+            return False
 
 
 def _new_job_dir(data: DataDir, base: str) -> tuple[str, Path]:
@@ -245,8 +291,16 @@ def open_job(
     budget_usd: float = 0.5,
     budget_credits: int | None = None,
     genre: str | None = None,
+    conversation: str | None = None,
+    again: bool = False,
+    before_create: Callable[[], None] | None = None,
 ) -> Intake:
     """投入一篇東西並開單（或回傳已有的那張）。
+
+    `conversation` 是開單的對話 id，記進 `job.md`、也是去重的鍵的一部分；命令列不給。
+    `again` 是「重做」：不走去重，一定開新單（US-21 第 3 點）。
+    `before_create` 在確定要開新單（去重沒拿到舊單）時、建資料夾之前呼叫，在同一把鎖裡；
+    它丟例外就不開單。閘道用它擋「這個對話已經有單在跑」，去重拿回舊單時不擋。
 
     `budget_credits` 是這張單的 Tavily credits 上限；沒給就用配方各段 `tavily_credits` 的總和
     （`recipe_credits`），配方沒有一段要搜尋就是 0。
@@ -272,9 +326,15 @@ def open_job(
     # 「找已有的工單 → 開資料夾 → 寫 job.md」整段鎖住：送出被連按兩下、或 UI 與 `ef new`
     # 同時投入同一份素材時，後到的那個等前一個寫完 job.md 再掃描，拿到同一張
     with _item_lock(data, item):
-        existing = _open_job_for(data, item_path, chosen_goal)
+        existing = (
+            None
+            if again
+            else _open_job_for(data, item_path, recipe.name, chosen_goal, conversation)
+        )
         if existing is not None:
             return Intake(job=existing, created=False)
+        if before_create is not None:
+            before_create()
         budget = Budget(
             usd=budget_usd,
             tavily_credits=(
@@ -282,7 +342,16 @@ def open_job(
             ),
         )
         job = _create_job(
-            data, recipe, item, item_path, material, chosen_goal, now, budget, genre
+            data,
+            recipe,
+            item,
+            item_path,
+            material,
+            chosen_goal,
+            now,
+            budget,
+            genre,
+            conversation,
         )
     return Intake(job=job, created=True)
 
@@ -314,6 +383,7 @@ def _create_job(
     now: datetime,
     budget: Budget,
     genre: str | None,
+    conversation: str | None,
 ) -> Job:
     assert item.content_hash is not None  # 讀得到的素材項目一定有
     job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
@@ -325,6 +395,7 @@ def _create_job(
         feed=FeedRef(connector=MANUAL_FEED, name=MANUAL_FEED, item=item_path),
         goal=goal,
         target_genre=genre,
+        conversation=conversation,
         budget=budget,
         status="queued",
     )

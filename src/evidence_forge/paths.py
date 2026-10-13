@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from evidence_forge.jobkey import check_name
+
 # 專案根目錄：本檔在 src/evidence_forge/ 底下，往上兩層。
 # uv sync 以可編輯模式安裝，所以這裡指到的就是原始碼所在的 repo（或 worktree）。
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -68,7 +70,30 @@ class DataDir:
         return self.root / "checks.yaml"
 
     def job_dir(self, job_id: str) -> Path:
+        # 冒號在 Windows 的磁碟上不能當檔名；`conv:<對話 id>` 要經 `owner_dir` 導到對話資料夾
+        if ":" in job_id:
+            raise ValueError(f"工單 id 不能有冒號：{job_id!r}")
         return self.jobs / job_id
+
+    @property
+    def conversations(self) -> Path:
+        """對話資料夾的上層：`conversations/<對話 id>/`（ADR-0021）。"""
+        return self.root / "conversations"
+
+    def conversation_dir(self, conversation_id: str) -> Path:
+        # 對話 id 會拼進路徑：跟工單 id 同一套字元規則（擋空字串、`/`、`..`、冒號）
+        check_name("對話 id", conversation_id)
+        return self.conversations / conversation_id
+
+    def owner_dir(self, owner_id: str) -> Path:
+        """帳本跟著誰：工單 id 是 `jobs/<id>/`，`conv:<對話 id>` 是 `conversations/<對話 id>/`。
+
+        閘道的帳本、預算、回放一律經過這裡找資料夾，對話與工單走同一套規則（ADR-0021 §3.3）。
+        前綴寫在這裡而不 import `convkey`：`paths` 是最底層，不依賴鑰匙的模組。
+        """
+        if owner_id.startswith("conv:"):
+            return self.conversation_dir(owner_id[len("conv:") :])
+        return self.job_dir(owner_id)
 
     def ensure(self) -> None:
         """建出 `inbox/`、`jobs/`、`cache/`、`blobs/`；已存在就略過，可重複呼叫。"""

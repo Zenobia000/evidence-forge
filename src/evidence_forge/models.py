@@ -140,6 +140,9 @@ class Job(_Contract):
     goal: str
     # 目標文類（ADR-0015）；沒指定時由執行器依訂閱源或作家設定的預設補上。
     target_genre: str | None = None
+    # 開這張單的對話 id（ADR-0021）；命令列 `ef new` 開的是 None。投入去重的鍵含它，
+    # 兩個對話丟同一篇文章各開各的單。能不能讀這張單看對話的 `jobs.jsonl`，不看這一欄
+    conversation: str | None = None
     budget: Budget
     status: JobStatus
     stage: StageProgress | None = None
