@@ -4,7 +4,7 @@
 - 開 Pi 之前記下版本（`provenance.py`）；Pi 跑的時候把「在等什麼」寫進 `job.md`。
 - Pi 結束後依序看：預算擋下 → `incomplete`；後端故障 → `failed`，不重試不升級；
   產出不合 schema、分析段的程式檢查沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
-  就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
+  就照升級鏈一級各試一次，最後一級仍不行 → `failed`（附最後一次的錯誤）（ADR-0022）；
   重構段的程式檢查沒過 → 帶著結果回重構段修，到 `auto_fix` 次還沒過 → `incomplete`。
 - 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
   後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
@@ -686,8 +686,9 @@ class Runner:
     ) -> tuple[JobDocument, JobResult | None]:
         """跑一段到合格，或到重試與升級都用完（NFR-RUN-03、ADR-0011 §3.3）。
 
-        同一級最多試 `max_attempts` 次；還不合格而配方有 `escalate_to`，升一級再試一次；
-        再不合格就回傳失敗的結果。每一次（含升級）的編號往上加，產出各自一個目錄。
+        配方這一段的等級最多試 `max_attempts` 次；還不合格而配方有升級鏈（`escalate_to`），
+        照順序往上一級各試一次；鏈的最後一級也不合格就回傳失敗的結果（ADR-0022）。
+        每一次（含升級）的編號往上加，產出各自一個目錄。
         回傳 None 表示這一段合格。
         """
         while True:
@@ -731,12 +732,14 @@ class Runner:
             failures = progress.failures + 1
             if not escalated and failures < recipe.max_attempts:
                 next_tier = tier
-            elif not escalated and stage.escalate_to is not None:
-                next_tier = stage.escalate_to
-                failures = 0
             else:
-                reason = f"{label}失敗：" + "；".join(problems)
-                return doc, JobResult(outcome="failed", reason=reason)
+                # 升級鏈的下一級；升上來的每一級只試一次
+                upper = stage.tier_after(tier)
+                if upper is None:
+                    reason = f"{label}失敗：" + "；".join(problems)
+                    return doc, JobResult(outcome="failed", reason=reason)
+                next_tier = upper
+                failures = 0
             self._stage_event(
                 job_dir,
                 stage.id,

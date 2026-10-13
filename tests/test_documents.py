@@ -162,7 +162,8 @@ def test_the_architecture_example_recipe_is_read() -> None:
     assert recipe.stages[0].output == ("digest.md", "claims.json")
     assert recipe.stages[1].tavily_credits == 10
     assert recipe.stages[2].uses == ("my-style",)
-    assert recipe.stages[3].escalate_to == "strong"
+    # 舊的寫法（升一級）讀進來是只有一級的升級鏈
+    assert recipe.stages[3].escalate_to == ("strong",)
     assert (recipe.on_feedback, recipe.max_attempts, recipe.auto_fix) == (
         "compose",
         2,
@@ -174,7 +175,15 @@ def test_stage_options_default_to_nothing_extra() -> None:
     digest = parse_recipe(RESTRUCTURE_RECIPE).stages[0]
     assert digest.uses == ()
     assert digest.tavily_credits == 0
-    assert digest.escalate_to is None
+    assert digest.escalate_to == ()
+
+
+def test_升級鏈_一級一級往上_照寫的順序讀進來() -> None:
+    text = RESTRUCTURE_RECIPE.replace(
+        "{ id: verify,   skill: verify,   tier: local,  output: [checks.json], escalate_to: strong }",
+        "{ id: verify, skill: verify, tier: local, output: [checks.json], escalate_to: [fast, strong] }",
+    )
+    assert parse_recipe(text).stages[3].escalate_to == ("fast", "strong")
 
 
 def test_read_recipe_reads_the_file(tmp_path: Path) -> None:
@@ -192,6 +201,11 @@ def test_read_recipe_reads_the_file(tmp_path: Path) -> None:
         ("{ id: research,", "{ id: digest,"),
         # 升級只能往上，不能升到同一級或更低
         ("escalate_to: strong", "escalate_to: local"),
+        # 升級鏈也一樣：每一級都要比前一級高（ADR-0022）
+        ("escalate_to: strong", "escalate_to: [strong, fast]"),
+        ("escalate_to: strong", "escalate_to: [fast, fast]"),
+        ("escalate_to: strong", "escalate_to: [local, strong]"),
+        ("escalate_to: strong", "escalate_to: []"),
         # 不存在的等級
         ("tier: strong", "tier: huge"),
         # 至少要試一次

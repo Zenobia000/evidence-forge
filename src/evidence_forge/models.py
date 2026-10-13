@@ -22,6 +22,7 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -36,8 +37,10 @@ JobStatus = Literal["queued", "running", "review", "approved", "discarded"]
 Outcome = Literal["complete", "incomplete", "failed"]
 
 # 模型等級的別名，對到哪個實際模型由閘道決定（ADR-0011）。由低到高排列。
-Tier = Literal["local", "strong", "max"]
-TIER_ORDER: tuple[Tier, ...] = ("local", "strong", "max")
+# fast 是 ADR-0022 加的：本機之後先試便宜的雲端模型。max 配方已經不用，
+# 留著是為了舊工單的帳本與狀態還讀得進來
+Tier = Literal["local", "fast", "strong", "max"]
+TIER_ORDER: tuple[Tier, ...] = ("local", "fast", "strong", "max")
 
 # 正在等什麼（features/review.feature〈看板說明正在等什麼〉）：等 GPU、等限流、
 # 等模型回應；正在跑工具時是 tool，並在 `tool` 寫工具名稱。
@@ -186,8 +189,10 @@ class RecipeStage(_Contract):
     uses: tuple[str, ...] = ()
     # 這段可以用掉的 Tavily credits
     tavily_credits: NonNegativeInt = 0
-    # 同一級試到 max_attempts 還不合格時，改用哪一級再試；沒寫就不升級
-    escalate_to: Tier | None = None
+    # 升級鏈：同一級試到 max_attempts 還不合格時，照順序一級各試一次（ADR-0022）。
+    # 配方可以寫一級（舊寫法 `escalate_to: strong`）或一串（`[fast, strong]`），讀進來都是一串；
+    # 沒寫就不升級
+    escalate_to: tuple[Tier, ...] = ()
 
     @property
     def online(self) -> bool:
@@ -198,14 +203,35 @@ class RecipeStage(_Contract):
         """
         return self.tavily_credits > 0
 
+    def tier_after(self, tier: Tier) -> Tier | None:
+        """升級鏈裡比 `tier` 高的下一級；已經是最後一級（或沒有升級鏈）就是 None。"""
+        for upper in self.escalate_to:
+            if _tier_rank(upper) > _tier_rank(tier):
+                return upper
+        return None
+
+    @field_validator("escalate_to", mode="before")
+    @classmethod
+    def _one_tier_is_a_chain_of_one(cls, value: object) -> object:
+        if value is None:
+            # YAML 寫了 `escalate_to:` 沒給值，舊的格式當成不升級
+            return ()
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, list) and not value:
+            # 寫了 `escalate_to: []` 多半是打錯；不升級就不要寫這一欄
+            raise ValueError("升級鏈不能是空的；不升級就不要寫 escalate_to")
+        return value
+
     @model_validator(mode="after")
     def _escalate_upwards(self) -> Self:
-        if self.escalate_to is not None and _tier_rank(self.escalate_to) <= _tier_rank(
-            self.tier
-        ):
-            raise ValueError(
-                f"{self.id} 段只能從 {self.tier} 往上升級，不能升到 {self.escalate_to}"
-            )
+        previous = self.tier
+        for tier in self.escalate_to:
+            if _tier_rank(tier) <= _tier_rank(previous):
+                raise ValueError(
+                    f"{self.id} 段的升級鏈要一級比一級高：{previous} 之後不能接 {tier}"
+                )
+            previous = tier
         return self
 
 

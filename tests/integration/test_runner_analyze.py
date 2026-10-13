@@ -1,6 +1,7 @@
 """分析配方接進執行器（#78、SEAM-05、SEAM-06）：假 Pi、真的閘道、執行器、`analyze` 配方與兩個 skill 的 schema。
 
-- brief 段：`brief.json` 合 schema、`brief.md` 六節都在才合格；本機試滿兩次還不行升 `strong`。
+- brief 段：`brief.json` 合 schema、`brief.md` 六節都在才合格；本機試滿兩次還不行升 `fast`、再升 `strong`
+  （ADR-0022）。查證段也一樣：本機兩次、`fast`、`strong` 各一次，共四次。
 - 查證與找題材段：`report.md` 五節依序都在、`sources.json` 合 schema、查證與題材引用的編號都在清單上、
   清單上的網址都是這一段這一次真的抓過的；全部過了才放來源正文。
 - 執行器不靠 skill 名稱決定跑哪些檢查：看這一段宣告的產出（`brief.md`、`report.md`、`sources.json`）。
@@ -201,7 +202,7 @@ def test_analyze_跑完兩段_報告與來源清單合格_執行器放好抓過�
 
 
 @pytest.mark.promise("FR-AN-01", "NFR-RUN-03", "FR-MD-01")
-def test_本機的_brief_兩次都少一節_升到_strong_再試_帳本記升級(
+def test_本機的_brief_兩次都少一節_升到_fast_再試_帳本記升級(
     world_for: Callable[[str], World],
 ) -> None:
     missing = BRIEF_MD.replace("## 觀點\n", "## 想法\n")
@@ -220,7 +221,7 @@ def test_本機的_brief_兩次都少一節_升到_strong_再試_帳本記升級
     assert brief_calls == [
         (1, "local", None),
         (2, "local", None),
-        (3, "strong", "local"),
+        (3, "fast", "local"),
     ]
     failed = _reports(world, job_id, "brief")[0]
     assert not failed.passed
@@ -228,11 +229,11 @@ def test_本機的_brief_兩次都少一節_升到_strong_再試_帳本記升級
 
 
 @pytest.mark.promise("FR-IV-01")
-def test_報告少了研究題材一節_兩次都一樣就以失敗進待審_寫明少哪一節_不放來源(
+def test_報告少了研究題材一節_四次都一樣就以失敗進待審_寫明少哪一節_不放來源(
     world_for: Callable[[str], World],
 ) -> None:
     broken = REPORT_MD.replace("## 研究題材\n", "## 延伸閱讀\n")
-    world = world_for(_script(report_by_attempt={"1": broken, "2": broken}))
+    world = world_for(_script(report_by_attempt=_every_attempt(broken)))
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
@@ -301,6 +302,11 @@ def test_查證引用了清單上沒有的編號_查證段不合格(
 # --- 報告本身的出處、關鍵主張的查證、有疑慮的排前面（PR #88 第一輪審查）---------------
 
 
+def _every_attempt(report: str) -> dict[str, str]:
+    """查證段每一次（本機兩次、fast、strong）都交同一份報告。"""
+    return {str(attempt): report for attempt in range(1, 5)}
+
+
 def _failed_reason(world: World, job_id: str) -> str:
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "failed", job.result
@@ -312,7 +318,7 @@ def test_報告內文引用了清單上沒有的編號_查證段不合格(
     world_for: Callable[[str], World],
 ) -> None:
     report = REPORT_MD.replace("另一家店也降了很多 [S2]", "另一家店也降了很多 [S9]")
-    world = world_for(_script(report_by_attempt={"1": report, "2": report}))
+    world = world_for(_script(report_by_attempt=_every_attempt(report)))
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
@@ -325,7 +331,7 @@ def test_來源清單一節列了這一段沒抓過的網址_查證段不合格(
 ) -> None:
     # 別張單抓過、在共用快取裡的也不算：這一段這一次沒抓過，就是憑記憶寫的
     report = REPORT_MD + "- 補充，https://elsewhere.example/other\n"
-    world = world_for(_script(report_by_attempt={"1": report, "2": report}))
+    world = world_for(_script(report_by_attempt=_every_attempt(report)))
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 

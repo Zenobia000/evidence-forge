@@ -3,6 +3,20 @@
 # 來源：Claude API 參考資料的模型表（2026-10-06 版）；正式數字以定價頁為準：
 #   https://platform.claude.com/docs/en/about-claude/pricing（S0.14 用真的金鑰前要核對一次）。
 # cache_write 是 5 分鐘快取的寫入價，照慣例算成輸入價的 1.25 倍。用字串寫，避免浮點數誤差。
+# Haiku 5.5 分兩段計價：一次請求的提示（輸入＋快取寫入＋快取讀取）超過 100K token，
+# 整個請求改用 long_context 的價（ADR-0022）。快取讀取照慣例是輸入價的 0.1 倍
+# （參考資料只點名 Fable 5.1 與 Opus 5.5 是例外）。
+claude-haiku-5-5:
+  input: "0.10"
+  output: "0.50"
+  cache_write: "0.125"
+  cache_read: "0.01"
+  long_context:
+    above_prompt_tokens: 100000
+    input: "0.50"
+    output: "2.50"
+    cache_write: "0.625"
+    cache_read: "0.05"
 claude-sonnet-5-5:
   input: "2.00"
   output: "10.00"

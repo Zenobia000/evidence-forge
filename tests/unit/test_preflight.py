@@ -60,7 +60,7 @@ class FakeProbes:
         return any(call[0] == name for call in self.calls)
 
 
-def _recipe(tier: str = "local", escalate_to: str | None = None) -> Recipe:
+def _recipe(tier: str = "local", escalate_to: str | list[str] | None = None) -> Recipe:
     return Recipe.model_validate(
         {
             "name": "r",
@@ -71,7 +71,7 @@ def _recipe(tier: str = "local", escalate_to: str | None = None) -> Recipe:
                     "skill": "echo",
                     "tier": tier,
                     "output": ["a.json"],
-                    "escalate_to": escalate_to,
+                    **({"escalate_to": escalate_to} if escalate_to else {}),
                 }
             ],
             "on_feedback": "s",
@@ -122,10 +122,17 @@ def test_查_Ollama_時逾時算進模型冷啟動的_75_秒(tmp_path: Path) -> 
 
 @pytest.mark.promise("NFR-RUN-01")
 @pytest.mark.parametrize(
-    ("tier", "escalate_to"), [("strong", None), ("local", "strong"), ("max", None)]
+    ("tier", "escalate_to"),
+    [
+        ("strong", None),
+        ("local", "strong"),
+        ("max", None),
+        ("fast", None),
+        ("local", ["fast", "strong"]),
+    ],
 )
 def test_配方用到雲端等級_金鑰無效就不開跑(
-    tmp_path: Path, tier: str, escalate_to: str | None
+    tmp_path: Path, tier: str, escalate_to: str | list[str] | None
 ) -> None:
     fake = FakeProbes(key_problem="金鑰無效（HTTP 401）")
     problems = _preflight(tmp_path, fake)(_recipe(tier, escalate_to))

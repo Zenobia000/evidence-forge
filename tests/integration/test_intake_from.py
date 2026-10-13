@@ -14,14 +14,14 @@ import pytest
 from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.harness import default_harness
-from evidence_forge.models import JobResult, Recipe
+from evidence_forge.models import TIER_ORDER, JobResult, Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import PastedText, open_job, open_job_from
 from evidence_forge.runner.recipes import load_recipes
 
 NOW = datetime(2026, 10, 13, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
 LATER = datetime(2026, 10, 13, 9, 30, tzinfo=ZoneInfo("Asia/Taipei"))
-RECIPES = load_recipes(default_harness(), ("local", "strong", "max"))
+RECIPES = load_recipes(default_harness(), TIER_ORDER)
 ANALYZE, REWRITE = RECIPES["analyze"], RECIPES["rewrite"]
 VOICE = "---\nid: me\ndefault_genre: opinion\n---\n\n測試用的聲音。\n"
 

@@ -17,6 +17,7 @@ from evidence_forge.gateway.budget import (
 )
 from evidence_forge.gateway.ledger import Usage
 from evidence_forge.gateway.prices import (
+    LongContextPrice,
     Price,
     cost_micros,
     estimate_input_tokens,
@@ -31,6 +32,22 @@ SONNET = Price(
     output=Decimal("10"),
     cache_write=Decimal("2.5"),
     cache_read=Decimal("0.2"),
+)
+
+# Haiku 5.5（ADR-0022）：提示 100K token 以下 $0.10／$0.50，超過整個請求改用 $0.50／$2.50；
+# 快取寫入是輸入價 1.25 倍、讀取 0.1 倍
+HAIKU = Price(
+    input=Decimal("0.10"),
+    output=Decimal("0.50"),
+    cache_write=Decimal("0.125"),
+    cache_read=Decimal("0.01"),
+    long_context=LongContextPrice(
+        above_prompt_tokens=100_000,
+        input=Decimal("0.50"),
+        output=Decimal("2.50"),
+        cache_write=Decimal("0.625"),
+        cache_read=Decimal("0.05"),
+    ),
 )
 
 
@@ -83,6 +100,38 @@ def test_預留金額用偏高的輸入估計加上_max_tokens() -> None:
     assert estimate_input_tokens(request) == 900
     # 輸入用快取寫入價（較貴）：900×2.5 = 2250；輸出 1000×10 = 10000
     assert reservation_micros(SONNET, request, max_tokens=1000) == 12_250
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_價目表的_Haiku_5_5_照參考資料_含超過_100K_的長提示價() -> None:
+    assert load_prices()["claude-haiku-5-5"] == HAIKU
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_Haiku_提示剛好_100K_token_照一般價() -> None:
+    usage = Usage(input_tokens=100_000, output_tokens=1000)
+    # 100000×0.1 + 1000×0.5 = 10500
+    assert cost_micros(HAIKU, usage) == 10_500
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_Haiku_提示超過_100K_token_快取也算進提示_整個請求照長提示價() -> None:
+    usage = Usage(
+        input_tokens=60_000,
+        cache_write_tokens=30_000,
+        cache_read_tokens=20_000,
+        output_tokens=1000,
+    )
+    # 提示 110,000 > 100,000：60000×0.5 + 30000×0.625 + 20000×0.05 + 1000×2.5 = 52250
+    assert cost_micros(HAIKU, usage) == 52_250
+
+
+@pytest.mark.promise("NFR-COST-01")
+def test_Haiku_預留_估的輸入沒超過門檻用一般價_超過就用長提示價() -> None:
+    # 100 個位元組：100×0.125 + 1000×0.5 = 512.5 → 513
+    assert reservation_micros(HAIKU, b"x" * 100, max_tokens=1000) == 513
+    # 估的輸入（位元組數）超過 100K：100001×0.625 + 1000×2.5 = 65000.625 → 65001
+    assert reservation_micros(HAIKU, b"x" * 100_001, max_tokens=1000) == 65_001
 
 
 @pytest.mark.promise("NFR-COST-01")

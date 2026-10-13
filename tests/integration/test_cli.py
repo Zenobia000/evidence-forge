@@ -35,7 +35,7 @@ def test_ef_new_沒指定配方就開分析_寫素材項目並開一張排隊中
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
     assert (job.status, job.recipe, job.goal) == ("queued", "analyze", "一段話說明重點")
     # 分析配方的查證段有搜尋額度：沒指定 credits 就用配方各段的總和
-    assert job.budget.tavily_credits == 12
+    assert job.budget.tavily_credits == 24
     item_dir = ef_data / job.feed.item
     assert item_dir.parent == ef_data / "inbox" / "manual"
     assert (item_dir / "content.md").read_text(encoding="utf-8") == text

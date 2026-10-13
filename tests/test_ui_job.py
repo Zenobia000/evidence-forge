@@ -404,6 +404,30 @@ def test_bill_tab_sums_the_ledger_per_stage_attempt_with_escalation(
     assert "合計（預算 US$2.00）" in body and "US$0.38" in body
 
 
+def test_bill_tab_names_the_fast_tier_when_local_escalates_to_haiku(
+    folder: Folder,
+) -> None:
+    folder.job("j", status="review", title="t", result=REVIEW_COMPLETE, budget_usd=2.0)
+    folder.ledger(
+        "j",
+        [
+            {
+                "stage": "brief",
+                "attempt": 3,
+                "tier": "fast",
+                "escalated_from": "local",
+                "model": "claude-haiku-5-5",
+                "cost_usd": 0.01,
+                "latency_ms": 20_000,
+            },
+        ],
+    )
+
+    body = panel(client_for(folder).get("/jobs/j?tab=bill").text)
+
+    assert "本機→雲端（快）" in body
+
+
 def test_events_tab_lists_newest_first_and_names_the_status_move(
     folder: Folder,
 ) -> None:

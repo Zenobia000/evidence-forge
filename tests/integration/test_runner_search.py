@@ -238,9 +238,7 @@ def test_後面的段自己沒做完_原因也帶上補料段的搜尋額度用�
     world_for: Callable[..., World],
 ) -> None:
     # 補料在本機（不花錢）、二創在 strong：二創被美元預算擋下，單子本來就是未完成
-    compose = _stage("compose").model_copy(
-        update={"tier": "strong", "escalate_to": None}
-    )
+    compose = _stage("compose").model_copy(update={"tier": "strong", "escalate_to": ()})
     recipe = _recipe(_stage("research", credits=1), compose)
     world = world_for(SEARCHES_TWICE, recipes={"search": recipe})
     job_id = world.job(recipe="search", budget_usd=0.0001)

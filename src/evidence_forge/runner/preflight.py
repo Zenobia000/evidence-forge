@@ -10,7 +10,7 @@
 | 硬碟空間 | 一律 |
 | 閘道連不上 | 每張單開跑前（啟動時閘道才剛開） |
 | Ollama 沒回應 | 正式執行、而且這張單的配方用到本機等級；模型沒載入就先載，逾時算進冷啟動的 75 秒 |
-| Anthropic 金鑰 | 正式執行、而且配方的段或 `escalate_to` 用到雲端等級；金鑰只有閘道讀，所以問閘道 |
+| Anthropic 金鑰 | 正式執行、而且配方的段或升級鏈 `escalate_to` 用到雲端等級；金鑰只有閘道讀，所以問閘道 |
 
 重播模式不會轉送任何請求，所以不查後端（CI 與 UAT 的重播也就不需要 Ollama）。
 探測都可以換掉：測試給假的，不連真的服務。
@@ -180,11 +180,11 @@ class Preflight:
         return problems
 
     def _backends(self, recipe: Recipe) -> dict[str, list[str]]:
-        """配方用到的等級（含 `escalate_to`）各打哪個後端、哪個模型。"""
+        """配方用到的等級（含升級鏈 `escalate_to` 的每一級）各打哪個後端、哪個模型。"""
         tiers: list[str] = []
         for stage in recipe.stages:
-            for used in (stage.tier, stage.escalate_to):
-                if used is not None and used not in tiers:
+            for used in (stage.tier, *stage.escalate_to):
+                if used not in tiers:
                     tiers.append(used)
         backends: dict[str, list[str]] = {}
         for tier in tiers:

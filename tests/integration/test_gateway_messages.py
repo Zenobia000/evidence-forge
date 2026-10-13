@@ -435,3 +435,51 @@ def test_後端先回_503_同一把鑰匙之後成功_告示板的故障清掉(
             assert board.outage(KEY) is not None
             assert _post(url, str(KEY), PI_BODY).status_code == 200
     assert board.outage(KEY) is None
+
+
+# --- 本機模型的上下文放不下：擋下這一次，讓執行器升級，不讓 Ollama 默默截掉（ADR-0022） ------
+
+
+def _local_body(text: str) -> dict[str, Any]:
+    return {
+        **PI_BODY,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": text}]}],
+    }
+
+
+@pytest.mark.promise("FR-MD-01")
+def test_提示大到本機模型的上下文放不下_不轉送_回請求錯誤_不算後端故障(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    ollama: Stub,
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    # 本機的上下文 32,768 token、輸出留 16,384：提示估值（位元組 ÷ 3）超過 16,384 就放不下。
+    # 20,000 個中文字是 60,000 個位元組，估 20,000 token
+    config = GatewayConfig(data=data, mode="live", ollama_url=ollama.url)
+    board = JobBoard(config.clock)
+    with serve(create_app(config, stages, board)) as url:
+        response = _post(url, str(KEY), _local_body("長" * 20_000))
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert "上下文" in error["message"]
+    # Ollama 一個請求都沒收到；不是後端故障，執行器照「產出不合格」重試、升級
+    assert ollama.received == []
+    assert board.outage(KEY) is None
+    [entry] = _ledger(data)
+    assert (entry.tier, entry.status, entry.cost_usd) == ("local", "error", 0)
+
+
+def test_放得下的長提示照常轉送給本機模型(
+    serve: Callable[[Any], AbstractContextManager[str]],
+    ollama: Stub,
+    data: DataDir,
+    stages: ActiveStages,
+) -> None:
+    # 10,000 個中文字：30,000 個位元組，估 10,000 token，加上輸出 16,384 放得進 32,768
+    config = GatewayConfig(data=data, mode="live", ollama_url=ollama.url)
+    with _gateway(serve, config, stages) as url:
+        response = _post(url, str(KEY), _local_body("長" * 10_000))
+    assert response.status_code == 200
+    assert len(ollama.received) == 1

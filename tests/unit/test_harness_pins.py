@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.harness import default_harness
+from evidence_forge.models import TIER_ORDER
 
 RECORDINGS = Path(__file__).parents[1] / "fixtures" / "recordings"
 
@@ -23,6 +25,16 @@ def test_Pi_版本寫死成一個確切的版本_而且有_lock_檔() -> None:
     lock = json.loads((pi_dir / "package-lock.json").read_text(encoding="utf-8"))
     locked = lock["packages"]["node_modules/@earendil-works/pi-coding-agent"]["version"]
     assert locked == version
+
+
+def test_Pi_認得的等級_閘道對照表_等級清單三份一樣() -> None:
+    # 少一份：配方寫了那一級，Pi 不認得（開不了）或閘道沒得轉送（ADR-0022 加 fast 時三份一起改）
+    template = default_harness().pi.agent_template / "models.json"
+    models = json.loads(template.read_text(encoding="utf-8"))["providers"]["ef"][
+        "models"
+    ]
+    assert [model["id"] for model in models] == list(TIER_ORDER)
+    assert list(load_aliases()) == list(TIER_ORDER)
 
 
 @pytest.mark.parametrize(

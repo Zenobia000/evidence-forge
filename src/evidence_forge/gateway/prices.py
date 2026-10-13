@@ -2,6 +2,9 @@
 
 單位：價目是「每百萬 token 幾美元」，剛好等於「每個 token 幾微美元」，
 所以金額直接以整數微美元算，不經過浮點數。不足 1 微美元的零頭一律進位（寧可多算）。
+
+有的模型分兩段計價（Haiku 5.5）：一次請求的提示超過門檻，整個請求改用 `long_context` 的價。
+提示 = 輸入＋快取寫入＋快取讀取（ADR-0022）。
 """
 
 from collections.abc import Mapping
@@ -9,7 +12,7 @@ from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from evidence_forge.gateway.ledger import Usage
 
@@ -19,13 +22,33 @@ PRICES_YAML = Path(__file__).with_name("prices.yaml")
 PerMillion = Decimal
 
 
-class Price(BaseModel):
+class Rates(BaseModel):
+    """一組單價：輸入、輸出、快取寫入、快取讀取。"""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     input: PerMillion = Field(ge=0)
     output: PerMillion = Field(ge=0)
     cache_write: PerMillion = Field(ge=0)
     cache_read: PerMillion = Field(ge=0)
+
+
+class LongContextPrice(Rates):
+    """提示超過 `above_prompt_tokens` 時，整個請求用的單價。"""
+
+    above_prompt_tokens: PositiveInt
+
+
+class Price(Rates):
+    # 沒寫就不分段：多長的提示都是同一個價
+    long_context: LongContextPrice | None = None
+
+    def rates(self, prompt_tokens: int) -> Rates:
+        """這麼長的提示用哪一組單價。"""
+        long = self.long_context
+        if long is not None and prompt_tokens > long.above_prompt_tokens:
+            return long
+        return self
 
 
 def load_prices(path: Path = PRICES_YAML) -> Mapping[str, Price]:
@@ -41,11 +64,14 @@ def _ceil(value: Decimal) -> int:
 
 def cost_micros(price: Price, usage: Usage) -> int:
     """實際用量的金額（微美元）。"""
+    rates = price.rates(
+        usage.input_tokens + usage.cache_write_tokens + usage.cache_read_tokens
+    )
     return _ceil(
-        usage.input_tokens * price.input
-        + usage.output_tokens * price.output
-        + usage.cache_write_tokens * price.cache_write
-        + usage.cache_read_tokens * price.cache_read
+        usage.input_tokens * rates.input
+        + usage.output_tokens * rates.output
+        + usage.cache_write_tokens * rates.cache_write
+        + usage.cache_read_tokens * rates.cache_read
     )
 
 
@@ -69,9 +95,10 @@ def estimate_input_tokens(request: bytes) -> int:
 def reservation_micros(price: Price, request: bytes, max_tokens: int) -> int:
     """送出前要預留的金額：輸入用估的 token 數、輸出用 `max_tokens` 算最高可能的花費。
 
-    輸入可能被寫進快取（比一般輸入貴），所以用兩者較貴的那個價。
+    輸入可能被寫進快取（比一般輸入貴），所以用兩者較貴的那個價。分段計價的模型照估的輸入
+    決定用哪一段：估值偏高，所以實際提示可能超過門檻時一定用長提示價（寧可多留）。
     """
-    input_price = max(price.input, price.cache_write)
-    return _ceil(
-        estimate_input_tokens(request) * input_price + max_tokens * price.output
-    )
+    tokens = estimate_input_tokens(request)
+    rates = price.rates(tokens)
+    input_price = max(rates.input, rates.cache_write)
+    return _ceil(tokens * input_price + max_tokens * rates.output)
