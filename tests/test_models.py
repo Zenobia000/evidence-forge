@@ -300,9 +300,9 @@ def test_a_failed_job_with_no_draft_yet_can_be_retried() -> None:
 
 # --- jobs/<id>/ledger.jsonl 的一行 -------------------------------------------
 
-# NFR-OBS-01／v0.3 §4.4 列的欄位，照文件抄。
+# NFR-OBS-01／v0.3 §4.4 列的欄位，照文件抄；`conversation_id` 是 ADR-0021 加的（對話本身的呼叫）。
 LEDGER_FIELDS = {
-    "ts", "job_id", "stage", "attempt",
+    "ts", "job_id", "conversation_id", "stage", "attempt",
     "kind",
     "tier", "model", "escalated_from",
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
