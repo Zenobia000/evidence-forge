@@ -7,6 +7,8 @@
 - skill 的腳本不准寫檔，結果只印到 stdout（PR #55 審查）。
 - 預設配方 `restructure`：整理用本機（NFR-COST-07）。補料與二創用 `strong`（#70、#63），只有補料段有搜尋額度；
   補料段用 `strong` 是 MVP 暫時偏離 NFR-COST-07（創作者 2026-10-12 決定），所以那條斷言不標它。
+- 分析配方 `analyze`（#78）：brief 在本機、失敗升級 `strong`；查證與找題材用 `strong`、有搜尋額度。
+  `brief.json` 不收逐字引句；`sources.json` 的來源一筆沿用 research 的格式，另外有查證結果與研究題材。
 """
 
 import json
@@ -19,6 +21,7 @@ import pytest
 from evidence_forge.checks.format import check_schema
 from evidence_forge.checks.stages import FACT_FIELD, QUOTE_FIELD
 from evidence_forge.harness import default_harness
+from evidence_forge.runner import hard_checks, sources
 from evidence_forge.runner.recipes import load_recipes
 from evidence_forge.runner.stage_inputs import PROVIDED
 
@@ -242,3 +245,164 @@ def test_預設配方_restructure_三段_補料與二創暫用_strong_只有補�
     assert recipe.on_feedback == "compose"
     assert (recipe.max_attempts, recipe.auto_fix) == (2, 1)
     assert recipe.default_goal
+
+
+# --- 分析配方（#78）-----------------------------------------------------------
+
+_BRIEF: dict[str, Any] = {
+    "genre": {"primary": "explainer", "confidence": 0.7},
+    "topics": ["agent", "harness"],
+    "key_claims": [{"id": "K1", "claim": "一條可以查證的事實"}],
+}
+
+
+def _failures(skill: str, payload: object, file: str) -> set[str | None]:
+    """不符合那個 skill 的 schema 的位置（JSON pointer）；合格是空的。"""
+    return {
+        entry.location.pointer if entry.location is not None else None
+        for entry in check_schema(payload, _schema(skill), file=file)
+        if entry.status == "fail"
+    }
+
+
+@pytest.mark.promise("FR-AN-01")
+def test_brief_的_schema_收文類_主題標籤_關鍵主張_不要逐字引句() -> None:
+    assert _failures("brief", _BRIEF, "brief.json") == set()
+    with_quote = {
+        **_BRIEF,
+        "key_claims": [{"id": "K1", "claim": "x", "quote": "原文的一句"}],
+    }
+    # 不附逐字引句（ADR-0020）：多寫 quote 欄位就不合格，免得模型又回去逐句抄
+    assert _failures("brief", with_quote, "brief.json") == {"/key_claims/0"}
+
+
+@pytest.mark.promise("FR-AN-01")
+@pytest.mark.parametrize(
+    ("change", "pointer"),
+    [
+        ({"key_claims": []}, "/key_claims"),
+        (
+            {"key_claims": [{"id": f"K{i}", "claim": "x"} for i in range(1, 8)]},
+            "/key_claims",
+        ),
+        ({"genre": {"primary": "essay", "confidence": 0.5}}, "/genre/primary"),
+        ({"genre": {"primary": "news", "confidence": 1.5}}, "/genre/confidence"),
+        ({"topics": []}, "/topics"),
+    ],
+    ids=["零條關鍵主張", "超過六條", "文類不在清單", "信心超過1", "沒有主題標籤"],
+)
+def test_brief_的_schema_擋下不合格的產出(change: dict[str, Any], pointer: str) -> None:
+    assert pointer in _failures("brief", {**_BRIEF, **change}, "brief.json")
+
+
+def test_brief_的_schema_文類跟_harness_genres_一致() -> None:
+    allowed = set(_schema("brief")["$defs"]["genre_id"]["enum"])
+    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
+
+
+_INVESTIGATE: dict[str, Any] = {
+    "queries": ["specific query"],
+    "sources": [dict(_RESEARCH_SOURCE)],
+    "fact_checks": [
+        {"claim": "K1", "verdict": "supported", "sources": ["S2"]},
+        {"claim": "K2", "verdict": "not_found", "sources": []},
+    ],
+    "topics": [{"title": "一個題材", "sources": ["S2"]}],
+}
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_investigate_的_schema_查不到可以沒有來源() -> None:
+    assert _failures("investigate", _INVESTIGATE, "sources.json") == set()
+
+
+@pytest.mark.promise("FR-IV-01")
+@pytest.mark.parametrize(
+    ("change", "pointer"),
+    [
+        (
+            {"fact_checks": [{"claim": "K1", "verdict": "supported", "sources": []}]},
+            "/fact_checks/0/sources",
+        ),
+        (
+            {"fact_checks": [{"claim": "K1", "verdict": "wrong", "sources": ["S2"]}]},
+            "/fact_checks/0/verdict",
+        ),
+        (
+            {
+                "fact_checks": [
+                    {"claim": "K1", "verdict": "supported", "sources": ["S1"]}
+                ]
+            },
+            "/fact_checks/0/sources/0",
+        ),
+        (
+            {"fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2"]}]},
+            "/fact_checks/0/sources",
+        ),
+        (
+            {
+                "fact_checks": [
+                    {"claim": "K1", "verdict": "disputed", "sources": ["S2", "S2"]}
+                ]
+            },
+            "/fact_checks/0/sources",
+        ),
+        ({"topics": [{"title": "沒有相關文章", "sources": []}]}, "/topics/0/sources"),
+        ({"topics": []}, "/topics"),
+    ],
+    ids=[
+        "有佐證卻沒來源",
+        "判定不在四種裡",
+        "拿原文佐證原文",
+        "有爭議只附一邊",
+        "有爭議的兩邊是同一個來源",
+        "題材沒附文章",
+        "沒有題材",
+    ],
+)
+def test_investigate_的_schema_擋下不合格的查證與題材(
+    change: dict[str, Any], pointer: str
+) -> None:
+    payload = {**_INVESTIGATE, **change}
+    assert pointer in _failures("investigate", payload, "sources.json")
+
+
+def test_investigate_的來源清單格式沿用_research() -> None:
+    # 來源一筆的欄位跟 research 一樣：執行器用同一套規則放正文（runner/sources.py）
+    research = _schema("research")["properties"]["sources"]["items"]
+    investigate = _schema("investigate")["properties"]["sources"]["items"]
+    assert investigate["required"] == research["required"]
+    assert set(investigate["properties"]) == set(research["properties"])
+
+
+@pytest.mark.promise("FR-RC-01", "FR-AN-01", "FR-IV-01", "NFR-COST-07")
+def test_分析配方_brief_在本機失敗升級_查證用_strong_有搜尋額度() -> None:
+    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+    stages = {
+        s.id: (s.skill, s.tier, s.escalate_to, s.tavily_credits, s.output)
+        for s in recipe.stages
+    }
+    assert stages == {
+        "brief": ("brief", "local", "strong", 0, ("brief.md", "brief.json")),
+        "investigate": (
+            "investigate",
+            "strong",
+            None,
+            12,
+            ("report.md", "sources.json"),
+        ),
+    }
+    assert [s.id for s in recipe.stages] == ["brief", "investigate"]
+    assert recipe.default_goal
+
+
+@pytest.mark.promise("FR-AN-01", "FR-IV-01")
+def test_分析配方兩段都有程式檢查_查證段交來源清單() -> None:
+    # 執行器看產出檔名決定跑哪些檢查：配方改了產出名，這裡先壞，不會默默不檢查
+    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+    brief, investigate = recipe.stages
+    assert hard_checks.checked_output(brief) == hard_checks.BRIEF_OUTPUT
+    assert hard_checks.checked_output(investigate) == hard_checks.REPORT_OUTPUT
+    assert sources.collects_sources(investigate)
+    assert not sources.collects_sources(brief)

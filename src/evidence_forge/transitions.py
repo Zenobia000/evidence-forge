@@ -12,6 +12,7 @@ ALLOWED_TRANSITIONS: frozenset[tuple[JobStatus, JobStatus]] = frozenset(
         ("queued", "running"),  # 執行器有空位
         ("running", "running"),  # 進到下一段
         ("running", "done"),  # 做完、預算用完、出錯，都結束，用 result 區分
+        ("running", "queued"),  # 當機後放回排隊（ADR-0019 §3.4 保留的那一條）
     }
 )
 

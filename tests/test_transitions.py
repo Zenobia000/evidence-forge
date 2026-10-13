@@ -13,6 +13,7 @@ ALLOWED = {
     ("queued", "running"),  # 執行器有空位
     ("running", "running"),  # 下一段
     ("running", "done"),  # 做完、預算用完、出錯
+    ("running", "queued"),  # 當機後放回排隊（ADR-0019 §3.4）
 }
 FORBIDDEN = [
     pair for pair in itertools.product(STATUSES, STATUSES) if pair not in ALLOWED

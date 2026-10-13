@@ -58,7 +58,7 @@ def _run_tracer(ef_data: Path, capsys: pytest.CaptureFixture[str], port: int) ->
     # 錄音時是用 shell 的 `ef new --text "$(cat tracer.md)"` 開單，`$(...)` 會吃掉結尾換行；
     # 多一個換行，agent 讀到的素材就不同，第二個請求就對不上錄音
     text = ARTICLE.read_text(encoding="utf-8").rstrip("\n")
-    assert main(["new", "--text", text, "--goal", GOAL]) == 0
+    assert main(["new", "--recipe", "echo", "--text", text, "--goal", GOAL]) == 0
     job_id = capsys.readouterr().out.strip().splitlines()[-1]
     assert main(["serve", "--once", "--port", str(port)]) == 0
     return ef_data / "jobs" / job_id
