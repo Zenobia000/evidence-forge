@@ -312,7 +312,23 @@ class ConversationHost:
             "latest_job": jobs[-1] if jobs else None,
             "spent_usd": micros_to_usd(spent),
             "budget_usd": conversation.budget_usd,
+            "seen_job": conversation.seen_job,
         }
+
+    def mark_seen(self, conversation_id: str, job_id: str) -> None:
+        """創作者看過這張工單的結果了（畫面打開對話時回報）；清單據此不再標「有新結果」。
+
+        工單不是這個對話開的丟 `ValueError`（不讓畫面把別的對話的單記進來）。
+        """
+        self._read(conversation_id)
+        if not conversations.owns_job(self._data, conversation_id, job_id):
+            raise ValueError("這張工單不是這個對話開的")
+        with self._json_lock:
+            conversation = conversations.read(self._data, conversation_id)
+            if conversation.seen_job == job_id:
+                return
+            conversation.seen_job = job_id
+            conversations.save(self._data, conversation)
 
     def jobs(self, conversation_id: str) -> list[Event]:
         """這個對話開過的工單的進度，照開的順序。"""

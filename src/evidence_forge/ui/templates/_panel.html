@@ -1,0 +1,138 @@
+{% from "_icons.html" import icon %}
+{%- macro rate(value) -%}{{ ("%.1f" % value).rstrip("0").rstrip(".") }}{%- endmacro -%}
+{%- macro mark(verdict, label) -%}
+<span class="ch-vmark" data-verdict="{{ verdict }}">{{ icon(verdict) }}{{ label }}</span>
+{%- endmacro -%}
+{%- macro sources(refs) -%}
+{% if refs %}<div class="ch-vitem__src">{% for s in refs %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer"><span>{{ s.id }} {{ s.title }}</span>{% if s.fetched_at %}<span class="s0-mono s0-muted">{{ s.fetched_at }} 抓取</span>{% endif %}</a>{% endfor %}</div>{% endif %}
+{%- endmacro -%}
+{# 右側面板（IA §5）：報告、文章、花費三個分頁。整塊由 app.js 換進 #ch-panel。 #}
+{% if missing %}
+<div class="ch-panel__body"><div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">找不到這個對話</p></div></div></div>
+{% else %}
+<div class="ch-panel__head">
+<div class="s0-tabs" role="tablist" aria-label="面板內容">
+<button class="s0-tab" role="tab" type="button" data-tab="report" aria-selected="{{ 'true' if tab == 'report' else 'false' }}">報告</button>
+<button class="s0-tab" role="tab" type="button" data-tab="article" aria-selected="{{ 'true' if tab == 'article' else 'false' }}">文章</button>
+<button class="s0-tab" role="tab" type="button" data-tab="cost" aria-selected="{{ 'true' if tab == 'cost' else 'false' }}">花費</button>
+</div>
+<button class="ch-iconbtn" type="button" data-action="close-panel" aria-label="收起右側面板" aria-expanded="true">{{ icon("x") }}</button>
+</div>
+
+{% if tab == "report" %}
+{% if not versions %}
+<div class="ch-panel__body"><div class="s0-state" style="border: 0; padding: 0"><p style="margin: 0; font-weight: 600">這個對話還沒有報告</p><p class="s0-small" style="margin: 0">丟一篇文章進對話，分析跑完，報告會出現在這裡。</p></div></div>
+{% else %}
+<div class="ch-panel__bar">
+<label class="s0-small ch-verlabel" for="ch-version">版本
+<select id="ch-version" data-version>{% for j in versions|reverse %}<option value="{{ j.job_id }}"{% if j.job_id == chosen.job_id %} selected{% endif %}>{{ j.label }}{% if loop.first %}（最新）{% endif %}</option>{% endfor %}</select></label>
+<span class="s0-small">{% if report.finished %}<span class="s0-mono">{{ report.finished|hm }}</span> {% endif %}{{ "完成" if report.outcome == "complete" else ("未完成" if report.outcome == "incomplete" else ("失敗" if report.outcome == "failed" else "")) }}・<span class="s0-mono">{{ usd(report.spent_usd) }}</span></span>
+</div>
+<div class="ch-panel__body">
+{% if report.error %}
+<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到報告 {{ chosen.label }} 的檔案</p><p class="s0-small" style="margin: 0">{{ report.error }}</p></div></div>
+{% else %}
+<article class="ch-report">
+<section class="ch-sec" aria-labelledby="sec1">
+<h2 class="ch-sec__h" id="sec1"><span class="ch-sec__n">1</span>作者在說什麼</h2>
+<div class="ch-md">{{ report.intro_html }}</div>
+{% if report.tags %}<div class="ch-tags">{% for t in report.tags %}<span class="s0-badge">{{ t }}</span>{% endfor %}</div>{% endif %}
+</section>
+<section class="ch-sec" aria-labelledby="sec2">
+<h2 class="ch-sec__h" id="sec2"><span class="ch-sec__n">2</span>事實與觀點</h2>
+<div class="ch-md">{{ report.facts_html }}</div>
+</section>
+<section class="ch-sec" aria-labelledby="sec3">
+<h2 class="ch-sec__h" id="sec3"><span class="ch-sec__n">3</span>查證 {% if report.checks %}<span class="s0-small" style="font-weight: 400">有疑慮的排最前面</span>{% endif %}</h2>
+{% if report.checks %}
+<ul class="ch-verify">
+{% for c in report.checks %}
+<li class="ch-vitem">
+{{ mark(c.verdict, c.label) }}
+<p class="ch-vitem__claim">{{ c.claim }}</p>
+{% if c.note_html %}<p class="ch-vitem__note">{{ c.note_html }}</p>{% endif %}
+{% if c.verdict == "unfound" and not c.note_html %}<p class="ch-vitem__note">查不到不代表錯，只是沒有東西可以佐證。</p>{% endif %}
+{{ sources(c.sources) }}
+</li>
+{% endfor %}
+</ul>
+{% else %}
+<div class="ch-md">{{ report.verify_html }}</div>
+{% endif %}
+</section>
+<section class="ch-sec" aria-labelledby="sec4">
+<h2 class="ch-sec__h" id="sec4"><span class="ch-sec__n">4</span>研究題材</h2>
+{% if report.topics %}
+<ul class="ch-topics">
+{% for t in report.topics %}<li class="ch-topic"><p class="ch-topic__h">{{ t.title }}</p>{% if t.note_html %}<p>{{ t.note_html }}</p>{% endif %}{{ sources(t.sources) }}</li>{% endfor %}
+</ul>
+{% else %}
+<div class="ch-md">{{ report.topics_html }}</div>
+{% endif %}
+</section>
+<section class="ch-sec" aria-labelledby="sec5">
+<h2 class="ch-sec__h" id="sec5"><span class="ch-sec__n">5</span>來源清單</h2>
+<ol class="ch-sources">
+{% for s in report.sources %}<li>{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}<br><span class="s0-mono">{{ "原文・" if s.id == "S1" else s.id ~ "・" }}{% if s.fetched_at %}{{ s.fetched_at }} 抓取{% else %}沒有抓取時間{% endif %}</span></li>{% endfor %}
+</ol>
+</section>
+</article>
+{% endif %}
+</div>
+{% endif %}
+
+{% elif tab == "article" %}
+{% if not versions %}
+<div class="ch-panel__body"><div class="s0-state" style="border: 0; padding: 0"><p style="margin: 0; font-weight: 600">這個對話還沒有文章</p><p class="s0-small" style="margin: 0">看完報告後，跟它說「用 me 寫一篇觀點文」這樣的一句話就會開始寫。</p></div></div>
+{% else %}
+<div class="ch-panel__bar">
+<div class="s0-row" style="gap: 16px">
+<label class="s0-small ch-verlabel" for="ch-version">版本
+<select id="ch-version" data-version>{% for j in versions|reverse %}<option value="{{ j.job_id }}"{% if j.job_id == chosen.job_id %} selected{% endif %}>{{ j.label }}{% if loop.first %}（最新）{% endif %}</option>{% endfor %}</select></label>
+{% if article.previous_label %}<label class="ch-toggle" for="ch-diff"><input id="ch-diff" type="checkbox" data-diff{% if diff %} checked{% endif %}>跟 {{ article.previous_label }} 對照</label>{% endif %}
+</div>
+{% if not article.error %}<button class="lm-btn" data-variant="primary" type="button" data-copy-article="{{ chosen.job_id }}">{{ icon("copy") }}<span data-copy-label>複製 Markdown</span></button>{% endif %}
+</div>
+<div class="ch-panel__body">
+{% if article.error %}
+<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到文章 {{ chosen.label }} 的檔案</p><p class="s0-small" style="margin: 0">{{ article.error }}</p></div></div>
+{% else %}
+{% if diff and article.diff_html %}<div class="ch-legend" style="margin-bottom: 16px"><span><ins class="ch-ins">新增的字</ins></span><span><del class="ch-del">刪掉的字</del></span></div>{% endif %}
+<div class="ch-article">
+<article class="s0-prose" data-zone="editorial">
+{% if diff and article.diff_html %}{{ article.diff_html }}{% else %}{{ article.html }}{% endif %}
+</article>
+<aside class="ch-aside" aria-label="文章資訊">
+<dl>
+<dt>角色</dt><dd>{{ article.persona }}</dd>
+<dt>文類</dt><dd>{{ article.genre or "沒指定" }}{% if article.uncalibrated %}<br><span class="s0-badge" data-tone="genre" style="margin-top: 4px">{{ icon("question") }}未校準</span><br><span class="s0-small">{{ article.uncalibrated_note }}</span>{% endif %}</dd>
+<dt>字數</dt><dd><span class="s0-mono">{{ "{:,}".format(article.words) }}</span>{% if article.previous_words is not none %}<span class="s0-small">（{{ article.previous_label }} <span class="s0-mono">{{ "{:,}".format(article.previous_words) }}</span>）</span>{% endif %}</dd>
+<dt>跟來源重疊</dt><dd>{% if article.overlap %}<span class="s0-mono">{{ rate(article.overlap.rate) }}%</span><br><span class="s0-small">最高的一份是{{ article.overlap.source }}。只顯示，不擋。</span>{% else %}<span class="s0-small">這一版沒有算重疊率。</span>{% endif %}</dd>
+<dt>版本</dt><dd>{{ chosen.label }}{% if article.finished %}・<span class="s0-mono">{{ article.finished|hm }}</span>{% endif %}</dd>
+<dt>花費</dt><dd><span class="s0-mono">{{ usd(article.spent_usd) }}</span></dd>
+</dl>
+</aside>
+</div>
+<div class="s0-field ch-fallback" hidden><label for="ch-md-fallback">瀏覽器不讓複製，請手動選取下面的文字</label><textarea id="ch-md-fallback" readonly></textarea></div>
+{% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="ch-panel__body">
+<div class="ch-cost">
+{% if cost.bad_lines %}<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有讀不懂的行，已略過</p><p class="s0-small" style="margin: 0">{% for b in cost.bad_lines %}<span class="s0-mono">{{ b.where }}:{{ b.line }}</span>{% if not loop.last %}、{% endif %}{% endfor %}。其餘照算，總數可能偏低。</p></div></div>{% endif %}
+<div class="s0-tablewrap">
+<table class="s0-table">
+<thead><tr><th>工作</th><th>模型</th><th>升級</th><th>時間</th><th class="num">金額</th></tr></thead>
+<tbody>
+{% for r in cost.rows %}<tr><td>{{ r.label }}</td><td>{{ r.models }}</td><td>{{ r.escalation }}</td><td class="s0-mono">{{ r.when|mdhm if r.when else "—" }}</td><td class="num">{{ usd(r.usd) }}</td></tr>{% endfor %}
+</tbody>
+<tfoot><tr><td colspan="4">這個對話合計（對話本身的預算 {{ budget }}）</td><td class="num">{{ usd(cost.total_usd) }}</td></tr></tfoot>
+</table>
+</div>
+<p class="s0-small" style="margin: 0">補查與每一版文章的錢都算在同一個對話裡。「對話本身」是 agent 讀報告、回你話、聽懂你要什麼的花費，不屬於哪一次工作。</p>
+</div>
+</div>
+{% endif %}
+{% endif %}

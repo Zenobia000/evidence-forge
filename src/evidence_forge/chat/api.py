@@ -1,4 +1,7 @@
-"""給聊天室畫面（#86）用的 HTTP API（#85）。只綁 127.0.0.1，網頁本身不在這張票。
+"""給聊天室畫面（#86）用的 HTTP API（#85）。只綁 127.0.0.1。
+
+給 `data` 與 `recipes` 時，同一個程序也送出畫面本身（`ui/pages.py`：`/`、`/c/<id>`、`/bills`、`/static`、`/ui/…`）：
+網頁跟 API 同源，這裡擋跨站的規則才不會連自己的頁面一起擋掉（#94 審查）。
 
 | 方法與路徑 | 做什麼 |
 | :--- | :--- |
@@ -7,10 +10,12 @@
 | `GET /api/conversations/<id>` | 一個對話的摘要加每張工單的進度：`{…摘要, "jobs": [ef_job…]}`。不開 Pi |
 | `GET /api/conversations/<id>/messages` | 完整紀錄（Pi 的 `get_messages`）與工單進度：`{"messages", "jobs"}`。Pi 沒開就接回 |
 | `POST /api/conversations/<id>/messages` | 送一句話：`{"text": "…"}` → 202 `{"disposition": "started"｜"queued"}`。Pi 正在回答也可以送，排在後面 |
+| `POST /api/conversations/<id>/seen` | 回報創作者看過這張工單的結果：`{"job_id": "…"}` → 204；清單據此不再標「有新結果」 |
 | `GET /api/conversations/<id>/events` | SSE：先一則 `ef_pi` 與每張工單的 `ef_job`（現況），之後是變化。格式見 `chat/host.py` |
 
 摘要的欄位：`id`、`title`、`created_at`、`last_activity`、`pi_running`、`busy`、`job_count`（幾張）、
-`latest_job`（最後一張的 `ef_job`，畫面據此標「分析中／有新結果／失敗」）、`spent_usd`（對話本身加它開的工單）、`budget_usd`。
+`latest_job`（最後一張的 `ef_job`，畫面據此標「分析中／有新結果／失敗」）、`spent_usd`（對話本身加它開的工單）、`budget_usd`、
+`seen_job`（創作者看過結果的最後一張工單）。
 
 錯誤一律 `{"error": "…"}`：沒有這個對話 404；訊息是空的、以 `/` 開頭 400；Pi 拒絕 409；Pi 開不起來或沒回應 503。
 
@@ -22,7 +27,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -36,6 +41,9 @@ from evidence_forge.chat.host import (
 )
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.gateway.active import StaleKey
+from evidence_forge.models import Recipe
+from evidence_forge.paths import DataDir
+from evidence_forge.ui import pages
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # SSE 沒事件時多久送一行註解，讓瀏覽器與中間的代理知道連線還活著
@@ -65,7 +73,12 @@ async def _call(work: Callable[[], Any]) -> Any:
         return _error(400, str(exc))
 
 
-def create_app(host: ConversationHost) -> FastAPI:
+def create_app(
+    host: ConversationHost,
+    *,
+    data: DataDir | None = None,
+    recipes: Mapping[str, Recipe] | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="Evidence Forge chat", docs_url=None, redoc_url=None, openapi_url=None
     )
@@ -119,6 +132,18 @@ def create_app(host: ConversationHost) -> FastAPI:
             return _error(400, "要有字串欄位 text")
         return await _call(lambda: host.send(conversation_id, text))
 
+    @app.post("/api/conversations/{conversation_id}/seen", status_code=204, response_class=Response)
+    async def seen(conversation_id: str, request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error(400, "請求內容要是 JSON")
+        job_id = body.get("job_id") if isinstance(body, dict) else None
+        if not isinstance(job_id, str):
+            return _error(400, "要有字串欄位 job_id")
+        result = await _call(lambda: host.mark_seen(conversation_id, job_id))
+        return result if isinstance(result, Response) else Response(status_code=204)
+
     @app.get("/api/conversations/{conversation_id}/events")
     async def events(conversation_id: str) -> Any:
         try:
@@ -150,4 +175,6 @@ def create_app(host: ConversationHost) -> FastAPI:
             headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
         )
 
+    if data is not None:
+        pages.install(app, host, data, recipes or {})
     return app

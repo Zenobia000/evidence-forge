@@ -1,0 +1,27 @@
+{% from "_icons.html" import icon %}
+{# 對話清單（IA §3）。標題是第一份素材的標題；有新結果、還沒看過的排最前面（pages.list_rows）。 #}
+<div data-new-count="{{ new_count }}" data-list-root>
+{% if list_error %}
+<div class="s0-alert" style="margin: 8px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到資料目錄</p><p class="s0-small" style="margin: 0">路徑：<span class="s0-mono">{{ data_root }}</span><br>原因：{{ list_error }}</p></div></div>
+{% elif not rows %}
+<div class="s0-state" style="margin: 8px; border: 0">
+<p style="margin: 0; font-weight: 600">還沒有對話</p>
+<p class="s0-small" style="margin: 0">丟一篇文章進來試試：貼網址、貼一段文字，或拖一個 PDF。它會先交一份分析報告給你。</p>
+</div>
+{% else %}
+<ul class="ch-list__items">
+{% for r in rows %}
+<li><a class="ch-row" href="/c/{{ r.conversation_id }}" data-conversation="{{ r.conversation_id }}" data-title="{{ r.title }}"{% if r.current %} aria-current="page"{% endif %}{% if r.state == "new" %} data-new=""{% endif %}>
+<p class="ch-row__title">{{ r.title }}</p>
+<div class="ch-row__meta">
+{%- if r.state == "analyzing" %}<span class="s0-badge">{{ icon("clock") }}分析中</span>
+{%- elif r.state == "writing" %}<span class="s0-badge">{{ icon("pencil") }}寫作中</span>
+{%- elif r.state == "new" %}<span class="s0-badge" data-tone="new">{{ icon("new") }}有新結果</span>
+{%- elif r.state == "failed" %}<span class="s0-badge" data-tone="failed">{{ icon("x") }}失敗</span>{% endif %}
+<span class="s0-mono">{{ r.stamp }}</span><span class="s0-mono">{{ r.spent }}</span>
+</div>
+</a></li>
+{% endfor %}
+</ul>
+{% endif %}
+</div>

@@ -53,6 +53,9 @@ class Conversation(BaseModel):
     # 結束通知已經確定進了 Pi 紀錄的工單（主機看到 `ef-job` 訊息的 `message_end` 才記，#85）。
     # 主機重開時只補送不在這裡的；ef-tools 自己也照紀錄去重，這裡漏記頂多多送一次、不會多一則通知
     notified_jobs: list[str] = Field(default_factory=list)
+    # 創作者看過結果的最後一張工單（#86）：對話最新的一張結束的單不是它，清單就標「有新結果」。
+    # 畫面打開對話時回報，主機寫；舊的 conversation.json 沒有這欄，讀進來是 None
+    seen_job: str | None = None
 
 
 class ConversationJob(BaseModel):

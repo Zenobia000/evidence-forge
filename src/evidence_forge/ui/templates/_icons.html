@@ -1,0 +1,32 @@
+{# 16px 線條圖示；路徑照聊天室設計稿。圖示只當裝飾（aria-hidden），意思一律由旁邊的文字講。 #}
+{% macro icon(name) -%}
+<svg viewBox="0 0 24 24" aria-hidden="true">
+{%- if name == "plus" %}<path d="M12 5v14M5 12h14"/>
+{%- elif name == "new" %}<path d="M12 3v5M12 16v5M3 12h5M16 12h5"/>
+{%- elif name == "clock" %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+{%- elif name == "pencil" %}<path d="M4 20h4L19 9l-4-4L4 16z"/>
+{%- elif name == "x" %}<path d="M6 6l12 12M18 6L6 18"/>
+{%- elif name == "warn" %}<path d="M12 3l9 16H3z"/><path d="M12 10v4"/><path d="M12 17h.01"/>
+{%- elif name == "check" %}<path d="M5 12l5 5L20 7"/>
+{%- elif name == "unfound" %}<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4"/><path d="M12 17h.01"/>
+{%- elif name == "question" %}<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4"/><path d="M12 17h.01"/>
+{%- elif name == "disputed" %}<path d="M4 8h14l-4-4M20 16H6l4 4"/>
+{%- elif name == "outdated" %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5H8"/>
+{%- elif name == "doc" %}<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7M9 8h3"/>
+{%- elif name == "link" %}<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>
+{%- elif name == "clip" %}<path d="M21 12l-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 8"/>
+{%- elif name == "send" %}<path d="M5 12h14M13 6l6 6-6 6"/>
+{%- elif name == "panel" %}<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
+{%- elif name == "copy" %}<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>
+{%- elif name == "chevron" %}<path d="M9 6l6 6-6 6"/>
+{%- elif name == "left" %}<path d="M15 6l-6 6 6 6"/>
+{%- elif name == "right" %}<path d="M9 6l6 6-6 6"/>
+{%- elif name == "gpu" %}<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>
+{%- elif name == "rate" %}<path d="M12 3v6M8 7l4-4 4 4"/><path d="M4 21h16"/><path d="M6 17h12"/>
+{%- elif name == "search" %}<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+{%- elif name == "globe" %}<path d="M4 12h16M12 4a12 12 0 0 1 0 16M12 4a12 12 0 0 0 0 16"/><circle cx="12" cy="12" r="8"/>
+{%- elif name == "script" %}<path d="M8 9l-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/>
+{%- elif name == "resume" %}<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>
+{%- elif name == "menu" %}<path d="M4 7h16M4 12h16M4 17h16"/>
+{%- endif %}</svg>
+{%- endmacro %}
