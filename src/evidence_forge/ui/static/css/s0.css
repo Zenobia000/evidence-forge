@@ -14,14 +14,11 @@
 
 /* ── 狀態別名（ADR-0017） ── */
 :root {
-  --job-review: var(--color-bg-selection);
   --job-incomplete: var(--color-accent-action);
   --job-failed: var(--color-danger);
   --job-complete: var(--color-text-primary);
   --job-queued: var(--color-text-secondary);
   --job-running: var(--color-text-secondary);
-  --job-approved: var(--color-text-secondary);
-  --job-discarded: var(--color-text-secondary);
   --job-waiting: var(--color-text-secondary);
   --job-pending: var(--color-text-tertiary);
   --job-superseded: var(--color-text-tertiary);
@@ -34,6 +31,20 @@
   --claim-opinion: var(--color-text-secondary);
   --genre-uncertain: var(--color-accent-mark);
   --genre-uncalibrated: var(--color-accent-mark);
+}
+
+/* ── 聊天室的別名（ADR-0022） ── */
+:root {
+  /* 對話清單與頂列的「有新結果」：跟 Loomy 的選取底色同一個黃，意思是「這裡有東西要你看」 */
+  --chat-new: var(--color-bg-selection);
+  /* 查證：有爭議、過時要你判斷，用實黃當底（字用 --color-on-action）；查不到不是錯，淡灰虛線；有佐證是次要字色 */
+  --verify-disputed: var(--color-accent-action);
+  --verify-outdated: var(--color-accent-action);
+  --verify-unfound: var(--color-text-tertiary);
+  --verify-supported: var(--color-text-secondary);
+  /* 文章跟上一版對照：新增＝靛藍淡底（AI 動過，ADR-0007 §3.2），刪掉＝淡灰刪除線 */
+  --diff-insert: color-mix(in srgb, var(--color-accent-mark) var(--provenance-fill), transparent);
+  --diff-delete: var(--color-text-tertiary);
 }
 
 /* ── 外框 ── */
@@ -58,7 +69,7 @@
 }
 .s0-nav a:hover { background: var(--color-bg-surface); color: var(--color-text-primary); }
 .s0-nav a[aria-current="page"] { color: var(--color-text-primary); box-shadow: inset 0 -2px 0 var(--color-text-primary); border-radius: 0; }
-.s0-nav__count { padding: 1px 8px; border-radius: 999px; background: var(--job-review); color: var(--color-on-action); font-size: 13px; font-weight: 600; }
+.s0-nav__count { padding: 1px 8px; border-radius: 999px; background: var(--chat-new); color: var(--color-on-action); font-size: 13px; font-weight: 600; }
 
 .s0-main { padding: 32px; }
 .s0-main--narrow { max-width: 1120px; margin: 0 auto; padding: 40px 32px 56px; }
@@ -77,16 +88,6 @@
 
 /* ── 面板與卡片 ── */
 .s0-panel { background: var(--color-bg-page); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); padding: 24px; }
-.s0-card {
-  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px;
-  background: var(--color-bg-page); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md);
-  color: inherit; text-decoration: none; box-shadow: var(--shadow-paper);
-}
-.s0-card:hover { border-color: var(--color-border-strong); }
-.s0-card__title { margin: 0; font-size: var(--text-card-title-size); font-weight: 600; line-height: 1.45; }
-.s0-card__meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--color-text-secondary); }
-.s0-card--pending { background: transparent; box-shadow: none; border: 1.5px dashed var(--job-pending); color: var(--job-pending); }
-.s0-card--pending .s0-card__title { color: var(--color-text-secondary); }
 
 /* ── 標籤：文字＋圖示＋顏色三者一起 ── */
 .s0-badge {
@@ -100,14 +101,7 @@
 .s0-badge[data-tone="complete"] { color: var(--job-complete); border-color: var(--color-border-strong); font-weight: 600; }
 .s0-badge[data-tone="pending"] { color: var(--job-pending); border: 1.5px dashed var(--job-pending); background: transparent; }
 .s0-badge[data-tone="genre"] { color: var(--color-accent-mark-text); border-color: var(--genre-uncalibrated); }
-.s0-kind { display: inline-block; padding: 0 6px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
-.s0-kind[data-kind="fact"] { color: var(--claim-fact); }
-.s0-kind[data-kind="data"] { color: var(--claim-data); }
-.s0-kind[data-kind="opinion"] { color: var(--claim-opinion); }
 
-/* 花費條：中性色，不佔狀態顏色 */
-.s0-meter { display: block; height: 4px; border-radius: 2px; background: var(--color-border-subtle); overflow: hidden; }
-.s0-meter > span { display: block; height: 100%; background: var(--color-text-secondary); }
 
 /* ── Loomy 的按鈕與連結（從 Loomy components/bundle.css 原樣搬來） ──
    只搬設計稿用到的這幾條。bundle.css 整份不搬：它會去 Google Fonts 載 Noto 中文字型，
@@ -148,20 +142,7 @@
 .s0-btn-lg { height: 44px !important; font-size: 15px; }
 .s0-textbtn { appearance: none; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 14px; color: var(--color-text-secondary); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
-/* ── 看板 ── */
-.s0-board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; align-items: start; }
-.s0-col { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-lg); border: 1px solid var(--color-border-subtle); }
-.s0-col[data-col="review"] { background: var(--job-review); border-color: var(--color-accent-action-line); }
-.s0-col__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 6px; }
-.s0-col__title { margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
-.s0-col__count { font-family: var(--font-mono); font-size: 13px; color: var(--color-text-secondary); }
-.s0-col[data-col="review"] .s0-col__count { color: var(--color-on-action); font-weight: 600; }
-.s0-col__foot { font-size: 13px; color: var(--color-text-secondary); padding: 4px 2px 0; }
-
-/* ── 詳情：左內容、右資訊欄 ── */
-.s0-detail { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-.s0-detail__main { flex: 999 1 640px; min-width: 0; }
-.s0-detail__side { flex: 1 1 320px; max-width: 380px; display: flex; flex-direction: column; gap: 16px; }
+/* ── 分頁（右側面板用） ── */
 .s0-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--color-border-subtle); margin-bottom: 24px; }
 .s0-tab {
   appearance: none; background: none; border: 0; cursor: pointer; min-height: 44px; padding: 0 14px;
@@ -173,21 +154,7 @@
 .s0-tab__n { font-family: var(--font-mono); font-size: 12px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--color-border-strong); }
 .s0-tab:focus-visible, .s0-nav a:focus-visible, .s0-field input:focus-visible, .s0-field select:focus-visible, .s0-field textarea:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; }
 
-.s0-dl { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 14px; }
-.s0-dl dt { color: var(--color-text-secondary); }
-.s0-dl dd { margin: 0; min-width: 0; }
-
-/* 段落進度：整理 → 補料 → 二創 → 檢查 */
-.s0-stages { list-style: none; margin: 0 0 24px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.s0-stage { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); background: var(--color-bg-page); font-size: 13px; color: var(--color-text-secondary); }
-.s0-stage__name { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--color-text-primary); }
-.s0-stage[data-state="running"] { border-color: var(--color-text-primary); box-shadow: inset 0 0 0 1px var(--color-text-primary); }
-.s0-stage[data-state="todo"] { background: transparent; border-style: dashed; }
-.s0-stage[data-state="todo"] .s0-stage__name { color: var(--color-text-secondary); font-weight: 500; }
-
-/* ── 審稿區 ── */
-.s0-review { border: 1.5px solid var(--color-text-primary); }
-.s0-review__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* ── 表單欄位 ── */
 .s0-field { display: flex; flex-direction: column; gap: 6px; }
 .s0-field > label, .s0-field > .s0-field__label { font-size: 14px; font-weight: 600; }
 .s0-field__hint { font-size: 13px; color: var(--color-text-secondary); }
@@ -205,31 +172,8 @@
 .s0-prose h1 { font-family: var(--font-reading-serif); font-size: 30px; line-height: 1.35; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.005em; }
 .s0-prose h2 { font-family: var(--font-reading-serif); font-size: 21px; line-height: 1.45; font-weight: 600; margin: 32px 0 8px; }
 .s0-prose p { margin: 0 0 16px; }
-.s0-cite { font-family: var(--font-mono); font-size: 12px; vertical-align: super; line-height: 0; margin-left: 2px; color: var(--color-text-secondary); }
 .s0-refs { margin: 32px 0 0; padding: 16px 0 0; border-top: 1px solid var(--color-border-subtle); font-size: 14px; line-height: 1.7; color: var(--color-text-secondary); }
 .s0-refs ol { margin: 8px 0 0; padding-left: 24px; }
-
-/* ── Evidence：主張與原文引句並排 ── */
-.s0-claims { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.s0-claim { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 0; border-top: 1px solid var(--color-border-subtle); }
-.s0-claim__id { font-family: var(--font-mono); font-size: 13px; color: var(--color-text-secondary); padding-top: 2px; }
-.s0-claim__text { font-size: 15px; }
-.s0-quote { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--color-bg-surface); font-size: 14px; line-height: 1.7; color: var(--color-text-secondary); }
-.s0-quote cite { display: block; margin-top: 4px; font-style: normal; font-family: var(--font-mono); font-size: 12px; }
-
-/* ── 檢查結果：沒過排最前、✕ 與 ✓ 形狀不同 ── */
-.s0-checks { list-style: none; margin: 0; padding: 0; }
-.s0-check { display: grid; grid-template-columns: 28px 132px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 14px 0; border-top: 1px solid var(--color-border-subtle); font-size: 14px; }
-.s0-check__icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; }
-.s0-check__icon svg { width: 14px; height: 14px; stroke-width: 2.5; }
-.s0-check[data-result="fail"] .s0-check__icon { background: var(--check-fail); color: var(--color-bg-page); }
-.s0-check[data-result="warn"] .s0-check__icon { border: 1.5px solid var(--check-warn); color: var(--check-warn); border-radius: var(--radius-sm); }
-.s0-check[data-result="pass"] .s0-check__icon { color: var(--check-pass); }
-.s0-check[data-result="pass"] { color: var(--color-text-secondary); }
-.s0-check__name { font-weight: 600; }
-.s0-check[data-result="pass"] .s0-check__name { font-weight: 500; }
-.s0-check__status { font-size: 13px; font-weight: 600; white-space: nowrap; }
-.s0-groupnote { margin: 16px 0 4px; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); }
 
 /* ── 表格（Console 與 Evidence 共用） ── */
 .s0-tablewrap { overflow-x: auto; }
@@ -254,13 +198,6 @@
 .s0-bars .track { fill: var(--color-border-subtle); stroke: none; }
 .s0-bars .fill { fill: var(--color-text-secondary); stroke: none; }
 
-/* ── 新增工單 ── */
-.s0-form { display: flex; flex-direction: column; gap: 24px; }
-.s0-seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: var(--radius-md); background: var(--color-bg-surface); border: 1px solid var(--color-border-subtle); }
-.s0-seg button { appearance: none; border: 0; background: none; min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm); font: 500 14px/1 var(--font-ui); color: var(--color-text-secondary); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.s0-seg button[aria-pressed="true"] { background: var(--color-bg-page); color: var(--color-text-primary); font-weight: 600; box-shadow: var(--shadow-paper); }
-.s0-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 160px; padding: 24px; border: 1.5px dashed var(--color-border-strong); border-radius: var(--radius-lg); color: var(--color-text-secondary); font-size: 14px; text-align: center; }
-
 /* ── 其他狀態 ── */
 .s0-states { margin-top: 48px; padding-top: 24px; border-top: 1px dashed var(--color-border-strong); }
 .s0-states__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
@@ -270,8 +207,3 @@
 .s0-note { padding: 12px 14px; border-radius: var(--radius-md); background: var(--color-bg-surface); font-size: 14px; color: var(--color-text-secondary); }
 .s0-alert { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--color-danger); font-size: 14px; }
 .s0-alert svg { color: var(--color-danger); margin-top: 3px; }
-
-/* ── 稿子裡被檢查點名的段落 ── */
-.s0-flagged { outline: 2px dashed var(--color-text-primary); outline-offset: 8px; border-radius: 2px; }
-.s0-flagnote { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-family: var(--font-ui); font-size: 13px; font-weight: 600; letter-spacing: 0; }
-.s0-linkbtn { appearance: none; background: none; border: 0; padding: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--color-accent-author); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }

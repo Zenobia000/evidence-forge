@@ -12,6 +12,8 @@ S0_CSS = CSS_DIR / "s0.css"
 ADR_0017 = (
     REPO_ROOT / "docs" / "10-truth" / "adr" / "0017-status-tokens-for-new-design.md"
 )
+ADR_0022 = REPO_ROOT / "docs" / "10-truth" / "adr" / "0022-chat-room-tokens.md"
+CHAT_CSS = CSS_DIR / "chat.css"
 
 # S0 要用的四組前綴；--source-*、--license-*、--asset-* 是 S3 才加的，不在這裡檢查。
 S0_PREFIXES = ("job", "check", "claim", "genre")
@@ -30,12 +32,40 @@ def _used(css: str) -> set[str]:
 
 
 def _adr_names() -> set[str]:
+    """ADR-0017 的名單，扣掉 ADR-0022 §3.2 退役的。"""
     prefixes = "|".join(S0_PREFIXES)
-    return set(
+    names = set(
         re.findall(
             rf"`(--(?:{prefixes})-[a-z-]+)`", ADR_0017.read_text(encoding="utf-8")
         )
     )
+    return names - _retired_names()
+
+
+def _section(text: str, heading: str) -> str:
+    start = text.index(heading)
+    rest = text[start + len(heading) :]
+    end = rest.find("\n### ")
+    return rest if end == -1 else rest[:end]
+
+
+def _first_cells(section: str) -> set[str]:
+    """表格每一列第一欄裡的 token 名（`--x-y`、`--x-z`）。"""
+    names: set[str] = set()
+    for line in section.splitlines():
+        if line.startswith("| `--"):
+            names |= set(re.findall(r"`(--[a-z]+-[a-z-]+)`", line.split("|")[1]))
+    return names
+
+
+def _retired_names() -> set[str]:
+    text = ADR_0022.read_text(encoding="utf-8")
+    return _first_cells(_section(text, "### 3.2 退役"))
+
+
+def _new_names() -> set[str]:
+    text = ADR_0022.read_text(encoding="utf-8")
+    return _first_cells(_section(text, "### 3.1 新增"))
 
 
 @pytest.fixture(scope="module")
@@ -74,7 +104,27 @@ def test_every_s0_status_token_in_adr_0017_is_defined(s0_css: str) -> None:
     assert not missing, f"ADR-0017 有、s0.css 沒定義：{sorted(missing)}"
 
 
-@pytest.mark.parametrize("path", [TOKENS_CSS, S0_CSS], ids=lambda p: p.name)
+def test_adr_0022_new_tokens_are_defined_and_retired_ones_are_gone(s0_css: str) -> None:
+    # 擋住「ADR 改了寫法、正規式抓不到」變成空檢查
+    assert {"--chat-new", "--verify-disputed", "--verify-unfound", "--diff-insert"} <= _new_names()
+    assert {"--job-review", "--job-approved", "--job-discarded"} == _retired_names()
+    assert not (_new_names() - _defined(s0_css)), "ADR-0022 有、s0.css 沒定義"
+    assert not (_retired_names() & _defined(s0_css)), "ADR-0022 已退役、s0.css 還留著"
+
+
+def test_chat_css_uses_only_defined_variables_and_no_hard_coded_colors(
+    tokens_css: str, s0_css: str
+) -> None:
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    missing = _used(css) - _defined(tokens_css) - _defined(s0_css) - _defined(css)
+    assert not missing, f"chat.css 用到但沒定義的變數：{sorted(missing)}"
+    body = _strip_comments(css)
+    assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", body)
+    assert not re.findall(r"\b(?:rgba?|hsla?)\(", body)
+    assert "@import" not in body
+
+
+@pytest.mark.parametrize("path", [TOKENS_CSS, S0_CSS, CHAT_CSS], ids=lambda p: p.name)
 def test_css_loads_nothing_from_outside(path: Path) -> None:
     # 不載網路字型、不連 CDN：中文用系統字型，英文字型自己放（ADR-0017 §3.3）。
     body = _strip_comments(path.read_text(encoding="utf-8"))
