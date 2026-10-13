@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "investigate 段的產出 sources.json",
+  "description": "查證與找題材段的來源清單、查證結果與研究題材（FR-IV-01、ADR-0020）。來源清單沿用 research 段的格式：只有清單，正文由執行器從這一次真的抓過的網頁放進 input/sources/（runner/sources.py）。查證與題材引用的編號要在清單上（checks/analysis.py）。",
+  "type": "object",
+  "properties": {
+    "queries": {
+      "description": "這一段送出的搜尋查詢，照送出的順序",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "sources": {
+      "description": "這一段抓過、拿來查證或當研究題材的網頁；編號從 S2 依序（S1 是原文）",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "$ref": "#/$defs/source_id" },
+          "url": { "description": "用 fetch_url 抓到正文的網址", "type": "string", "pattern": "^https?://" },
+          "title": { "type": "string", "minLength": 1 },
+          "author": { "description": "看得出作者才寫", "type": "string", "minLength": 1 },
+          "why": { "description": "服務哪條主張或哪個題材、補了原文沒有的什麼", "type": "string", "minLength": 1 }
+        },
+        "required": ["id", "url", "title", "why"],
+        "additionalProperties": false
+      }
+    },
+    "fact_checks": {
+      "description": "brief 的每條關鍵主張剛好一筆，有疑慮的（有爭議、過時、查不到）排在有佐證的前面（執行器檢查，checks/analysis.py）；查不到不等於錯",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": { "type": "string", "pattern": "^K[1-6]$" },
+          "verdict": { "enum": ["supported", "disputed", "not_found", "outdated"] },
+          "sources": {
+            "description": "同一個來源不能列兩次：有爭議要兩個不同的來源",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/source_id" }
+          }
+        },
+        "required": ["claim", "verdict", "sources"],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "description": "除了查不到，都要附來源",
+            "if": { "properties": { "verdict": { "not": { "const": "not_found" } } } },
+            "then": { "properties": { "sources": { "minItems": 1 } } }
+          },
+          {
+            "description": "有爭議要附兩邊的來源（analyze.feature）",
+            "if": { "properties": { "verdict": { "const": "disputed" } } },
+            "then": { "properties": { "sources": { "minItems": 2 } } }
+          }
+        ]
+      }
+    },
+    "topics": {
+      "description": "可以借題發揮的研究題材，每個附至少一篇抓過的相關文章",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source_id" } }
+        },
+        "required": ["title", "sources"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["queries", "sources", "fact_checks", "topics"],
+  "additionalProperties": false,
+  "$defs": {
+    "source_id": { "type": "string", "pattern": "^S([2-9]|[1-9][0-9]+)$" }
+  }
+}

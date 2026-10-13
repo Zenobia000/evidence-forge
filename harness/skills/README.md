@@ -20,6 +20,26 @@ schema 寫不出來的硬性要求，寫成檢查：例如「補料段放了外�
 
 C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages.py`）。改了欄位名，C5 照樣過，C1、C2 卻會每次都過、沒人發現；所以有一條契約測試讀這兩份 schema，改名時先壞的是那條測試。
 
+- `brief`：`brief.json` 只放給程式讀的文類、主題標籤、關鍵主張（1～6 條，SKILL.md 要 3～6），不收 `quote`（ADR-0020 不附逐字引句）。
+  `brief.md` 的六節由程式檢查（`checks/analysis.py` 的 `BRIEF_SECTIONS`），標題照抄 SKILL.md 的中文。
+- `investigate`：`sources.json` 的來源一筆沿用 `research` 的格式，另外有 `fact_checks`（每條關鍵主張的判定：
+  `supported`、`disputed`、`not_found`、`outdated`；除了 `not_found` 都要附來源）與 `topics`（每個題材至少一篇）。
+  `report.md` 的五節依序由程式檢查（`REPORT_SECTIONS`，PRD §5）；查證與題材引用的編號要在清單上。
+
+### 執行器看產出檔名決定跑哪些檢查
+
+執行器不看 skill 叫什麼，看這一段在配方裡宣告的產出（`runner/hard_checks.py`、`runner/sources.py`）：
+
+| 宣告的產出 | 執行器做什麼 |
+| :--- | :--- |
+| `report.md` | 分析報告的檢查：五節依序、Markdown、同一段的 JSON 合 schema、引用的編號在清單上 |
+| `brief.md` | brief 的檢查：六節、Markdown、同一段的 JSON 合 schema |
+| `draft.md` | C2～C5（舊的二創段），沒過回這一段修 |
+| `claims.json` | C1、C5（舊的整理段） |
+| `sources.json` | 檢查都過了之後，照清單從這一段真的抓過的網頁放來源正文；清單上有沒抓過的網址算這一次不合格 |
+
+所以 skill 改名、或新的 skill 交同一種產出，檢查照樣跑。反過來，**要交分析報告就一定叫 `report.md`、來源清單一定叫 `sources.json`**，換了名字檢查就不會跑；`tests/unit/test_skills.py` 有一條契約測試盯著 `analyze` 配方。
+
 ## 2. agent 只看得到 `SKILL.md` 和工單資料夾
 
 `SKILL.md` 整份放進系統提示（ADR-0018），`read_file` 只能讀工單資料夾。所以 skill 資料夾裡的其他檔（`templates/`、範例）、
@@ -35,7 +55,7 @@ C1、C2 只認叫 `quote`、`fact` 的欄位（`src/evidence_forge/checks/stages
 | `input/author/voice.md` | 作家聲音 |
 | `input/author/genre-style.md` | 作家在目標文類的風格；沒有就是未校準 |
 | `input/conversions/<來源>--<目標>.md` | 轉換說明 |
-| `input/sources/S<n>.md` | 補料段找到的來源正文（`S2` 起；`S1` 是原文 `input/content.md`）。補料段結束後由執行器照 `sources.json` 從這一段真的抓過的網頁放（`src/evidence_forge/runner/sources.py`），agent 不能寫 |
+| `input/sources/S<n>.md` | 補料段、查證與找題材段找到的來源正文（`S2` 起；`S1` 是原文 `input/content.md`）。那一段合格後由執行器照 `sources.json` 從那一段真的抓過的網頁放（`src/evidence_forge/runner/sources.py`），agent 不能寫 |
 
 `SKILL.md` 只能提到上表的路徑與這一段的產出目錄（`stages/…`）。要多給 agent 一份東西，先改 `stage_inputs.py`，再寫進 `SKILL.md`。
 

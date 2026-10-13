@@ -5,6 +5,7 @@
 | 項目 | 什麼時候查 |
 | :--- | :--- |
 | 故障注入 | 一律：正式執行（不是重播模式）設了 `EF_GATEWAY_FAULT` 就擋 |
+| Pi 沒裝 | 一律：`harness/pi/` 鎖版的 Pi 不在，每一段都開不了（#68） |
 | 資料目錄不可寫 | 一律 |
 | 硬碟空間 | 一律 |
 | 閘道連不上 | 每張單開跑前（啟動時閘道才剛開） |
@@ -129,6 +130,8 @@ class Preflight:
     probes: Probes = field(default_factory=http_probes)
     min_free_bytes: int = GIB
     ollama_timeout_s: float = OLLAMA_LOAD_TIMEOUT_S
+    # 執行器要開的 Pi（`Harness.pi.pi_bin`）；None 表示不查（測試用假 Pi 的地方）
+    pi_bin: Path | None = None
 
     def startup(self) -> list[str]:
         """`ef serve` 一啟動就查、跟配方無關的項目：沒過就不啟動。"""
@@ -137,6 +140,11 @@ class Preflight:
             problems.append(
                 f"故障注入：正式執行不能設 EF_GATEWAY_FAULT（現在是 {self.config.fault}），"
                 "它只能配 EF_GATEWAY_MODE=replay 用"
+            )
+        if self.pi_bin is not None and not self.pi_bin.is_file():
+            problems.append(
+                f"Pi 沒裝：找不到 {self.pi_bin}，"
+                "請用 nvm 的 npm 在 harness/pi/ 跑 npm ci"
             )
         root = self.config.data.root
         problem = self.probes.writable(root)

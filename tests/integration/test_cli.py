@@ -23,15 +23,19 @@ def ef_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def test_ef_new_寫素材項目並開一張排隊中的工單(
+@pytest.mark.promise("FR-IN-01", "FR-AN-01")
+def test_ef_new_沒指定配方就開分析_寫素材項目並開一張排隊中的工單(
     ef_data: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # 預設配方是 analyze（#78、#68）：先分析，不是只把原文傳回來的 echo
     text = ARTICLE.read_text(encoding="utf-8")
     assert main(["new", "--text", text, "--goal", "一段話說明重點"]) == 0
 
     job_id = capsys.readouterr().out.strip().splitlines()[-1]
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
-    assert (job.status, job.recipe, job.goal) == ("queued", "echo", "一段話說明重點")
+    assert (job.status, job.recipe, job.goal) == ("queued", "analyze", "一段話說明重點")
+    # 分析配方的查證段有搜尋額度：沒指定 credits 就用配方各段的總和
+    assert job.budget.tavily_credits == 12
     item_dir = ef_data / job.feed.item
     assert item_dir.parent == ef_data / "inbox" / "manual"
     assert (item_dir / "content.md").read_text(encoding="utf-8") == text
@@ -51,7 +55,7 @@ def test_ef_new_上傳檔案_沒填目標用配方的預設目標(
 ) -> None:
     article = tmp_path / "a.md"
     article.write_text("# 標題\n\n內文", encoding="utf-8")
-    assert main(["new", "--file", str(article)]) == 0
+    assert main(["new", "--recipe", "echo", "--file", str(article)]) == 0
 
     job_id = capsys.readouterr().out.strip()
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
@@ -61,7 +65,8 @@ def test_ef_new_上傳檔案_沒填目標用配方的預設目標(
 
 @pytest.mark.promise("FR-IN-01", "FR-CP-03")
 def test_ef_new_帶文類與預算(ef_data: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    args = ["new", "--text", "文章", "--genre", "explainer", "--budget-usd", "1.5"]
+    args = ["new", "--recipe", "echo", "--text", "文章", "--genre", "explainer"]
+    args += ["--budget-usd", "1.5"]
     assert main(args) == 0
     job_id = capsys.readouterr().out.strip()
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
