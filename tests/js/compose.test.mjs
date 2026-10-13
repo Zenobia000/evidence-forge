@@ -49,12 +49,25 @@ test("base64 跟 node 自己算的一樣（含大檔分段）", () => {
 
 test("送不出去：打的字和附檔放回去，不用重打", () => {
   const kept = [{ name: "a.md", text: "內容" }];
-  const back = restoreAfterFailure({ text: "請分析", typedSince: "", kept, addedSince: [] });
+  const back = restoreAfterFailure({ text: "請分析", inputNow: "", kept, attachmentsNow: [], cleared: true });
   assert.deepEqual(back, { input: "請分析", attachments: kept });
 });
 
 test("送不出去的這段期間又打了新的一句：舊的在前、新的在後，不蓋掉", () => {
-  const back = restoreAfterFailure({ text: "第一句", typedSince: "第二句", kept: [], addedSince: [{ name: "b.txt", text: "x" }] });
+  const back = restoreAfterFailure({
+    text: "第一句",
+    inputNow: "第二句",
+    kept: [],
+    attachmentsNow: [{ name: "b.txt", text: "x" }],
+    cleared: true,
+  });
   assert.equal(back.input, "第一句\n第二句");
   assert.deepEqual(back.attachments.map((a) => a.name), ["b.txt"]);
+});
+
+test("開新對話就失敗、輸入框還沒清：原封不動，不會變成兩份", () => {
+  const kept = [{ name: "a.md", text: "內容" }];
+  const back = restoreAfterFailure({ text: "請分析", inputNow: "請分析", kept, attachmentsNow: kept, cleared: false });
+  assert.equal(back.input, "請分析");
+  assert.deepEqual(back.attachments, kept);
 });

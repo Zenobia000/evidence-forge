@@ -141,11 +141,13 @@ class _PersonaStats:
 def _read_ledger(
     path: Path, data: DataDir, bad: list[BadLine]
 ) -> list[LedgerEntry]:
-    if not path.is_file():
+    # 帳本是符號連結、指到資料夾外面的，不讀：跟面板讀工單檔案同一條規則
+    safe = artifacts.safe_file(path.parent, path)
+    if safe is None:
         return []
     found: list[LedgerEntry] = []
     where = path.relative_to(data.root).as_posix()
-    for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+    for number, line in enumerate(safe.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if not line.strip():
             continue
         try:
@@ -284,16 +286,12 @@ def month_view(
         )
 
     # 不在任何對話裡的工單（命令列開的）：交報告或文章的算進報告與文章，其他的只算花費
-    owned = artifacts.owned_job_ids(data)
     loose_infos = artifacts.loose_jobs(data, recipes)
     loose_monthly: dict[str, list[LedgerEntry]] = {}
-    if data.jobs.is_dir():
-        for folder in sorted(data.jobs.iterdir()):
-            if folder.name in owned or not folder.is_dir():
-                continue
-            found = in_month(_read_ledger(folder / "ledger.jsonl", data, bad))
-            if found:
-                loose_monthly[folder.name] = found
+    for folder in artifacts.loose_folders(data):
+        found = in_month(_read_ledger(folder / "ledger.jsonl", data, bad))
+        if found:
+            loose_monthly[folder.name] = found
     loose_entries = [e for rows_ in loose_monthly.values() for e in rows_]
     if loose_entries:
         spend = sum(count(e) for e in loose_entries)
@@ -434,21 +432,39 @@ def conversation_cost(
     bad: list[BadLine] = []
     rows: list[CostRow] = []
     total = 0
-    for info in artifacts.conversation_jobs(data, recipes, conversation_id):
-        entries = _read_ledger(data.job_dir(info.job_id) / "ledger.jsonl", data, bad)
+    infos = artifacts.conversation_jobs(data, recipes, conversation_id)
+
+    def add(label: str, entries: list[LedgerEntry]) -> None:
+        nonlocal total
         micros = sum(usd_to_micros(e.cost_usd) for e in entries)
         total += micros
-        noun = "分析" if info.kind == "analysis" else "文章"
         rows.append(
             CostRow(
-                f"{noun} {info.label}",
+                label,
                 _models_text(entries) or "—",
                 _escalations(entries),
                 min((e.ts for e in entries), default=None),
                 micros_to_usd(micros),
             )
         )
+
+    for info in infos:
+        noun = "分析" if info.kind == "analysis" else "文章"
+        add(f"{noun} {info.label}", _read_ledger(data.job_dir(info.job_id) / "ledger.jsonl", data, bad))
     if conversation_id == artifacts.LOOSE:
+        # 面板打不開的單（舊配方、讀不懂的 job.md）只要有花費也列出來：跟當月總表同一批，帳才對得上
+        listed = {info.job_id for info in infos}
+        for folder in artifacts.loose_folders(data):
+            if folder.name in listed:
+                continue
+            entries = _read_ledger(folder / "ledger.jsonl", data, bad)
+            if not entries:
+                continue
+            job = artifacts.load_job(folder)
+            what = f"{job.recipe}" if job is not None else "job.md 讀不懂"
+            add(f"工單 {folder.name}（{what}）", entries)
+    if conversation_id == artifacts.LOOSE:
+        rows.sort(key=lambda r: (r.when is None, r.when))
         return ConversationCost(rows=rows, total_usd=micros_to_usd(total), budget_usd=None, bad_lines=bad)
     own = _read_ledger(data.conversation_dir(conversation_id) / "ledger.jsonl", data, bad)
     own_micros = sum(usd_to_micros(e.cost_usd) for e in own)

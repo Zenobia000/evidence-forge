@@ -137,18 +137,18 @@ def install(
     def with_loose(rows: list[ListRow], current: str | None) -> list[ListRow]:
         """清單最後多一列「不在對話裡的工單」（命令列開的，P1 的分析、重構都在這裡）；沒有這種工單就不列。"""
         infos = artifacts.loose_jobs(data, recipe_map)
-        if not infos:
+        cost = bills.conversation_cost(data, recipe_map, artifacts.LOOSE)
+        if not infos and not cost.rows:
             return rows
-        latest = max(infos, key=lambda i: i.row.ts)
-        spent = sum(i.spent_usd for i in infos)
+        stamps = [i.row.ts for i in infos] + [r.when for r in cost.rows if r.when is not None]
         return [
             *rows,
             ListRow(
                 conversation_id=artifacts.LOOSE,
                 title=NO_CONVERSATION_TITLE,
                 state=None,
-                stamp=relative_day(latest.row.ts, clock()),
-                spent=format_usd(spent),
+                stamp=relative_day(max(stamps), clock()) if stamps else "",
+                spent=format_usd(cost.total_usd),
                 current=current == artifacts.LOOSE,
                 loose=True,
             ),
@@ -235,7 +235,7 @@ def install(
                 {
                     "blocks": blocks,
                     "title": NO_CONVERSATION_TITLE,
-                    "spent": format_usd(sum(j.spent_usd for j in jobs)),
+                    "spent": format_usd(bills.conversation_cost(data, recipe_map, artifacts.LOOSE).total_usd),
                     "persona": first_persona(data),
                     "latest_job": "",
                     "latest_done": False,

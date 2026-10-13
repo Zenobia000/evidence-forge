@@ -448,24 +448,36 @@ async function send(text, { restore = false } = {}) {
   const message = buildMessage(text, attachments);
   if (!message) return;
   const keptAttachments = attachments;
+  // 輸入框、附檔、畫面上先放著的訊息，各自有沒有動過：失敗時只還原動過的
+  let pushed = false;
+  let cleared = false;
   els.send.disabled = true;
   try {
     if (!conversationId) await startConversation();
     pending.push(text.trim() || attachments.map((a) => a.name).join("、"));
+    pushed = true;
     showPending();
     scrollToEnd();
     els.input.value = "";
     attachments = [];
+    cleared = true;
     renderAttached();
     autoGrow();
     await postJson(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { text: message });
     showNote("error", "");
   } catch (error) {
-    pending.pop();
-    showPending();
+    if (pushed) {
+      pending.pop();
+      showPending();
+    }
     if (restore) {
-      // 失敗的這段期間人可能已經開始打下一句：不蓋掉他新打的
-      const back = restoreAfterFailure({ text, typedSince: els.input.value, kept: keptAttachments, addedSince: attachments });
+      const back = restoreAfterFailure({
+        text,
+        inputNow: els.input.value,
+        kept: keptAttachments,
+        attachmentsNow: attachments,
+        cleared,
+      });
       els.input.value = back.input;
       attachments = back.attachments;
       renderAttached();

@@ -577,3 +577,17 @@ def test_面板的版本參數不能挑到別的對話的工單(world: tuple[str
     html = httpx.get(f"{url}/ui/c/{mine}/panel", params={"tab": "report", "v": "b1"}).text
 
     assert 'value="a1" selected' in html and "b1" not in html
+
+
+def test_只有舊配方的單有花費_清單照樣有不在對話裡的列_花費分頁列得出來(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    url, folder, _ = world
+    folder.job(None, "20261013-090000-echo", recipe="echo")
+    folder.ledger("20261013-090000-echo", [{"stage": "echo", "tier": "strong", "model": "c", "cost_usd": 0.05}])
+
+    listed = httpx.get(f"{url}/ui/list").text
+    cost = httpx.get(f"{url}/ui/c/loose/panel", params={"tab": "cost"}).text
+    bills_page = httpx.get(f"{url}/bills", params={"month": "2026-10"}).text
+
+    assert "不在對話裡的工單" in listed and "US$0.05" in listed
+    assert "20261013-090000-echo" in cost and "US$0.05" in cost
+    assert "US$0.05" in bills_page

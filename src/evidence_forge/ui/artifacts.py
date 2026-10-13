@@ -28,6 +28,7 @@ from evidence_forge.budget import micros_to_usd, usd_to_micros
 from evidence_forge.checks.text import tokenize
 from evidence_forge.conversations import ConversationJob
 from evidence_forge.documents import read_job
+from evidence_forge.jobkey import check_name
 from evidence_forge.models import Item, Job, Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.ui import markdown
@@ -109,9 +110,54 @@ def _output_stage(recipe: Recipe | None, kind: Kind) -> str | None:
     return recipe.stages[-1].id
 
 
-def spent_micros(path: Path) -> int:
-    """一份帳本的總花費（微美元）；讀不懂的行跳過。"""
-    if not path.is_file():
+def safe_path(root: Path, path: Path) -> Path | None:
+    """`path` resolve 之後還在 `root` 底下就回 resolve 過的路徑；符號連結（檔案或中間任何一層資料夾）
+    指到外面就是 None。畫面讀工單資料夾裡的任何檔都先過這裡，不然連結指到哪就把哪裡的內容送出去。"""
+    try:
+        resolved = path.resolve()
+        inside = resolved.is_relative_to(root.resolve())
+    except (OSError, RuntimeError):  # 迴圈的符號連結
+        return None
+    return resolved if inside else None
+
+
+def safe_file(root: Path, path: Path) -> Path | None:
+    safe = safe_path(root, path)
+    return safe if safe is not None and safe.is_file() else None
+
+
+def safe_children(root: Path, folder: Path) -> list[Path]:
+    """`folder` 底下的東西，剔掉指到 `root` 外面的。"""
+    if safe_path(root, folder) is None or not folder.is_dir():
+        return []
+    return [p for p in sorted(folder.iterdir()) if safe_path(root, p) is not None]
+
+
+def read_text(root: Path, path: Path) -> str | None:
+    """讀 `root` 底下的文字檔；不在底下、讀不到、不是 UTF-8 都是 None。"""
+    safe = safe_file(root, path)
+    if safe is None:
+        return None
+    try:
+        return safe.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def read_json(root: Path, path: Path) -> Any | None:
+    text = read_text(root, path)
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def spent_micros(job_dir: Path) -> int:
+    """一張工單帳本的總花費（微美元）；讀不懂的行跳過，帳本指到外面就當沒有。"""
+    path = safe_file(job_dir, job_dir / "ledger.jsonl")
+    if path is None:
         return 0
     total = 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -139,6 +185,17 @@ def owned_job_ids(data: DataDir) -> set[str]:
             except ValueError:
                 continue  # 資料夾名字不合規則：不是對話
     return owned
+
+
+def load_job(job_dir: Path) -> Job | None:
+    """`job.md`；讀不懂、不在工單資料夾裡（符號連結指到外面）的是 None。"""
+    path = safe_file(job_dir, job_dir / "job.md")
+    if path is None:
+        return None
+    try:
+        return read_job(path).job
+    except (OSError, ValueError, ValidationError):
+        return None
 
 
 def _persona_of(job: Job) -> str:
@@ -187,7 +244,7 @@ def _build_infos(
             depth=depth,
             label="",
             stage_id=_output_stage(recipe, kind),
-            spent_usd=micros_to_usd(spent_micros(data.job_dir(row.job_id) / "ledger.jsonl")),
+            spent_usd=micros_to_usd(spent_micros(data.job_dir(row.job_id))),
             previous_id=previous,
         )
         by_id[row.job_id] = info
@@ -216,28 +273,45 @@ def conversation_jobs(
         return loose_jobs(data, recipes)
     entries: list[tuple[ConversationJob, Job]] = []
     for row in conversations.jobs(data, conversation_id):
-        try:
-            entries.append((row, read_job(data.job_dir(row.job_id) / "job.md").job))
-        except (OSError, ValueError, ValidationError):
-            continue
+        job = load_job(data.job_dir(row.job_id))
+        if job is not None:
+            entries.append((row, job))
     return _build_infos(data, recipes, entries)
 
 
-def loose_jobs(data: DataDir, recipes: dict[str, Recipe]) -> list[JobInfo]:
-    """不在任何對話裡的工單（命令列開的），照工單 id（開單時間）排；只收交報告或文章的配方。
+def loose_folders(data: DataDir) -> list[Path]:
+    """不在任何對話裡的工單資料夾，照名字（開單時間）排。
 
-    版本鏈照 `job.md` 的 `parent`。讀不懂的 `job.md`、資料夾名字不合規則的跳過。
+    當月總表（`bills.month_view`）、花費分頁（`bills.conversation_cost`）、清單與面板都用這一份：
+    同一批單，帳才對得上。名字不合工單 id 規則、`jobs/<id>` 是指到 `jobs/` 外面的符號連結的不算。
     """
     if not data.jobs.is_dir():
         return []
     owned = owned_job_ids(data)
-    entries: list[tuple[ConversationJob, Job]] = []
-    root = data.jobs.resolve()
+    found: list[Path] = []
     for folder in sorted(data.jobs.iterdir()):
-        if folder.name in owned or not folder.is_dir() or not folder.resolve().is_relative_to(root):
+        if folder.name in owned or not folder.is_dir():
             continue
         try:
-            job = read_job(folder / "job.md").job
+            check_name("工單 id", folder.name)
+        except ValueError:
+            continue
+        if safe_path(data.jobs, folder) is not None:
+            found.append(folder)
+    return found
+
+
+def loose_jobs(data: DataDir, recipes: dict[str, Recipe]) -> list[JobInfo]:
+    """不在任何對話裡、而且交報告或文章的工單（面板打得開的）；其他的只有花費，看 `loose_folders`。
+
+    版本鏈照 `job.md` 的 `parent`。讀不懂的 `job.md` 跳過。
+    """
+    entries: list[tuple[ConversationJob, Job]] = []
+    for folder in loose_folders(data):
+        job = load_job(folder)
+        if job is None:
+            continue
+        try:
             stamp = datetime.fromtimestamp((folder / "job.md").stat().st_mtime).astimezone()
             entries.append((ConversationJob(job_id=folder.name, ts=stamp, parent=job.parent), job))
         except (OSError, ValueError, ValidationError):
@@ -256,33 +330,21 @@ def latest_output_dir(data: DataDir, info: JobInfo) -> Path | None:
     """
     if info.stage_id is None:
         return None
-    root = data.job_dir(info.job_id) / "stages" / info.stage_id
-    if not root.is_dir():
-        return None
+    job_dir = data.job_dir(info.job_id)
     attempts = sorted(
-        (p for p in root.iterdir() if p.is_dir() and p.name.isdigit()),
+        (p for p in safe_children(job_dir, job_dir / "stages" / info.stage_id) if p.is_dir() and p.name.isdigit()),
         key=lambda p: -int(p.name),
     )
     wanted = ARTICLE_FILE if info.kind == "rewrite" else REPORT_FILE
-    delivered = next((p for p in attempts if (p / wanted).is_file()), None)
+    delivered = next((p for p in attempts if safe_file(job_dir, p / wanted) is not None), None)
     return delivered or (attempts[0] if attempts else None)
 
 
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def _read_json(path: Path) -> Any | None:
-    text = _read(path)
-    if text is None:
-        return None
-    try:
-        return json.loads(text)
-    except ValueError:
-        return None
+def has_output(data: DataDir, info: JobInfo) -> bool:
+    """這張單真的交出了報告或文章（面板打得開）。"""
+    folder = latest_output_dir(data, info)
+    wanted = ARTICLE_FILE if info.kind == "rewrite" else REPORT_FILE
+    return folder is not None and safe_file(data.job_dir(info.job_id), folder / wanted) is not None
 
 
 def finished_at(data: DataDir, info: JobInfo) -> datetime | None:
@@ -290,17 +352,14 @@ def finished_at(data: DataDir, info: JobInfo) -> datetime | None:
     folder = latest_output_dir(data, info)
     if folder is None:
         return None
-    stamps = [p.stat().st_mtime for p in folder.iterdir() if p.is_file()]
+    job_dir = data.job_dir(info.job_id)
+    stamps = [p.stat().st_mtime for p in safe_children(job_dir, folder) if p.is_file()]
     return datetime.fromtimestamp(max(stamps)).astimezone() if stamps else None
 
 
 def original_item(data: DataDir, job: Job) -> Item | None:
     """這張單的素材項目（原文的標題與網址）；讀不到是 None。"""
-    root = data.root.resolve()
-    path = (data.root / job.feed.item / "item.json").resolve()
-    if not path.is_relative_to(root):
-        return None
-    text = _read(path)
+    text = read_text(data.root, data.root / job.feed.item / "item.json")
     if text is None:
         return None
     try:
@@ -425,8 +484,8 @@ def _first_sentence(text: str, limit: int = 120) -> str:
     return sentence if len(sentence) <= limit else sentence[:limit] + "…"
 
 
-def _source_header(path: Path) -> dict[str, str]:
-    text = _read(path) or ""
+def _source_header(job_dir: Path, path: Path) -> dict[str, str]:
+    text = read_text(job_dir, path) or ""
     header = text.split("\n\n---\n\n", 1)[0]
     found: dict[str, str] = {}
     for line in header.splitlines():
@@ -438,12 +497,12 @@ def _source_header(path: Path) -> dict[str, str]:
 
 def placed_sources(data: DataDir, job_id: str) -> dict[str, SourceRef]:
     """放進工單的來源（`input/sources/S<n>.md`，檔頭有標題、網址、抓取時間）。"""
-    folder = data.job_dir(job_id) / "input" / "sources"
+    job_dir = data.job_dir(job_id)
     found: dict[str, SourceRef] = {}
-    if not folder.is_dir():
-        return found
-    for path in sorted(folder.glob("S*.md")):
-        header = _source_header(path)
+    for path in safe_children(job_dir, job_dir / "input" / "sources"):
+        if not (path.name.startswith("S") and path.suffix == ".md"):
+            continue
+        header = _source_header(job_dir, path)
         fetched = header.get("抓取時間")
         stamp = None
         if fetched:
@@ -485,16 +544,16 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
         "finished": finished_at(data, info),
     }
     folder = latest_output_dir(data, info)
-    report = _read(folder / REPORT_FILE) if folder is not None else None
+    job_dir = data.job_dir(info.job_id)
+    report = read_text(job_dir, folder / REPORT_FILE) if folder is not None else None
     if report is None:
         where = (folder / REPORT_FILE) if folder is not None else data.job_dir(info.job_id)
         return ReportView(error=f"讀不到報告 {info.label} 的檔案：{where}", **base)
 
     sections = _sections(report)
     placed = placed_sources(data, info.job_id)
-    listed_raw = _read_json(folder / "sources.json") if folder is not None else None
-    brief_dir = data.job_dir(info.job_id) / "stages" / "brief"
-    brief = _read_brief(brief_dir)
+    listed_raw = read_json(job_dir, folder / "sources.json") if folder is not None else None
+    brief = _read_brief(job_dir)
 
     item = original_item(data, info.job)
     original = SourceRef("S1", item.title if item else "原文", safe_url(item.url) if item else None, None)
@@ -544,12 +603,12 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
     )
 
 
-def _read_brief(brief_dir: Path) -> Any | None:
-    if not brief_dir.is_dir():
-        return None
-    attempts = [p for p in brief_dir.iterdir() if p.is_dir() and p.name.isdigit()]
+def _read_brief(job_dir: Path) -> Any | None:
+    attempts = [
+        p for p in safe_children(job_dir, job_dir / "stages" / "brief") if p.is_dir() and p.name.isdigit()
+    ]
     for attempt in sorted(attempts, key=lambda p: -int(p.name)):
-        parsed = _read_json(attempt / "brief.json")
+        parsed = read_json(job_dir, attempt / "brief.json")
         if parsed is not None:
             return parsed
     return None
@@ -685,13 +744,13 @@ def count_words(article: str) -> int:
 
 def _checks_entries(data: DataDir, info: JobInfo) -> list[dict[str, Any]]:
     """這張單最後一份、屬於交文章那一段的檢查結果的條目。"""
-    folder = data.job_dir(info.job_id) / "checks"
-    if not folder.is_dir() or info.stage_id is None:
+    job_dir = data.job_dir(info.job_id)
+    if info.stage_id is None:
         return []
     best: tuple[int, int, list[dict[str, Any]]] | None = None
-    for path in folder.glob("checks.v*.json"):
-        number = re.search(r"checks\.v(\d+)\.json$", path.name)
-        report = _read_json(path)
+    for path in safe_children(job_dir, job_dir / "checks"):
+        number = re.search(r"^checks\.v(\d+)\.json$", path.name)
+        report = read_json(job_dir, path)
         if number is None or not isinstance(report, dict) or report.get("stage") != info.stage_id:
             continue
         entries = [e for e in report.get("entries", []) if isinstance(e, dict)]
@@ -733,11 +792,12 @@ def article_view(data: DataDir, info: JobInfo, previous: JobInfo | None) -> Arti
         "finished": finished_at(data, info),
     }
     folder = latest_output_dir(data, info)
-    text = _read(folder / ARTICLE_FILE) if folder is not None else None
+    job_dir = data.job_dir(info.job_id)
+    text = read_text(job_dir, folder / ARTICLE_FILE) if folder is not None else None
     if text is None or folder is None:
         where = (folder / ARTICLE_FILE) if folder is not None else data.job_dir(info.job_id)
         return ArticleView(error=f"讀不到文章 {info.label} 的檔案：{where}", **base)
-    meta = _read_json(folder / "article.json")
+    meta = read_json(job_dir, folder / "article.json")
     title = meta.get("title") if isinstance(meta, dict) else None
     if not isinstance(title, str) or not title.strip():
         heading = re.search(r"^#\s+(.+)$", text, flags=re.MULTILINE)
@@ -752,7 +812,11 @@ def article_view(data: DataDir, info: JobInfo, previous: JobInfo | None) -> Arti
     previous_label = None
     if previous is not None:
         prev_folder = latest_output_dir(data, previous)
-        prev_text = _read(prev_folder / ARTICLE_FILE) if prev_folder is not None else None
+        prev_text = (
+            read_text(data.job_dir(previous.job_id), prev_folder / ARTICLE_FILE)
+            if prev_folder is not None
+            else None
+        )
         if prev_text is not None:
             diff_html = diff_articles(prev_text, text)
             previous_words = count_words(prev_text)

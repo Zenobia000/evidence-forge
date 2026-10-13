@@ -169,9 +169,7 @@ def _card(data: DataDir, info: artifacts.JobInfo, last: bool) -> JobCard:
         "spent_usd": info.spent_usd,
         "finished": artifacts.finished_at(data, info),
     }
-    folder = artifacts.latest_output_dir(data, info)
-    wanted = artifacts.ARTICLE_FILE if info.kind == "rewrite" else artifacts.REPORT_FILE
-    can_open = info.job.status == "done" and folder is not None and (folder / wanted).is_file()
+    can_open = info.job.status == "done" and artifacts.has_output(data, info)
     if not can_open:
         return JobCard(can_open=False, **base)
     if info.kind == "analysis":

@@ -49,9 +49,11 @@ export function toBase64(bytes) {
   return btoa(binary);
 }
 
-// 送不出去：打的字和附檔放回輸入框。失敗的這段期間人可能已經開始打下一句，不蓋掉他新打的：
-// 舊的接在前面、新的在後面。回新的輸入框內容與附檔
-export function restoreAfterFailure({ text, typedSince, kept, addedSince }) {
-  const input = typedSince ? `${text}\n${typedSince}` : text;
-  return { input, attachments: [...kept, ...addedSince] };
+// 送不出去：打的字和附檔放回輸入框。只放回「真的被清掉的」：還沒清（例如開新對話就失敗）時輸入框原封不動，
+// 再放回去就變成兩份。清掉之後人可能已經開始打下一句，不蓋掉他新打的：舊的接在前面、新的在後面。
+// 回新的輸入框內容與附檔
+export function restoreAfterFailure({ text, inputNow, kept, attachmentsNow, cleared }) {
+  if (!cleared) return { input: inputNow, attachments: attachmentsNow };
+  const input = inputNow ? `${text}\n${inputNow}` : text;
+  return { input, attachments: [...kept, ...attachmentsNow] };
 }
