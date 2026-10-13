@@ -34,6 +34,8 @@
 | 子代理清自己的測試程序 | L-020 |
 | 多個子代理同時用同一個暫存目錄 | L-021 |
 | 跟使用者說「可以按」、合併前後對 head | L-022 |
+| 在背景或非互動的 shell 裡跑另一個 CLI 代理（`codex exec` 等） | L-026 |
+| 解完衝突或補完修正之後 commit、推送 | L-027 |
 | 兩顆以上 PR 同時等使用者按、彼此有順序；遷移要編號 | L-023 |
 | 寫會叫外部服務（假 AI、假 API 佇列）的 e2e、或 e2e 平行跑時出現「別的 spec 偶發失敗」 | L-024 |
 | 一次改掉一批斷言（換測資、換 fixture、升版本）| L-013 |
@@ -446,3 +448,29 @@
   3. **治本是使用者的環境決定**：降低 `.wslconfig` 的 `memory`、加大 Windows 的分頁檔、關掉吃記憶體的程式。代理只負責提出，附上量到的數字；不自己改 `.wslconfig` 或分頁檔。
   4. 重開之後先跑 `git fsck --full`，再做任何 git 操作。有錯先回報給負責共用 `.git` 的那個 session，不要自己刪物件檔。
   5. 在使用者處理記憶體之前，同時跑測試的子代理壓到 1 個。算還能開幾個時，WSL 裡的 `free -m` 不準，它看不到 Windows 那一側；要另外看 Windows 的記憶體額度還剩多少（對策 1 的 `Win32_OperatingSystem`）。
+
+## L-026 背景跑 `codex exec` 沒關 stdin，它等輸入等到逾時
+
+- **狀態**：現役
+- **首犯**：2026-10-13（evidence-forge）。Product session 在背景跑 PR #97 第 2 輪交叉審查：`timeout 1800 codex exec --sandbox read-only -C . "<提示>" > out.md`。30 分鐘後 `exit 124`，輸出檔只有一行 `Reading additional input from stdin...`，一個字都沒審。同一晚 PR #91 第 2 輪也逾時過一次，當時以為是審得太久、拉長逾時重跑；那次是不是同一個原因沒查，不算進累犯。
+- **累犯**：0
+- **坑**：`codex exec` 發現 stdin 不是終端機、也沒有關閉，就會把 stdin 當成提示的補充一直讀。背景 shell 的 stdin 開著卻永遠不會有東西進來，所以它不報錯、也不審，只是等到 `timeout` 砍掉。輸出檔幾乎是空的，看起來很像「審太久」。
+- **訊號**：
+  - 背景跑的 `codex exec` 逾時（`exit 124`）；
+  - 輸出檔只有 `Reading additional input from stdin...`，沒有任何 `codex` 段落。
+- **對策**：
+  1. 非互動地跑 `codex exec`（以及任何會讀 stdin 的 CLI 代理）一律加 `< /dev/null`。
+  2. 逾時先看輸出檔有沒有開始審，再決定要不要拉長逾時；空的就是卡在輸入，不是審太久。
+
+## L-027 解完衝突或補完修正，沒 `git add` 就用暫存區建 commit，推上去的不是測過的那一版
+
+- **狀態**：現役
+- **首犯**：2026-10-13（evidence-forge）。Product session 把 PR #92 搬到新的 `dev` 上：解完三處衝突、`git add` 之後跑測試，抓到 `active.py` 一個型別名稱錯了，用 `sed -i` 修好、重跑測試全綠。接著用 `git commit` 加 `git commit-tree` 從**暫存區的樹**建 merge commit 推上去，`sed` 那一行沒加進暫存區，推上去的是修正前的版本。推完看 `git status` 出現 `MM active.py` 才發現，補一個 commit 再推。
+- **累犯**：0
+- **坑**：測試跑的是**工作目錄**，`git commit`／`commit-tree` 用的是**暫存區**。兩邊不一樣的時候，「測過了」說的是另一棵樹。用 plumbing（`commit-tree`、暫時的 index）建 commit 時更容易漏，因為沒有 `git commit` 的摘要提醒。
+- **訊號**：
+  - 測試之後又改了檔（尤其是用 `sed -i`、腳本改的）；
+  - 推送之前 `git status --short` 不是空的，或出現 `MM`、` M`。
+- **對策**：
+  1. 推送前最後一步跑 `git status --short`，要是空的才推；不是空的就先決定那些改動要不要進 commit。
+  2. 「測過的就是推上去的」要對得起來：比對 `git diff <要推的 commit>`（工作目錄對 commit）是空的，再說「可以按」。
