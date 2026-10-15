@@ -488,5 +488,6 @@
   - 準備 push 到公開 repo，而你沒有看過「這次要推的 commit」有沒有私人字眼。
 - **對策**：
   1. 測試資料一律用**虛構**的：假名字、假色票、假句子，由測試自己寫進暫存的 `EF_DATA`；不讀、不貼、不印 `$EF_DATA/authors/` 底下真的內容，派子代理時把這句寫進指示。
-  2. 隱私檢查擺在 **commit 與 push 之前**：`scripts/brand_guard.py` 掃暫存區與要推出去的 commit，Claude Code 的守衛與 git 原生的 `.githooks/pre-commit`、`pre-push` 都呼叫它（README 有啟用方式）；命中只印檔案與行號，不印內容。
-  3. 已經推出去了，不要只補一個刪掉它的 commit：先停下來，回報使用者，由使用者決定要不要找 GitHub 客服清歷史。
+  2. 隱私檢查擺在 **commit 與 push 之前**，主關卡是 git 原生 hook：`.githooks/pre-commit`（暫存區的新增行與路徑）、`commit-msg`（訊息）、`pre-push`（要推的每個 commit，含 merge 與訊息），都呼叫 `scripts/brand_guard.py`（README 有啟用方式：`git config core.hooksPath .githooks`）；命中只印檔案與行號，不印內容。Claude 的守衛（`guard-git.sh`）**不替代**它：它確保目標 repo 真的啟用了這些 hook（`git -C`、`cd … &&`、`.cwd` 算出來的那個 repo；沒啟用就擋 commit／push／`gh pr create`／`gh pr merge`），並擋掉把 hook 關掉的寫法與掃指令裡的訊息文字。**沒涵蓋的**：沒設 `core.hooksPath` 的機器上人手動做的 commit／push（只有使用者自己設了才有保護）、使用者自己用 `--no-verify`、守衛看不懂的指令寫法（`xargs git …`、腳本檔裡的 git；那些靠原生 hook 在 commit／push 當下接住）、分支名；指紋只認得 `$EF_DATA` 現有的內容，改名之後的舊名字不在裡面。
+  3. 低熵的東西（名字、色碼）的雜湊等於明文，**不放進 repo**，只在執行期從 `$EF_DATA` 現算；repo 裡只放長句子的指紋。
+  4. 已經推出去了，不要只補一個刪掉它的 commit：先停下來，回報使用者，由使用者決定要不要找 GitHub 客服清歷史。

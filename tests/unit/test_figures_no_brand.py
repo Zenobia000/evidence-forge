@@ -1,6 +1,6 @@
 """守門：創作者的品牌內容不准進 repo（`src/` 與 `tests/`）。
 
-色票、品牌名、封面預設名稱與封面 prompt 的句子屬於 `$EF_DATA` 的 brand.yaml。
+封面 prompt 的長句子屬於 `$EF_DATA` 的 brand.yaml。色票、品牌名這類低熵的指紋不放在 repo 裡（見 `evidence_forge.brand_guard`）。
 這個測試比對的是「指紋」而不是原文：把原文寫在測試裡，等於自己把它放進 repo。
 
 指紋清單與比對方法的唯一一份在 `evidence_forge.brand_guard`（#126：commit 與 push 之前的關卡也用它），
@@ -51,7 +51,8 @@ def test_偵測器自己有效_大小寫標點換行都不影響() -> None:
 
 def test_指紋本身不是明文() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for _, digest in FINGERPRINTS)
-    assert {n for n, _ in FINGERPRINTS} == {1, 2, 8}
+    # repo 裡只放高熵的長句子；色碼與名字（低熵，雜湊等於明文）只在執行期從 EF_DATA 現算（#126）
+    assert {n for n, _ in FINGERPRINTS} == {8}
 
 
 @pytest.mark.parametrize("name", SCAN_DIRS)

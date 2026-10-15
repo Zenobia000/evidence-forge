@@ -4,25 +4,37 @@
 那時 commit 早就做了、push 也已經推出去。2026-10-15 有人把創作者的真名當成測試角色名，一個 commit 就推上去了；
 公開歷史上的東西只有 GitHub 客服收得回來。所以這裡把同一套比對搬到 commit 與 push 之前當關卡。
 
+誰來呼叫（分工見 README「私人內容關卡」）：
+- **主關卡是 git 原生 hook**：`.githooks/pre-commit`（暫存區）、`commit-msg`（訊息）、`pre-push`（要推的 commit）。
+  `git config core.hooksPath .githooks` 之後，手動或任何工具下的 git 指令都會經過。
+- Claude Code 的守衛（`.claude/hooks/guard-git.sh`）呼叫 `guard`：目標 repo 沒有啟用這些 hook 就擋下
+  commit／push／`gh pr create`／`gh pr merge`，並掃指令裡的訊息文字（見 `git_gate.py`）。
+
 比對的是「指紋」不是原文（`$EF_DATA` 的私人內容絕不明文進 repo，也不明文進輸出）：
 - 文字轉 Unicode NFKC、小寫，英數字詞用 `[a-z0-9]+` 取出；連續 n 個詞用空白接起來算 sha256。
   所以大小寫、標點、連字號、換行、全形英數都不影響。
 - 中日韓文字沒有「詞」，另開一條流：只留漢字，連續 n 個字直接接起來算 sha256。
-- 固定指紋 `FINGERPRINTS`（色碼、品牌名、封面預設名稱、封面 prompt 的句子）寫死在這裡，是唯一一份；
-  `tests/unit/test_figures_no_brand.py` 也從這裡拿。沒有 `$EF_DATA`（例如 CI）時只用這一份。
-- 執行期指紋：每次執行時從 `$EF_DATA/authors/*/` 現算（`voice.md` 的 `name`、`id`、`brand.yaml` 的 `name`、
-  色碼、封面預設名稱、長句子的前八個詞、`persona.json` 的 `display_name`），只活在記憶體裡，不寫檔。
+- **repo 裡只放高熵的指紋**（`FINGERPRINTS`：封面 prompt 的長句子，八個詞）。色碼只有 2^24 種、名字是一個詞，
+  它們的 sha256 等於明文（一台電腦幾秒窮舉完），所以**不進 repo**——這類指紋只在執行期、從 `$EF_DATA` 現算：
+  `authors/*/` 的 `voice.md`（`name`、`id`）、`brand.yaml`（`name`、色碼、封面預設名稱、長句子）、
+  `persona.json` 的 `display_name`，以及 `imports/*.zip`（創作者的寫作系統：色碼與每行的開頭）。只活在記憶體裡，不寫檔。
+  沒有 `$EF_DATA`（例如 CI）時只剩 repo 裡那一組。
+  （舊版把色碼、品牌名的雜湊放在 repo 裡，它們已經在 dev 的歷史上，這次只是不再往前帶。）
 
 輸出只講「哪個 commit、哪個檔、第幾行」，**絕不印命中的字**：印出來就等於又洩一次。
+路徑本身命中時連路徑也不印，只印 commit 與「（路徑已遮蔽）」。
+
+範圍：新增的行、檔案路徑、commit message 都掃；`docs/`、`Ai-coding-principle/`、`.claude/skills/` 也掃，
+只有「創作者已經公開的品牌名」（`brand.yaml` 的 `name`）在這三棵樹底下放行（文件本來就會提到它）。
 
 限制（老實講）：
-- sha256 擋得住「不小心貼進來」，擋不住有心人窮舉；這裡要的是不小心，不是保密。
-- 它只認得「現在 `$EF_DATA` 裡有的」：創作者改名之後舊名字就不在指紋裡了；固定指紋要靠人補。
-- 只掃新增行（與上下文行組成的詞窗）；commit message、分支名、PR 本文不在範圍內。
+- 它只認得「現在 `$EF_DATA` 裡有的」：創作者改名之後舊名字就不在指紋裡了。
 - 太短或太常見的詞（少於三個字母、`me`、`default` 這類）不收，不然每個 commit 都被擋，人就學會繞過。
+- 分支名、PR 本文（不經過 `gh pr create` 指令的話）不在範圍內。
 - 在專案的 worktree 裡找不到 `data/` 時，會去主工作目錄找（見 `resolve_data_dir`）。
+- `$EF_DATA` 設了卻讀不到、`imports/` 裡有讀不開的 zip：掃不了，**擋下**（exit 2），不是放行。
 
-要新增固定指紋：用同一套轉換算出雜湊，貼進下面的清單（見 `digest_words`）。
+要新增固定指紋：只收長句子，用同一套轉換算出雜湊（見 `digest_words`）貼進下面的清單。
 """
 
 import argparse
@@ -34,6 +46,7 @@ import shlex
 import subprocess
 import sys
 import unicodedata
+import zipfile
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,28 +56,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 Fingerprint = tuple[int, str]  # (詞數或字數, sha256)
 
-# (詞數, sha256)
+# (詞數, sha256)：只放高熵的長句子。低熵的（色碼、名字）只在執行期現算，見檔頭。
 FINGERPRINTS: tuple[Fingerprint, ...] = (
-    # 七個色碼
-    (1, "46dfee0fad70a0c3bfc8ac762acf56d65b95476b33d4388641564e79f3d1f4d6"),
-    (1, "6a2bc2d1357d7c6157ba5cc9cc1c257527b542582b3936d138c0f9f779a75c29"),
-    (1, "534e8923582ab4d7169541d18cb7ccc50b1918811b5aefccce6abce161bdc56c"),
-    (1, "43b27863bb4d85ea45adda2aae095eb072f9cc92124e7dd06f25617a3239995c"),
-    (1, "f566415e57b78e8a2e7e86450f10296025f02e29ad6911604cd0839a9ec40b8d"),
-    (1, "db4233e00da71b0157a5b1e35a5033a858f719a97abc1d9b87534d86d6df3a40"),
-    (1, "db907ebcbfb04402ca5716e5dce4355893d32290a317c748714a668ba0bbeb92"),
-    # 品牌名
-    (1, "c2333a7e3a607935c67c1e6f6810395decc9f66f592b812aaada7db94ba215d6"),
-    # 舊守門測試擋過的兩個用語（封面沿革與參考圖裡的名字）
-    (1, "6813ef6a6fe84ee62300092ed4df60b2dc8f274b5aa8114903c4c5000eb8408f"),
-    (2, "b88adbff069627943b636dcfce256b4456dd8db6c7935e8986ead97e65bfbfeb"),
-    # 六個封面預設名稱
-    (2, "28aff10a0f34e778f893161a010e8cd21c1fa105ff12203abf9a09f80f20af65"),
-    (2, "0dab1336f25bcb42e248ba53aa6f6a3c923ad7d0ed63dc28ec3e58967a4a8f81"),
-    (2, "4c50ab82b40ea813313e06dd1a0814427616b20a88de469c1f26bc6b7928282e"),
-    (2, "891252b033c7a374d21450b8c1a1af285066fec1223a2ce1a991f0d135dfcff5"),
-    (2, "a41f84b44c3f96e4fa5e73093635b9ee609d005e0f1867b6482de6829cc3626c"),
-    (2, "84871b06a45f9b62428128e06e09fdebb84f700a7844edfd816e20e655a9129c"),
     # 封面 prompt 的句子（共同限制、形式、預設、市場觀察）
     (8, "6448165228f4ae849362cfc49d7bd52265c6b18671fa0fb650bb7b5330af3201"),
     (8, "3d7048faecf90b216fa8550752b47734659c9d13ba5949545db1f41335fa5923"),
@@ -82,7 +75,7 @@ FINGERPRINTS: tuple[Fingerprint, ...] = (
 )
 
 _WORD = re.compile(r"[a-z0-9]+")
-_CJK = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+_CJK = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
 
 # 太常見、收進去只會讓每個 commit 都被擋的詞；人被誤擋幾次就會繞過關卡，所以寧可不收。
@@ -107,19 +100,19 @@ _PUBLIC_DEFAULTS = (
 )
 
 _MAX_FILE_BYTES = 1_000_000
+_ZIP_TEXT_SUFFIXES = (".md", ".py", ".yaml", ".yml", ".json", ".txt")
+_MAX_ZIP_MEMBERS = 4000
 
-# 不掃的路徑。文件裡本來就會提到創作者公開的名字（ADR、路線圖、帳本都這樣寫），
-# 掃它們只會天天誤擋；出事的地方是程式、測試、說明檔與要隨程式出貨的內容（harness、scripts）。
-# 沒列在這裡的一律掃：新長出來的目錄預設在關卡裡，不是在關卡外。
-SKIP_PREFIXES = ("docs/", "Ai-coding-principle/", ".claude/skills/", ".claude/worktrees/", "uv.lock")
+# 這三棵樹裡本來就會提到創作者公開的品牌名（ADR、路線圖、帳本都這樣寫）：只有那一組放行，其餘照掃。
+DOCS_PREFIXES = ("docs/", "Ai-coding-principle/", ".claude/skills/")
 
-
-def in_scope(path: str) -> bool:
-    return not path.startswith(SKIP_PREFIXES)
+# 輸出裡代替「會洩漏的東西」的標籤
+MASK_PATH = "（路徑已遮蔽）"
+LABEL_MESSAGE = "（commit message）"
 
 
 class GuardError(RuntimeError):
-    """掃描本身出了問題（不是命中）：讀不到 git、參數不對。呼叫端要當成「擋下」。"""
+    """掃描本身出了問題（不是命中）：讀不到 git、讀不到資料目錄、參數不對。呼叫端要當成「擋下」。"""
 
 
 # ── 指紋 ────────────────────────────────────────────────────────────────
@@ -145,12 +138,18 @@ class Fingerprints:
 
     words: set[Fingerprint] = field(default_factory=set)
     cjk: set[Fingerprint] = field(default_factory=set)
+    # 上面兩份裡「創作者已經公開的品牌名」那一組：在 `DOCS_PREFIXES` 底下不擋
+    public_words: set[Fingerprint] = field(default_factory=set)
+    public_cjk: set[Fingerprint] = field(default_factory=set)
     runtime_terms: int = 0  # 從 `$EF_DATA` 現算出幾組（只用在說明，不含內容）
     source_files: int = 0
 
     @classmethod
     def fixed(cls) -> "Fingerprints":
         return cls(words=set(FINGERPRINTS))
+
+    def without_public(self) -> "Fingerprints":
+        return Fingerprints(words=self.words - self.public_words, cjk=self.cjk - self.public_cjk)
 
     def __len__(self) -> int:
         return len(self.words) + len(self.cjk)
@@ -168,12 +167,16 @@ def _usable_word(word: str) -> bool:
     return len(word) >= 3 and word not in _STOP_WORDS
 
 
-def term_fingerprints(term: str, *, split_words: bool = False) -> Fingerprints:
+def term_fingerprints(
+    term: str, *, split_words: bool = False, given_name: bool = False
+) -> Fingerprints:
     """一個名字或詞組的指紋。
 
     - 完整詞組一組（最多取前八個詞）；單一詞太短或太常見就不收。
     - `split_words`（人名、品牌名才開）：多詞名字的每個詞也各收一組，因為出事的就是「只用了名字的一半」。
-    - 漢字名字：完整一組；三～四個字時另收後兩個字（慣例上的「名」），因為只用名不用姓最常見。
+    - 漢字名字：完整一組。
+    - `given_name`（**只有角色 `voice.md` 的名字**才開）：三～四個字時另收後兩個字（慣例上的「名」），
+      因為只用名不用姓最常見。品牌名不開：品牌名的後兩個字常常是一般的詞，會天天誤擋。
     """
     out = Fingerprints()
     words = _word_tokens(term)
@@ -191,7 +194,7 @@ def term_fingerprints(term: str, *, split_words: bool = False) -> Fingerprints:
     if len(chars) >= 2:
         head_c = chars[:12]
         out.cjk.add((len(head_c), digest_chars(head_c)))
-        if 3 <= len(chars) <= 4:
+        if given_name and 3 <= len(chars) <= 4:
             out.cjk.add((2, digest_chars(chars[-2:])))
     return out
 
@@ -199,6 +202,8 @@ def term_fingerprints(term: str, *, split_words: bool = False) -> Fingerprints:
 def _merge(into: Fingerprints, other: Fingerprints) -> None:
     into.words |= other.words
     into.cjk |= other.cjk
+    into.public_words |= other.public_words
+    into.public_cjk |= other.public_cjk
 
 
 def _clean_scalar(raw: str) -> str:
@@ -226,16 +231,22 @@ def _frontmatter_pairs(text: str) -> Iterator[tuple[str, str]]:
 _KV = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z_][\w-]*)\s*:(?:\s+(.*))?$")
 
 
-def brand_fingerprints(text: str) -> Fingerprints:
-    """`brand.yaml` 的指紋：`name`、封面預設名稱、色碼、長句子的前八個詞。
-
-    不靠 PyYAML：這支要能在沒有裝相依的 `python3` 底下跑（git 的 hook 不一定在 uv 環境裡）。
-    寫法是逐行看縮排，形狀不對的行直接略過——漏掉一個欄位比整支壞掉好，而且色碼是整份文字用樣式找的。
-    """
+def _hex_fingerprints(text: str) -> Fingerprints:
     out = Fingerprints()
     for color in _HEX_COLOR.findall(text):
         if len(set(color[1:].lower())) > 1:  # #000000、#ffffff 這種到處都有的不收
             _merge(out, term_fingerprints(color))
+    return out
+
+
+def brand_fingerprints(text: str) -> Fingerprints:
+    """`brand.yaml` 的指紋：`name`、封面預設名稱、色碼、長句子的前八個詞。
+
+    `name`（品牌名）算「已經公開的品牌名」那一組（`public_*`）。
+    不靠 PyYAML：這支要能在沒有裝相依的 `python3` 底下跑（git 的 hook 不一定在 uv 環境裡）。
+    寫法是逐行看縮排，形狀不對的行直接略過——漏掉一個欄位比整支壞掉好，而且色碼是整份文字用樣式找的。
+    """
+    out = _hex_fingerprints(text)
     stack: list[tuple[int, str]] = []
     for line in text.splitlines():
         body = line.strip()
@@ -254,7 +265,11 @@ def brand_fingerprints(text: str) -> Fingerprints:
                 _merge(out, term_fingerprints(key))  # 封面預設的名稱
             stack.append((indent, key))
         elif key in _NAME_KEYS:
-            _merge(out, term_fingerprints(value, split_words=True))
+            found = term_fingerprints(value, split_words=True)
+            if key == "name":
+                found.public_words |= found.words
+                found.public_cjk |= found.cjk
+            _merge(out, found)
         else:
             _merge(out, _phrase_fingerprints(value))
     return out
@@ -269,6 +284,14 @@ def _phrase_fingerprints(text: str) -> Fingerprints:
     return out
 
 
+def _voice_fingerprints(text: str) -> Fingerprints:
+    out = Fingerprints()
+    for key, value in _frontmatter_pairs(text):
+        if key in _NAME_KEYS and value:
+            _merge(out, term_fingerprints(value, split_words=True, given_name=True))
+    return out
+
+
 def persona_fingerprints(persona_dir: Path) -> tuple[Fingerprints, int]:
     """一個角色資料夾的指紋，與讀到幾個檔。內容只在記憶體裡變成雜湊。"""
     out = Fingerprints()
@@ -277,9 +300,7 @@ def persona_fingerprints(persona_dir: Path) -> tuple[Fingerprints, int]:
     voice = _read_small(persona_dir / "voice.md")
     if voice is not None:
         files += 1
-        for key, value in _frontmatter_pairs(voice):
-            if key in _NAME_KEYS and value:
-                _merge(out, term_fingerprints(value, split_words=True))
+        _merge(out, _voice_fingerprints(voice))
     brand = _read_small(persona_dir / "brand.yaml")
     if brand is not None:
         files += 1
@@ -297,6 +318,52 @@ def persona_fingerprints(persona_dir: Path) -> tuple[Fingerprints, int]:
     return out, files
 
 
+def _line_heads(text: str) -> Fingerprints:
+    """每一行的開頭：英文行取前八個詞、中文行取前十二個字。拿來擋「措辭跟私人素材幾乎一樣」。"""
+    out = Fingerprints()
+    for line in text.splitlines():
+        words = _word_tokens(line)
+        if len(words) >= 8:
+            out.words.add((8, digest_words(words[:8])))
+        chars = _cjk_tokens(line)
+        if len(chars) >= 16:
+            out.cjk.add((12, digest_chars(chars[:12])))
+    return out
+
+
+def import_fingerprints(imports: Path) -> tuple[Fingerprints, int]:
+    """`$EF_DATA/imports/*.zip`（創作者的寫作系統）的指紋：色碼、每行的開頭、與裡面的 voice／brand。
+
+    直接讀成員、不解開到硬碟。讀不開的 zip 算「掃不了」：靜靜略過的話，保護就在不知情的時候少了一塊。
+    """
+    out = Fingerprints()
+    files = 0
+    for archive in sorted(imports.glob("*.zip")):
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                members = [m for m in zf.infolist() if not m.is_dir()][:_MAX_ZIP_MEMBERS]
+                for member in members:
+                    name = member.filename
+                    if not name.lower().endswith(_ZIP_TEXT_SUFFIXES) or member.file_size > _MAX_FILE_BYTES:
+                        continue
+                    text = zf.read(member).decode("utf-8", errors="ignore")
+                    files += 1
+                    # 色碼只從程式與設定檔取（說明文件裡的色碼是舉例，到處都有）；
+                    # 每行的開頭只從文章取（程式碼的行是機制，不是私人素材，拿來比對只會誤擋）
+                    if name.lower().endswith((".py", ".yaml", ".yml", ".json")):
+                        _merge(out, _hex_fingerprints(text))
+                    if name.lower().endswith((".md", ".txt")):
+                        _merge(out, _line_heads(text))
+                    base = name.rsplit("/", 1)[-1].lower()
+                    if base == "voice.md":
+                        _merge(out, _voice_fingerprints(text))
+                    elif base == "brand.yaml":
+                        _merge(out, brand_fingerprints(text))
+        except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+            raise GuardError("imports 裡有讀不開的 zip") from exc
+    return out, files
+
+
 def _read_small(path: Path) -> str | None:
     try:
         if not path.is_file() or path.stat().st_size > _MAX_FILE_BYTES:
@@ -307,16 +374,20 @@ def _read_small(path: Path) -> str | None:
 
 
 def resolve_data_dir(env: Mapping[str, str], root: Path = ROOT) -> Path | None:
-    """資料目錄在哪；找不到回 None（那就只用固定指紋）。
+    """資料目錄在哪；沒設又找不到回 None（那就只用 repo 裡的指紋）。
 
     跟 `paths.resolve_data_dir` 同一條規則：有設 `EF_DATA` 就用它，沒設用 repo 的 `data/`。
+    **設了卻不是讀得到的資料夾 -> `GuardError`（擋下）**：明說了要用它卻讀不到，靜靜退回只有固定指紋，
+    保護就在沒人發現的時候少了一大半。
     多一步：在子代理的 worktree（`.claude/worktrees/…`）裡 `data/` 不存在，私人資料放在主工作目錄，
     所以再去 git 的共用目錄旁邊找——不然最常出事的那個地方反而沒有執行期指紋。
     """
     configured = env.get("EF_DATA", "").strip()
     if configured:
         path = Path(configured).expanduser()
-        return path if path.is_dir() else None
+        if not path.is_dir() or not os.access(path, os.R_OK | os.X_OK):
+            raise GuardError("EF_DATA 設了，但指到的不是讀得到的資料夾")
+        return path
     candidates = [root / "data"]
     try:
         common = _git(["rev-parse", "--git-common-dir"], cwd=root).strip()
@@ -327,18 +398,24 @@ def resolve_data_dir(env: Mapping[str, str], root: Path = ROOT) -> Path | None:
 
 
 def load_fingerprints(env: Mapping[str, str] | None = None, root: Path = ROOT) -> Fingerprints:
-    """固定指紋，加上 `$EF_DATA/authors/*/` 現算的執行期指紋。"""
+    """repo 裡的長句子指紋，加上 `$EF_DATA` 現算的執行期指紋。"""
     environ = os.environ if env is None else env
     result = Fingerprints.fixed()
     data = resolve_data_dir(environ, root)
-    if data is None or not (data / "authors").is_dir():
+    if data is None:
         return result
     runtime = Fingerprints()
-    for persona in sorted((data / "authors").iterdir()):
-        if persona.name.startswith(".") or not persona.is_dir():
-            continue
-        found, files = persona_fingerprints(persona)
-        _merge(runtime, found)
+    authors = data / "authors"
+    if authors.is_dir():
+        for persona in sorted(authors.iterdir()):
+            if persona.name.startswith(".") or not persona.is_dir():
+                continue
+            found, files = persona_fingerprints(persona)
+            _merge(runtime, found)
+            runtime.source_files += files
+    if (data / "imports").is_dir():
+        imported, files = import_fingerprints(data / "imports")
+        _merge(runtime, imported)
         runtime.source_files += files
     # 公開預設裡本來就有的詞（範本的預設名字、預設色票）不算私人內容
     for rel in _PUBLIC_DEFAULTS:
@@ -403,6 +480,14 @@ def hits_in_text(text: str, fingerprints: Fingerprints) -> set[Fingerprint]:
     return found
 
 
+def scan_text(text: str, fingerprints: Fingerprints) -> set[int]:
+    """一段文字（整檔、commit message、指令文字）：每一行都算新增，回命中的行號。"""
+    return scan_lines(((i, line, True) for i, line in enumerate(text.splitlines(), 1)), fingerprints)
+
+
+scan_file_text = scan_text
+
+
 # ── diff ────────────────────────────────────────────────────────────────
 
 _HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -414,12 +499,15 @@ class Hunk:
     commit: str  # 空字串＝不是從 git log 來的（暫存區）
     path: str
     lines: list[tuple[int, str, bool]]
+    # 非空＝這不是內容，是一個檔的標頭（`diff --git a/x b/y` 後面那段，含改名前後的路徑），拿來掃路徑
+    header: str = ""
 
 
 def parse_diff(diff: str) -> Iterator[Hunk]:
     """把 unified diff（`git diff`、`git log -p --format='commit %H'`）拆成一段一段的 hunk。
 
     靠 hunk 標頭的行數決定哪裡結束，不靠看起來像不像：commit 說明、空行、下一個檔的標頭都不會被當成內容。
+    每個檔另外先吐一個只帶 `header` 的 Hunk，路徑（含改名、沒有內容的新檔）才掃得到。
     """
     commit = ""
     path = ""
@@ -455,6 +543,7 @@ def parse_diff(diff: str) -> Iterator[Hunk]:
             commit = found.group(1)[:8]
         elif raw.startswith("diff --git "):
             path = ""
+            yield Hunk(commit, path, [], header=raw[len("diff --git ") :])
         elif raw.startswith("+++ "):
             name = raw[4:].split("\t", 1)[0].strip()
             if name == "/dev/null":
@@ -474,22 +563,30 @@ def parse_diff(diff: str) -> Iterator[Hunk]:
         yield Hunk(commit, path, current)
 
 
-Hits =dict[tuple[str, str], set[int]]  # (commit, 路徑) -> 行號
+Hits = dict[tuple[str, str], set[int]]  # (commit, 路徑或標籤) -> 行號
 
 
 def scan_diff(diff: str, fingerprints: Fingerprints) -> Hits:
     hits: Hits = {}
+    docs_fp = fingerprints.without_public()
+    masked: dict[str, bool] = {}
     for hunk in parse_diff(diff):
-        if not in_scope(hunk.path):
+        if hunk.header:
+            in_docs = hunk.header.startswith(tuple("a/" + p for p in DOCS_PREFIXES))
+            if scan_lines([(0, hunk.header, True)], docs_fp if in_docs else fingerprints):
+                hits.setdefault((hunk.commit, MASK_PATH), set())
             continue
-        found = scan_lines(hunk.lines, fingerprints)
-        if found:
-            hits.setdefault((hunk.commit, hunk.path), set()).update(found)
+        if not hunk.lines:
+            continue
+        fp = docs_fp if hunk.path.startswith(DOCS_PREFIXES) else fingerprints
+        found = scan_lines(hunk.lines, fp)
+        if not found:
+            continue
+        if hunk.path not in masked:  # 路徑本身會洩漏的話，連路徑也不印
+            masked[hunk.path] = bool(scan_lines([(0, hunk.path, True)], fp))
+        shown = MASK_PATH if masked[hunk.path] else hunk.path
+        hits.setdefault((hunk.commit, shown), set()).update(found)
     return hits
-
-
-def scan_file_text(text: str, fingerprints: Fingerprints) -> set[int]:
-    return scan_lines(((i, line, True) for i, line in enumerate(text.splitlines(), 1)), fingerprints)
 
 
 # ── git ─────────────────────────────────────────────────────────────────
@@ -520,36 +617,33 @@ def staged_diff() -> str:
     return _git(["diff", "--cached", *_DIFF_FLAGS])
 
 
-def worktree_hits(fingerprints: Fingerprints) -> Hits:
-    """`git commit -a`、或同一條指令裡才 `git add` 的情況：暫存區現在是空的，所以放寬到可能被提交的全部。
-
-    追蹤中的檔案相對 HEAD 的變更，加上沒被忽略的未追蹤檔。多擋一點比漏掉便宜。
-    """
-    hits: Hits = {}
-    if _git(["rev-parse", "--verify", "--quiet", "HEAD"], ok=(0, 1)).strip():
-        _add_hits(hits, scan_diff(_git(["diff", "HEAD", *_DIFF_FLAGS]), fingerprints))
-    top = Path(_git(["rev-parse", "--show-toplevel"]).strip())
-    listing = _git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=top)
-    for name in filter(None, listing.split("\0")):
-        path = top / name
-        if path.is_symlink() or not in_scope(name):
-            continue
-        text = _read_small(path)
-        if text is None:
-            continue
-        found = scan_file_text(text, fingerprints)
-        if found:
-            hits.setdefault(("(未追蹤)", name), set()).update(found)
-    return hits
-
-
 def _add_hits(into: Hits, other: Hits) -> None:
     for key, lines in other.items():
         into.setdefault(key, set()).update(lines)
 
 
 def _log_diff(revs: Sequence[str]) -> str:
-    return _git(["log", "-p", "--format=commit %H", *_DIFF_FLAGS, *revs])
+    # `--diff-merges=first-parent`：merge commit 也要有 diff（衝突解掉的內容只存在 merge commit 裡）；
+    # 預設的 `git log -p` 不給 merge 的 diff。需要 git 2.31 以上。
+    return _git(["log", "-p", "--diff-merges=first-parent", "--format=commit %H", *_DIFF_FLAGS, *revs])
+
+
+def _log_messages(revs: Sequence[str], fingerprints: Fingerprints) -> Hits:
+    """要推的每個 commit 的 message。"""
+    out = _git(["log", "--format=%H%x00%B%x00", *revs])
+    parts = out.split("\0")
+    hits: Hits = {}
+    for i in range(0, len(parts) - 1, 2):
+        sha, body = parts[i].strip(), parts[i + 1]
+        if found := scan_text(body, fingerprints):
+            hits.setdefault((sha[:8], LABEL_MESSAGE), set()).update(found)
+    return hits
+
+
+def _scan_range(revs: Sequence[str], fingerprints: Fingerprints) -> Hits:
+    hits = scan_diff(_log_diff(revs), fingerprints)
+    _add_hits(hits, _log_messages(revs, fingerprints))
+    return hits
 
 
 def _remote_scope(remote: str | None) -> list[str]:
@@ -563,19 +657,27 @@ def push_command_revs(args: Sequence[str]) -> tuple[list[str], list[str]]:
     """`git push` 後面的參數 -> (要推的 revs, 範圍條件)。只認得常見的寫法。
 
     第一個不帶 `-` 的詞是遠端，之後的是 refspec（`+src:dst`、`HEAD`、分支名）；沒寫 refspec 就是目前分支。
-    解不開的 refspec（刪除用的 `:dst`、打錯字）略過：真要推它，git 自己會失敗。
+    **解不開的來源 -> `GuardError`（擋下）**：打錯字的分支名、認不得的寫法，靜靜略過等於沒掃。
+    只有刪除（`:dst`、`--delete`）沒有新內容，那才是合法的略過。
     """
+    if "--delete" in args or "-d" in args:
+        return [], []
     positional = [a for a in args if not a.startswith("-")]
     remote = positional[0] if positional else None
     specs = positional[1:]
     revs: list[str] = []
     if "--all" in args or "--mirror" in args:
-        revs = ["--branches"]
-    else:
+        revs.append("--branches")
+    if "--tags" in args:
+        revs.append("--tags")
+    if not revs or specs:
         for spec in specs or ["HEAD"]:
             src = spec.lstrip("+").split(":", 1)[0]
-            if src and _git(["rev-parse", "--verify", "--quiet", f"{src}^{{commit}}"], ok=(0, 1)).strip():
-                revs.append(src)
+            if not src:  # `:dst` 是刪除遠端的分支
+                continue
+            if not _has(src):
+                raise GuardError(f"解不開要推的來源「{src}」，不知道會推出什麼")
+            revs.append(src)
     return revs, _remote_scope(remote)
 
 
@@ -583,7 +685,7 @@ def push_hits(args: Sequence[str], fingerprints: Fingerprints) -> Hits:
     revs, scope = push_command_revs(args)
     if not revs:
         return {}
-    return scan_diff(_log_diff([*revs, *scope]), fingerprints)
+    return _scan_range([*revs, *scope], fingerprints)
 
 
 def prepush_hits(remote: str, stdin: Iterable[str], fingerprints: Fingerprints) -> Hits:
@@ -597,13 +699,23 @@ def prepush_hits(remote: str, stdin: Iterable[str], fingerprints: Fingerprints) 
         local, remote_sha = parts[1], parts[3]
         known = remote_sha != zeros and _has(remote_sha)
         revs = [f"{remote_sha}..{local}"] if known else [local, *_remote_scope(remote)]
-        _add_hits(hits, scan_diff(_log_diff(revs), fingerprints))
+        _add_hits(hits, _scan_range(revs, fingerprints))
     return hits
 
 
-def _has(sha: str) -> bool:
-    """這個 commit 本機有沒有（別人推過、我們還沒 fetch 的就沒有）。"""
-    return bool(_git(["rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"], ok=(0, 1)).strip())
+def _has(rev: str) -> bool:
+    """這個 rev 本機解不解得開成 commit（別人推過、我們還沒 fetch 的 sha 就解不開）。"""
+    return bool(_git(["rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"], ok=(0, 1)).strip())
+
+
+def message_hits(path: Path, fingerprints: Fingerprints) -> Hits:
+    """`commit-msg` hook：git 給的訊息檔。`#` 開頭的行是 git 加的說明，不是訊息，不掃。"""
+    text = _read_small(path)
+    if text is None:
+        raise GuardError("讀不到 commit message 檔")
+    kept = "\n".join("" if line.startswith("#") else line for line in text.splitlines())
+    found = scan_text(kept, fingerprints)
+    return {("", LABEL_MESSAGE): found} if found else {}
 
 
 # ── 輸出與進入點 ────────────────────────────────────────────────────────
@@ -611,9 +723,9 @@ def _has(sha: str) -> bool:
 
 def format_hits(hits: Hits, fingerprints: Fingerprints) -> str:
     out = ["brand_guard：掃到創作者的私人內容（只列位置，不列內容）："]
-    for (commit, path), lines in hits.items():
-        where = ", ".join(str(n) for n in sorted(lines))
-        out.append(f"  {commit + ' ' if commit else ''}{path or '(刪除的檔)'}:{where}")
+    for (commit, label), lines in hits.items():
+        where = ":" + ", ".join(str(n) for n in sorted(lines)) if lines else ""
+        out.append(f"  {commit + ' ' if commit else ''}{label or '(刪除的檔)'}{where}")
     out.append(
         "怎麼辦：改成虛構的名字、虛構的色票與用語（例：假角色 Ada Fakename、#123456），不要用真人的；"
         "已經 commit 進本機歷史的，推之前先改掉那幾個 commit。不要用 --no-verify 繞過，那是使用者自己的決定。"
@@ -625,10 +737,13 @@ def format_hits(hits: Hits, fingerprints: Fingerprints) -> str:
 def describe(fingerprints: Fingerprints) -> str:
     if fingerprints.runtime_terms:
         return (
-            f"（指紋：固定 {len(FINGERPRINTS)} 組，另有 {fingerprints.runtime_terms} 組從 "
+            f"（指紋：repo 裡 {len(FINGERPRINTS)} 組長句子，另有 {fingerprints.runtime_terms} 組從 "
             f"$EF_DATA 的 {fingerprints.source_files} 個檔現算）"
         )
-    return f"（指紋：只有固定的 {len(FINGERPRINTS)} 組；找不到 $EF_DATA/authors，沒有現算的那一部分）"
+    return (
+        f"（指紋：只有 repo 裡的 {len(FINGERPRINTS)} 組長句子；沒有從 $EF_DATA 現算出任何指紋"
+        "（沒設、或裡面沒有 authors／imports），名字、色碼這類低熵的指紋這次沒有）"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -637,10 +752,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="commit／push 之前掃私人內容指紋。有命中 exit 1（只印位置），掃不了 exit 2，乾淨 exit 0。",
     )
     sub = parser.add_subparsers(dest="mode", required=True)
-    staged = sub.add_parser("staged", help="掃暫存區的 diff（git commit 之前）")
-    staged.add_argument(
-        "--worktree", action="store_true", help="連同未暫存的變更與未追蹤的檔（commit -a 或同一條指令才 add）"
-    )
+    sub.add_parser("staged", help="掃暫存區的 diff（路徑也掃；git 原生 pre-commit 用）")
+    message = sub.add_parser("message", help="掃 commit message 檔（git 原生 commit-msg 用）")
+    message.add_argument("path")
     push = sub.add_parser("push", help="掃 `git push` 指令要推出去的 commit；`--` 後面照 git push 的參數寫")
     push.add_argument("push_args", nargs="*")
     prepush = sub.add_parser("pre-push", help="給 git 原生 pre-push 用：參數是遠端名稱，標準輸入是 ref 清單")
@@ -649,19 +763,25 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("diff", help="從標準輸入讀 unified diff")
     files = sub.add_parser("files", help="整檔掃描")
     files.add_argument("paths", nargs="+")
+    guard = sub.add_parser(
+        "guard", help="給 Claude Code 守衛用：標準輸入是指令；目標 repo 沒啟用 .githooks 就擋（見 git_gate.py）"
+    )
+    guard.add_argument("--cwd", default="")
+    guard.add_argument("--raw-file", default="", help="沒去掉 heredoc 的原始指令，掃裡面的訊息文字用")
     sub.add_parser("stats", help="只印指紋的來源與數量，不掃")
     return parser
 
 
 def run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> int:
     args = build_parser().parse_args(list(argv))
-    fingerprints = load_fingerprints(env)
     hits: Hits = {}
+    fingerprints = Fingerprints.fixed()
     try:
+        fingerprints = load_fingerprints(env)
         if args.mode == "staged":
             hits = scan_diff(staged_diff(), fingerprints)
-            if args.worktree:
-                _add_hits(hits, worktree_hits(fingerprints))
+        elif args.mode == "message":
+            hits = message_hits(Path(args.path), fingerprints)
         elif args.mode == "push":
             hits = push_hits(shlex.split(" ".join(args.push_args)), fingerprints)
         elif args.mode == "pre-push":
@@ -675,8 +795,17 @@ def run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> int:
                 text = _read_small(Path(name))
                 if text is None:  # 太大：不是文字稿，略過
                     continue
-                if found := scan_file_text(text, fingerprints):
+                if found := scan_text(text, fingerprints):
                     hits[("", name)] = found
+        elif args.mode == "guard":
+            from evidence_forge.git_gate import guard_command
+
+            raw = _read_small(Path(args.raw_file)) if args.raw_file else None
+            problems = guard_command(sys.stdin.read(), args.cwd, raw, fingerprints)
+            if problems:
+                print("\n".join(problems), file=sys.stderr)
+                return 1
+            return 0
         else:
             print(describe(fingerprints), file=sys.stderr)
             return 0

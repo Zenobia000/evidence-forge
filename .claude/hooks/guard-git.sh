@@ -197,8 +197,11 @@ if ! command -v jq >/dev/null 2>&1; then
   deny "Blocked: guard-git.sh 需要 jq 才讀得到指令，這台機器找不到 jq。沒有它守衛會靜靜全部放行，所以先擋。請人裝好 jq（例：apt install jq、brew install jq、winget install jqlang.jq）再試。"
 fi
 
-cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+input=$(cat)
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
+hookcwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$cmd" ] && exit 0
+cmd_raw=$cmd   # 去掉 heredoc 之前的原樣；私人內容關卡掃訊息文字要看 heredoc 裡寫了什麼
 
 # 把「引號分隔字」heredoc 的內容拿掉，再拿去比對規則。
 #
@@ -274,65 +277,6 @@ fi
 if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit[^;|&]*[[:space:]](--no-verify|-n)([[:space:]]|;|\)|$)"; then
   deny "Blocked: commit with hooks bypassed. A failing hook is a signal to fix, not to mute. Investigate the failure; bypassing is the user's call."
 fi
-
-# 私人內容關卡（#126）：commit 與 push 之前掃指紋，有命中就擋。
-#
-# 為什麼在這裡：這個 repo 是公開的。舊的守門只在整套測試跑完才紅，那時 commit 做了、push 也推了
-# （2026-10-15 創作者的真名就這樣進了公開歷史，帳本 L-028）。公開歷史上的東西只有 GitHub 客服收得回來，
-# 所以檢查要在 commit 與 push **之前**，不是之後。
-#
-# 這裡做的事很薄：判斷「這是不是 commit／push」，然後交給 scripts/brand_guard.py。指紋怎麼來、
-# 怎麼比、為什麼輸出不含命中的字，都在 src/evidence_forge/brand_guard.py 的說明；git 原生的
-# pre-commit／pre-push（.githooks/）呼叫同一支，所以手動 push 也被擋，規則只有一份。
-#
-# **掃不了也擋（fail-closed）**：找不到 python3、找不到腳本、腳本自己壞掉，都不放行——
-# 這一關擋的是推出去就收不回來的東西，放行的代價遠高於擋錯一次。跟上面缺 jq 同一個取捨。
-#
-# 已知邊界（寫出來，免得讀的人以為它保證了全部）：
-#   - 掃的是**這個守衛的工作目錄**的 repo；`git -C 別處 commit`、`cd 別處 && git commit` 看不到。
-#   - 同一條指令裡才 `git add` 或用 `commit -a` 時，暫存區現在是空的，所以改掃「可能被提交的全部」
-#     （追蹤中檔案相對 HEAD 的變更＋未追蹤的檔），寧可多擋。
-#   - 真正精確的是 git 原生 hook（commit 當下才看暫存區）；那要 `git config core.hooksPath .githooks`，
-#     見 README。沒設的機器只有這一層。
-BRAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/brand_guard.py"
-
-brand_scan() { # $1=是什麼指令（給訊息用） 其餘=scripts/brand_guard.py 的參數
-  local what=$1 py out rc
-  shift
-  py=$(command -v python3 || command -v python || true)
-  if [ -z "$py" ]; then
-    deny "Blocked: $what — 私人內容掃描需要 python3，這台機器找不到。沒有它這一關會靜靜放行，所以先擋。請人裝好 python3 再試。"
-  fi
-  if [ ! -f "$BRAND_GUARD" ]; then
-    deny "Blocked: $what — 找不到 $BRAND_GUARD，私人內容掃描跑不了，所以先擋。"
-  fi
-  out=$("$py" "$BRAND_GUARD" "$@" 2>&1)
-  rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    1) deny "Blocked: $what — 要進歷史的內容裡有創作者的私人字眼（這個 repo 是公開的，推出去就收不回來）。
-$out" ;;
-    *) deny "Blocked: $what — 私人內容掃描自己壞了（exit $rc），掃不了就不放行。
-$out" ;;
-  esac
-}
-
-if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit([[:space:]]|;|\)|$)"; then
-  wt=""
-  if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+add([[:space:]]|;|\)|$)" \
-     || printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit[^;|&]*[[:space:]](-[a-zA-Z]*a[a-zA-Z]*|--all|--include)([[:space:]]|;|\)|$)"; then
-    wt="--worktree"
-  fi
-  brand_scan "git commit" staged $wt
-fi
-
-# 每一個 `git push`（一條指令可能有好幾個）各掃一次；後面的參數原樣交給腳本，由它解出要推哪些 commit。
-while IFS= read -r pushargs; do
-  [ -z "${pushargs:-}" ] && continue
-  brand_scan "git push" push -- "${pushargs#*git push}"
-done <<EOF
-$(printf '%s\n' "$cmd" | grep -oE "${P}git[[:space:]]+push([[:space:]][^;|&]*)?" | sed -E 's/^[;|&(\$[:space:]]*//')
-EOF
 
 # Merging a PR lands code on a shared branch and can trigger deploys — the one
 # button in the whole flow that nobody can un-press. 'gh pr merge' is the front
@@ -592,6 +536,49 @@ fi
 
 if printf '%s\n' "$cmd" | grep -qE "${P}gh[[:space:]]+api[^;|&]*/merge([[:space:]]|'|\"|;|\)|$)"; then
   deny "Blocked: merging a PR through the REST API. Going around 'gh pr merge' does not change what it is — the merge button belongs to the user. Report the PR URL and stop."
+fi
+
+# （放在最後：上面所有舊規則先各自擋，擋下時說的是它們自己的理由；
+# 通過了才輪到這一關，看目標 repo 有沒有啟用私人內容 hook。）
+# 私人內容關卡（#126）：目標 repo 沒啟用 git 原生的私人內容 hook，就不准 commit／push。
+#
+# 為什麼：這個 repo 是公開的，推出去的東西只有 GitHub 客服收得回來（2026-10-15 創作者的真名就這樣進了
+# 公開歷史，帳本 L-028）。創作者定的設計是**主關卡放在 git 原生 hook**（.githooks/pre-commit、commit-msg、
+# pre-push；`git config core.hooksPath .githooks` 啟用），因為它在 commit 與 push 當下才看內容，
+# 不管指令是誰下的、怎麼拼的。這裡的工作是確保它真的在：
+#   - `git commit`／`git push`／`gh pr create`／`gh pr merge` 的**目標 repo**（看得懂 `git -C <dir>`、
+#     `cd <dir> &&`、`--git-dir`／`--work-tree`、`bash -c`、`$( )`；起點是 hook 輸入的 `.cwd`）
+#     沒有把 core.hooksPath 設成 .githooks、或 hook 檔缺了，就擋；
+#   - 用 `-c core.hooksPath=…`、GIT_CONFIG_*、改 core.hooksPath 的 `git config`、push／commit 的 --no-verify
+#     把 hook 關掉，也擋；
+#   - 指令裡的文字（commit message、PR 標題與內文）與 `-F`／`--body-file` 指到的檔掃指紋。
+# 目標資料夾算不出來、解析指令本身失敗、掃描壞了，一律擋（fail-closed）：這一關擋的是推出去就收不回來的
+# 東西，放行的代價遠高於擋錯一次，跟上面缺 jq 同一個取捨。細節與不處理的寫法見 src/evidence_forge/git_gate.py。
+# 缺 python3 只在指令看起來是 commit／push／PR 時才擋——`git status` 不該因為沒有 python3 就掛掉。
+BRAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/brand_guard.py"
+
+if printf '%s\n' "$cmd" | grep -qE '(^|[^[:alnum:]_.-])(git|gh)[[:space:]]'; then
+  bg_need=0
+  printf '%s\n' "$cmd" | grep -qE '(commit|push|config|alias|pr[[:space:]]+(create|merge))' && bg_need=1
+  bg_py=$(command -v python3 || command -v python || true)
+  if [ -z "$bg_py" ] || [ ! -f "$BRAND_GUARD" ]; then
+    if [ "$bg_need" -eq 1 ]; then
+      deny "Blocked: 私人內容關卡跑不了——找不到 python3，或找不到 $BRAND_GUARD。沒有它這一關會靜靜放行，所以先擋。請人裝好 python3、確認腳本在，再試。"
+    fi
+  else
+    bg_raw=$(mktemp 2>/dev/null || true)
+    [ -n "$bg_raw" ] && printf '%s' "$cmd_raw" > "$bg_raw"
+    bg_out=$(printf '%s' "$cmd" | "$bg_py" "$BRAND_GUARD" guard --cwd "$hookcwd" ${bg_raw:+--raw-file "$bg_raw"} 2>&1)
+    bg_rc=$?
+    [ -n "$bg_raw" ] && rm -f "$bg_raw"
+    case "$bg_rc" in
+      0) ;;
+      1) deny "Blocked: 私人內容關卡（這個 repo 是公開的，推出去就收不回來）：
+$bg_out" ;;
+      *) deny "Blocked: 私人內容關卡自己壞了（exit $bg_rc），看不清楚就不放行：
+$bg_out" ;;
+    esac
+  fi
 fi
 
 exit 0

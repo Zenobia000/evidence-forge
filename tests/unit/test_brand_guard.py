@@ -7,6 +7,7 @@
 import io
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,11 @@ import pytest
 from evidence_forge import brand_guard
 from evidence_forge.brand_guard import (
     FINGERPRINTS,
+    MASK_PATH,
     ROOT,
     Fingerprints,
+    GuardError,
+    format_hits,
     digest_words,
     hits_in_text,
     load_fingerprints,
@@ -102,10 +106,23 @@ def test_抓得到假句子的前八個詞(fp: Fingerprints) -> None:
     assert _lines("Paint every subject as\nthough lit by a", fp) == {1}  # 跨行
 
 
-def test_抓得到中文名字_顯示名稱與只用名不用姓(fp: Fingerprints) -> None:
+def test_抓得到中文名字_顯示名稱_中間夾標點也算(fp: Fingerprints) -> None:
     assert _lines("作者：岑嵐瑞", fp) == {1}
-    assert _lines("叫我嵐瑞就好", fp) == {1}
-    assert _lines("岑，嵐 瑞", fp) == {1}  # 中間夾標點與空白也算
+    assert _lines("岑，嵐 瑞", fp) == {1}
+    assert _lines("叫我嵐瑞就好", fp) == set()  # 顯示名稱不套「只用名」的規則
+
+
+def test_只用名不用姓_只套在voice的名字_品牌名不套(tmp_path: Path) -> None:
+    folder = tmp_path / "ef" / "authors" / "plain"
+    folder.mkdir(parents=True)
+    (folder / "voice.md").write_text("---\nname: 宋硯川\n---\n", encoding="utf-8")
+    (folder / "brand.yaml").write_text("name: 澄光書坊\n", encoding="utf-8")
+    fingerprints = load_fingerprints({"EF_DATA": str(tmp_path / "ef")})
+
+    assert _lines("宋硯川", fingerprints) == {1}
+    assert _lines("叫我硯川就好", fingerprints) == {1}  # voice 的名字：後兩個字（名）也算
+    assert _lines("澄光書坊", fingerprints) == {1}
+    assert _lines("一間書坊", fingerprints) == set()  # 品牌名的後兩個字是一般的詞，不算
 
 
 def test_全形英文也抓得到(fp: Fingerprints) -> None:
@@ -154,12 +171,28 @@ def test_沒有EF_DATA時只用固定指紋(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
 
-    for env in ({"EF_DATA": str(empty)}, {"EF_DATA": str(tmp_path / "missing")}):
-        fingerprints = load_fingerprints(env)
-        assert fingerprints.words == set(FINGERPRINTS)
-        assert fingerprints.runtime_terms == 0
+    fingerprints = load_fingerprints({"EF_DATA": str(empty)})
+    assert fingerprints.words == set(FINGERPRINTS)
+    assert fingerprints.runtime_terms == 0
     # 沒設 EF_DATA、repo 底下也沒有 data/：同樣
     assert load_fingerprints({}, root=tmp_path).words == set(FINGERPRINTS)
+
+
+def test_EF_DATA設了卻讀不到_是掃不了_不是退回固定指紋(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(GuardError):
+        load_fingerprints({"EF_DATA": str(tmp_path / "missing")})
+    monkeypatch.setenv("EF_DATA", str(tmp_path / "missing"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    assert run(["diff"]) == 2
+    assert "先擋下" in capsys.readouterr().err
+
+
+def test_repo裡只有高熵的長句子指紋_色碼與名字只在執行期現算() -> None:
+    # 色碼只有 2^24 種、名字是一個詞：它們的 sha256 等於明文，不能進 repo
+    assert {n for n, _ in FINGERPRINTS} == {8}
 
 
 def test_固定指紋真的在掃(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -172,7 +205,7 @@ def test_固定指紋真的在掃(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     err = capsys.readouterr().err
     assert "src/a.py:1" in err
     assert "glorbnax" not in err.lower()
-    assert "只有固定的" in err  # 說清楚這次沒有現算的那一部分
+    assert "只有 repo 裡的" in err  # 說清楚這次沒有現算的那一部分
 
 
 def test_真的固定指紋一組都不少() -> None:
@@ -189,7 +222,8 @@ def test_worktree裡找不到data時去主工作目錄找(tmp_path: Path) -> Non
     _git(main, "worktree", "add", "-q", str(tree), "-b", "side")
 
     assert resolve_data_dir({}, root=tree) == (main / "data").resolve()
-    assert resolve_data_dir({"EF_DATA": str(tmp_path / "nope")}, root=tree) is None  # 明說了就照明說的
+    with pytest.raises(GuardError):  # 明說了就照明說的，讀不到就是掃不了
+        resolve_data_dir({"EF_DATA": str(tmp_path / "nope")}, root=tree)
 
 
 # ── 輸出不含命中的字 ────────────────────────────────────────────────────
@@ -249,11 +283,40 @@ def test_只算新增行_舊的內容與上下文裡的不算(fp: Fingerprints) 
     assert scan_diff(diff, fp) == {}
 
 
-def test_範圍外的路徑不掃_文件裡可以提到公開的名字(fp: Fingerprints) -> None:
-    diff = f"diff --git a/docs/x.md b/docs/x.md\n+++ b/docs/x.md\n@@ -0,0 +1 @@\n+{FAKE_NAME}\n"
+def _added(path: str, text: str) -> str:
+    return f"diff --git a/{path} b/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+{text}\n"
 
-    assert scan_diff(diff, fp) == {}
-    assert scan_diff(diff.replace("docs/x.md", "src/x.md"), fp) == {("", "src/x.md"): {1}}
+
+@pytest.mark.parametrize("tree", ["docs", "Ai-coding-principle", ".claude/skills/x"])
+def test_文件底下也掃_只有公開的品牌名放行(fp: Fingerprints, tree: str) -> None:
+    path = f"{tree}/x.md"
+
+    assert scan_diff(_added(path, FAKE_BRAND), fp) == {}  # 品牌名：文件本來就會提到
+    assert scan_diff(_added(path, FAKE_NAME), fp) == {("", path): {1}}  # 真名、色票、句子：照擋
+    assert scan_diff(_added(path, FAKE_COLOR), fp) == {("", path): {1}}
+    assert scan_diff(_added(path, FAKE_PHRASE), fp) == {("", path): {1}}
+    # 同一個品牌名在程式與測試裡照擋
+    assert scan_diff(_added("src/x.py", FAKE_BRAND), fp) == {("", "src/x.py"): {1}}
+
+
+def test_路徑本身命中_不印路徑_只印commit與遮蔽標籤(fp: Fingerprints) -> None:
+    sha = "c" * 40
+    leaky = f"data/{FAKE_NAME.split()[0].lower()}/notes.txt"
+    diff = (
+        f"commit {sha}\n\n"
+        f"diff --git a/{leaky} b/{leaky}\nnew file mode 100644\n"  # 沒有內容的新檔：只有標頭看得到路徑
+        "diff --git a/old.txt b/data/ok.txt\nsimilarity index 100%\n"
+        f"rename from old.txt\nrename to data/{FAKE_NAME.split()[1].lower()}.txt\n"
+        f"diff --git a/{leaky}2 b/{leaky}2\n+++ b/{leaky}2\n@@ -0,0 +1 @@\n+{FAKE_NAME}\n"
+    )
+
+    hits = scan_diff(diff, fp)
+
+    assert set(hits) == {("cccccccc", MASK_PATH)}
+    assert hits[("cccccccc", MASK_PATH)] == {1}  # 內容那一行號碼也在，但路徑已遮蔽
+    text = format_hits(hits, fp)
+    assert "notes.txt" not in text and "data/" not in text
+    assert "（路徑已遮蔽）" in text
 
 
 def test_詞窗跨過新增行與上下文行也算(fp: Fingerprints) -> None:
@@ -290,7 +353,7 @@ def test_log_的commit標頭變成標籤_說明文字不被當成內容(fp: Fing
     )
 
     assert scan_diff(diff, fp) == {("aaaaaaaa", "src/a.py"): {1}}
-    assert [(h.commit, h.path) for h in parse_diff(diff)] == [("aaaaaaaa", "src/a.py"), ("bbbbbbbb", "src/b.py")]
+    assert [(h.commit, h.path) for h in parse_diff(diff) if not h.header] == [("aaaaaaaa", "src/a.py"), ("bbbbbbbb", "src/b.py")]
 
 
 def test_沒有行數的單行hunk與刪除檔不會壞掉(fp: Fingerprints) -> None:
@@ -360,16 +423,67 @@ def test_staged_乾淨放行_沒暫存的髒東西不管(repo: Path) -> None:
     assert run(["staged"]) == 0
 
 
-def test_staged_worktree_連同未暫存與未追蹤的也看(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _write(repo, "README.txt", f"hello {FAKE_NAME}\n")  # 追蹤中、沒 add（commit -a 會帶進去）
-    _write(repo, "src/new.py", f"x = '{FAKE_COLOR}'\n")  # 未追蹤（同一條指令才 add）
+def test_staged_檔名有假名字_路徑不印出來(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write(repo, "data/quillon-notes.txt", "nothing in it\n")
+    _git(repo, "add", "data/quillon-notes.txt")
 
-    assert run(["staged"]) == 0
-    assert run(["staged", "--worktree"]) == 1
+    assert run(["staged"]) == 1
     err = capsys.readouterr().err
-    assert "README.txt:1" in err
-    assert "src/new.py:1" in err
-    assert "13579" not in err
+    assert "（路徑已遮蔽）" in err
+    assert "quillon" not in err.lower()
+
+
+def test_message_檔_註解行不掃_訊息有假名字就擋(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ok = tmp_path / "ok.txt"
+    ok.write_text(f"subject\n\n# git 加的說明 {FAKE_NAME}\nbody\n", encoding="utf-8")
+    bad = tmp_path / "bad.txt"
+    bad.write_text(f"subject\n\nbody mentions {FAKE_BRAND}\n", encoding="utf-8")
+
+    assert run(["message", str(ok)]) == 0
+    assert run(["message", str(bad)]) == 1
+    err = capsys.readouterr().err
+    assert "（commit message）:3" in err
+    assert "marbled" not in err.lower()
+    assert run(["message", str(tmp_path / "missing.txt")]) == 2
+
+
+def test_push_commit_message裡的假名字也擋_只印commit與行號(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _remote(repo, tmp_path)
+    _write(repo, "src/ok.py", "x = 1\n")
+    _git(repo, "add", "src/ok.py")
+    _git(repo, "commit", "-q", "-m", f"fix the thing\n\nfor {FAKE_NAME}")
+    sha = _git(repo, "rev-parse", "--short=8", "HEAD").strip()
+
+    assert run(["push", "--", "origin HEAD"]) == 1
+    err = capsys.readouterr().err
+    assert f"{sha} （commit message）:3" in err
+    assert "tavernash" not in err.lower()
+
+
+def test_push_merge_commit裡解衝突寫進去的假名字也擋(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _remote(repo, tmp_path)
+    _git(repo, "checkout", "-q", "-b", "side")
+    _write(repo, "m.txt", "side\n")
+    _git(repo, "add", "m.txt")
+    _git(repo, "commit", "-q", "-m", "side")
+    _git(repo, "checkout", "-q", "main")
+    _write(repo, "m.txt", "main\n")
+    _git(repo, "add", "m.txt")
+    _git(repo, "commit", "-q", "-m", "main")
+    subprocess.run(["git", "-C", str(repo), "merge", "-q", "side"], capture_output=True, check=False)
+    _write(repo, "m.txt", f"resolved by {FAKE_NAME}\n")  # 衝突解掉的內容只存在 merge commit 裡
+    _git(repo, "add", "m.txt")
+    _git(repo, "commit", "-q", "-m", "merge side")
+    merge = _git(repo, "rev-parse", "--short=8", "HEAD").strip()
+
+    assert run(["push", "--", "origin HEAD"]) == 1
+    assert f"{merge} m.txt:1" in capsys.readouterr().err
 
 
 def _remote(repo: Path, tmp_path: Path) -> None:
@@ -420,6 +534,27 @@ def test_push_指定其他分支與_all(repo: Path, tmp_path: Path) -> None:
     assert run(["push", "--", "origin side:refs/heads/other"]) == 1
     assert run(["push", "--", "--all origin"]) == 1
     assert run(["push", "--", "origin :side"]) == 0  # 刪遠端分支：沒有新內容
+    assert run(["push", "--", "--delete origin side"]) == 0
+
+
+def test_push_解不開的來源是掃不了_不是略過(repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _remote(repo, tmp_path)
+
+    assert run(["push", "--", "origin no-such-branch"]) == 2
+    assert "先擋下" in capsys.readouterr().err
+    assert run(["push", "--", "origin HEAD no-such-branch"]) == 2
+
+
+def test_push_tags(repo: Path, tmp_path: Path) -> None:
+    _remote(repo, tmp_path)
+    _write(repo, "src/leak.py", f"x = '{FAKE_NAME}'\n")
+    _git(repo, "add", "src/leak.py")
+    _git(repo, "commit", "-q", "-m", "leak")
+    _git(repo, "tag", "v1")
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")  # 分支乾淨了，但 tag 還指著洩漏的 commit
+
+    assert run(["push", "--", "origin HEAD"]) == 0
+    assert run(["push", "--", "--tags origin"]) == 1
 
 
 def test_pre_push_原生hook的標準輸入(
@@ -478,4 +613,42 @@ def test_指令列入口跑得起來_不需要uv環境(tmp_path: Path) -> None:
     )  # fmt: skip
 
     assert proc.returncode == 0
-    assert "固定" in proc.stderr
+    assert "指紋" in proc.stderr
+
+
+def _zip(path: Path, members: dict[str, str]) -> None:
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, text in members.items():
+            zf.writestr(name, text)
+
+
+def test_imports的zip也算來源_色碼與每行的開頭(tmp_path: Path) -> None:
+    data = tmp_path / "ef"
+    (data / "imports").mkdir(parents=True)
+    _zip(
+        data / "imports" / "system.zip",
+        {
+            ".claude/skills/x/scripts/chart_style.py": f'PAPER = "{FAKE_COLOR}"\n',
+            ".claude/skills/x/references/craft/open.md": "Open every piece with one borrowed lantern and a quiet question\n",
+            ".claude/skills/x/references/craft/zh.md": "每一篇都從一個只有作者看得見的小場景開始寫起然後慢慢帶出主張\n",
+            ".claude/skills/x/voice.md": "---\nname: Zephyr Quillborne\n---\n",
+            "notes.bin": "ignored",
+        },
+    )
+    fingerprints = load_fingerprints({"EF_DATA": str(data)})
+
+    assert fingerprints.source_files == 4
+    assert _lines('color = "#13579b"', fingerprints) == {1}
+    assert _lines("Open every piece with one borrowed lantern and", fingerprints) == {1}
+    assert _lines("每一篇都從一個只有作者看得見的小場景開始", fingerprints) == {1}
+    assert _lines("Quillborne", fingerprints) == {1}
+    assert _lines("a perfectly ordinary sentence about nothing at all here", fingerprints) == set()
+
+
+def test_imports裡讀不開的zip是掃不了(tmp_path: Path) -> None:
+    data = tmp_path / "ef"
+    (data / "imports").mkdir(parents=True)
+    (data / "imports" / "broken.zip").write_bytes(b"not a zip")
+
+    with pytest.raises(GuardError):
+        load_fingerprints({"EF_DATA": str(data)})
