@@ -14,7 +14,7 @@
 | 設計改版（agent 核心＋資料夾狀態） | 完成 | PR #6；ADR-0009～0016、PRD v2.0、路線圖 S0～S4 |
 | 待決事項 | 無（Q-28 已撤回，ADR-0020） | `open-questions.md` |
 | 改版：聊天室，先分析、再重構 | 已合併（PR #82、#83、#89） | ADR-0019、ADR-0020、PRD v3.0；規劃見排程計畫那一行 |
-| 改版：語音優先的隨身入口與思想記憶（P5a～P8） | 審查中（#129） | ADR-0028、PRD v4.0、路線圖 P5a～P8；規劃 `30-snapshot/plans/2026-10-16-voice-first-replan.md` |
+| 改版：語音優先的隨身入口與思想記憶（P5a～P8） | 審查中（#129，PR #131） | ADR-0028、PRD v4.0、路線圖 P5a～P8；規劃 `30-snapshot/plans/2026-10-16-voice-first-replan.md` |
 
 ## 設計產出
 
