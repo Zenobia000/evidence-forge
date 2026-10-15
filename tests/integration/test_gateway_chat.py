@@ -182,6 +182,10 @@ class IntakeDesk:
     def personas(self) -> dict[str, Any]:
         return {"personas": [{"name": "me", "default_genre": "opinion"}]}
 
+    def card_changed(self, conversation_id: str, card_id: str, events: list[dict[str, Any]]) -> None:
+        # 編輯卡的工具另外測（test_gateway_cards.py）
+        pass
+
 
 def _mark_done(data: DataDir, job_id: str) -> None:
     path = data.job_dir(job_id) / "job.md"

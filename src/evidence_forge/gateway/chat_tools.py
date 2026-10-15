@@ -12,10 +12,17 @@
   **開了就回**，跟 `analyze` 一樣。`from_job` 一定要是這個對話自己的單（跟讀報告同一條範圍，403 不說存不存在）。
   記進 `jobs.jsonl` 時接上版本鏈（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）：`parent` 是 `from_job`；
   從同一個角色的上一版重構接著做是那條鏈的下一版，從分析開、或換了角色，是新的一條鏈的第 1 版。
+- 編輯卡的四個（ADR-0025 §3.3，規則在 `cards.py`）：`propose_questions`（記下提出的問題卡，沒給 `card` 就開新卡）、
+  `record_interpreted_answers`（解讀創作者打的字、或「你幫我選」）、`add_material`（作者素材）、
+  `read_card`（讀一張卡；沒給 `card` 就列出這個對話的卡）。事件一律標 `source: agent`，不打模型、不花錢。
+  寫完叫工作台的 `card_changed`，對話主機據此推 `ef_card` 給畫面。
+  畫面才能叫的 `submit_station`、`keep_decision`、`reask_station` **不在這裡**：對話主機的 API 直接叫 `cards.py`，
+  對話的 Pi 叫不到（`app.py` 照 `UI_ONLY_TOOLS` 一律 403）。
 
 範圍：
 - 只碰得到列在這個對話 `jobs.jsonl` 裡的工單，別的對話的一律 403，而且不說那張單存不存在。
 - 段的工具（讀寫檔、抓網頁、搜尋、跑腳本）拿對話鑰匙來一律 403；對話的工具拿段的鑰匙來也是（`app.py`）。
+- 編輯卡只碰得到這個對話自己的：路徑從對話資料夾拼，別的對話的卡跟沒有這張卡一樣回 404。
 - 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1；`analyze`、`rewrite` 都算）：
   對話的 agent 可以一直開單，每張單各有預算，不擋的話總花費只剩月上限管得到。
   只擋「要開新單」：同一篇文章再丟一次（連按兩下）照樣拿回那一張，即使它還在跑。
@@ -35,7 +42,7 @@ from typing import Any, Protocol
 
 from starlette.concurrency import run_in_threadpool
 
-from evidence_forge import conversations
+from evidence_forge import cards, conversations
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import read_job
 from evidence_forge.gateway.config import GatewayConfig
@@ -44,9 +51,15 @@ from evidence_forge.models import Job
 from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
 from evidence_forge.runner.stage_inputs import job_persona
 
-CHAT_TOOLS = frozenset(
-    {"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"}
+CARD_TOOLS = frozenset(
+    {"propose_questions", "record_interpreted_answers", "add_material", "read_card"}
 )
+CHAT_TOOLS = (
+    frozenset({"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"})
+    | CARD_TOOLS
+)
+# 只有畫面能叫的入口（ADR-0025 §3.3）：閘道的 /tools/ 拿任何鑰匙來都拒絕，對話主機的 API 直接叫 `cards.py`
+UI_ONLY_TOOLS = frozenset({"submit_station", "keep_decision", "reask_station"})
 # 還會花錢的狀態：排隊中的單等一下就會跑
 _RUNNING = frozenset({"queued", "running"})
 
@@ -105,6 +118,12 @@ class Desk(Protocol):
 
     def personas(self) -> dict[str, Any]: ...
 
+    def card_changed(
+        self, conversation_id: str, card_id: str, events: list[dict[str, Any]]
+    ) -> None:
+        """閘道替對話的 agent 寫了編輯卡的事件之後呼叫：對話主機據此推 `ef_card` 給畫面。"""
+        ...
+
 
 def _optional(body: dict[str, Any], name: str) -> str | None:
     value = body.get(name)
@@ -141,7 +160,64 @@ class ChatTools:
             return await run_in_threadpool(desk.personas)
         if name == "rewrite":
             return await self._rewrite(desk, key, body)
+        if name in CARD_TOOLS:
+            return await run_in_threadpool(self._card_tool, desk, key, name, body)
         raise ToolRejected(404, f"沒有這個工具：{name}")
+
+    def _card_tool(
+        self, desk: Desk, key: ConversationKey, name: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """編輯卡的四個工具（`cards.py`）；寫了事件就通知工作台。"""
+        data = self._config.data
+        conversation_id = key.conversation_id
+        card_id = _optional(body, "card")
+        if name == "read_card":
+            if card_id is None:
+                return {
+                    "cards": [
+                        c.model_dump(mode="json") for c in cards.list_cards(data, conversation_id)
+                    ]
+                }
+            return {"card": cards.read_card(data, conversation_id, card_id).model_dump(mode="json")}
+        now = self._config.clock()
+        if name == "propose_questions":
+            written = cards.propose_questions(
+                data,
+                conversation_id,
+                card_id,
+                body.get("station"),
+                body.get("questions"),
+                now=now,
+                origin=body.get("origin"),
+            )
+        elif name == "add_material":
+            written = cards.add_material(
+                data, conversation_id, card_id, body.get("text"), now=now, filename=body.get("filename")
+            )
+        else:
+            if card_id is None:
+                raise ToolRejected(400, "缺少字串欄位 card")
+            written = cards.record_interpreted_answers(
+                data,
+                conversation_id,
+                card_id,
+                body.get("station"),
+                body.get("answers"),
+                now=now,
+                pick_for_me=body.get("pick_for_me", False),
+                quote=body.get("quote"),
+            )
+        if written.events:
+            desk.card_changed(conversation_id, written.card_id, written.events)
+        result: dict[str, Any] = {
+            "card_id": written.card_id,
+            "events": written.events,
+            "card": written.card.model_dump(mode="json"),
+        }
+        if written.material is not None:
+            result["material"] = written.material
+            result["created"] = written.created
+        return result
 
     async def _analyze(
         self, desk: Desk, key: ConversationKey, body: dict[str, Any]

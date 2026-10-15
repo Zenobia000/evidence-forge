@@ -75,6 +75,28 @@ def test_ef_new_帶文類與預算(ef_data: Path, capsys: pytest.CaptureFixture[
     assert job.budget.tavily_credits == 0
 
 
+@pytest.mark.promise("FR-LG-03")
+def test_ef_new_沒帶預算就照費用設定的分析預算(
+    ef_data: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import UTC, datetime
+
+    from evidence_forge import cost_settings
+    from evidence_forge.cost_settings import CostSettings
+    from evidence_forge.paths import DataDir
+
+    assert main(["new", "--text", "設定之前"]) == 0
+    before = capsys.readouterr().out.strip().splitlines()[-1]
+    cost_settings.save(
+        DataDir(ef_data), CostSettings(analysis_budget_usd=2.0), now=datetime(2026, 10, 15, tzinfo=UTC)
+    )
+    assert main(["new", "--text", "設定之後"]) == 0
+    after = capsys.readouterr().out.strip().splitlines()[-1]
+
+    budgets = [read_job(ef_data / "jobs" / j / "job.md").job.budget.usd for j in (before, after)]
+    assert budgets == [0.5, 2.0]
+
+
 @pytest.mark.promise("NFR-COST-01")
 def test_ef_new_帶_Tavily_credits(
     ef_data: Path, capsys: pytest.CaptureFixture[str]

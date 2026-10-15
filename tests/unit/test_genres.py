@@ -92,3 +92,12 @@ def test_主題清單是_8_個_slug_各有一句說明() -> None:
     )
     assert [slug for slug, _ in rows] == THEMES
     assert all(description.strip() for _, description in rows)
+
+
+def test_編輯卡第_1_關認得的文體就是_harness_genres_的_7_種() -> None:
+    # 只有一份清單：編輯卡讀 harness/genres/，不另外寫死（#106 合併 #120 之後）
+    from evidence_forge import cards
+
+    assert cards.GENRES == frozenset(SEVEN)
+    # 「你幫我選」只能選不需要作者自己經驗的文體：照文體定義的 needs_author_evidence
+    assert cards.SELF_FREE_GENRES == {slug for slug, (_, needs) in SEVEN.items() if not needs}

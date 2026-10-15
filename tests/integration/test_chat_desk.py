@@ -356,3 +356,20 @@ def test_工作台認得的文類跟_harness_genres_同一份() -> None:
         for path in default_harness().genre_files()
     }
     assert defined == GENRE_NAME
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_開單的預算照費用設定_分析與重構各一個數字_改了下一張就用新的(me: DataDir) -> None:
+    from evidence_forge import cost_settings
+    from evidence_forge.cost_settings import CostSettings
+
+    desk = _desk(me)
+    first = _open(desk, "# 第一篇\n\n內容")
+    cost_settings.save(me, CostSettings(analysis_budget_usd=1.25, rewrite_budget_usd=0.8), now=NOW)
+    second = _open(desk, "# 第二篇\n\n內容")
+    rewrite = _rewrite(desk, _analysed(me, desk))["job_id"]
+    assert isinstance(rewrite, str)
+
+    budgets = [read_job(me.job_dir(j) / "job.md").job.budget.usd for j in (first, second, rewrite)]
+    # 沒有設定檔時照舊 US$0.5；設定之後不用重開，下一張就照新的
+    assert budgets == [0.5, 1.25, 0.8]

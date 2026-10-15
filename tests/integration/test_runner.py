@@ -26,6 +26,8 @@ from runner_world import (
     runner_world,
 )
 
+from evidence_forge import cost_settings
+from evidence_forge.cost_settings import CostSettings
 from evidence_forge.documents import read_job
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
 from evidence_forge.gateway.ledger import append_intake
@@ -254,7 +256,8 @@ def test_本月額度用完_工單以未完成結束_原因是本月額度用完
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(CLOUD_CALL)
-    # 投入帳本裡的抓取已經花掉 US$9.95，月上限預設 US$10
+    # 投入帳本裡的抓取已經花掉 US$9.95；費用設定設了每月上限 US$10（預設不設，ADR-0027 §3.6）
+    cost_settings.save(world.data, CostSettings(monthly_cap_usd=10.0), now=NOW)
     append_intake(
         world.data,
         IntakeEntry(

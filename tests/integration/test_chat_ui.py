@@ -424,14 +424,14 @@ def test_帳單頁_月份亂填就用這個月_空的月份有說明(world: tupl
     assert "這個月還沒有花費" in empty.text
 
 
-def test_導覽只有聊天室和帳單(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+def test_導覽只有聊天室_帳單_設定(world: tuple[str, ChatFolder, ConversationHost]) -> None:
     url, _, _ = world
 
     html = httpx.get(f"{url}/bills").text
     nav = re.search(r'<nav class="s0-nav".*?</nav>', html, re.S)
 
     assert nav is not None
-    assert re.findall(r'href="([^"]+)"', nav.group(0)) == ["/", "/bills"]
+    assert re.findall(r'href="([^"]+)"', nav.group(0)) == ["/", "/bills", "/settings"]
 
 
 # --- 上傳 -----------------------------------------------------------------------------
@@ -484,7 +484,7 @@ def test_靜態檔_樣式_腳本_字型都送得出來(world: tuple[str, ChatFol
 
     for path in ("/static/css/chat.css", "/static/css/s0.css", "/static/css/tokens.css", "/static/css/fonts.css"):
         assert httpx.get(f"{url}{path}").status_code == 200, path
-    for module in ("app", "state", "progress", "compose"):
+    for module in ("app", "state", "progress", "compose", "settings"):
         response = httpx.get(f"{url}/static/js/{module}.js")
         assert response.status_code == 200
         assert "javascript" in response.headers["content-type"]

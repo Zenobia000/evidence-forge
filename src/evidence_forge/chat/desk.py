@@ -21,8 +21,9 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from evidence_forge import cost_settings
 from evidence_forge.documents import FrontmatterError, read_frontmatter, read_job
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.models import Recipe, RecipeStage
@@ -53,16 +54,23 @@ class Desk:
         *,
         clock: Callable[[], datetime],
         fetcher: Fetcher | None = None,
-        budget_usd: float = 0.5,
+        budget_usd: float | None = None,
         on_opened: Callable[[str, str], None] | None = None,
         rewrite_recipe: str = "rewrite",
+        on_card: Callable[[str, str, list[dict[str, Any]]], None] | None = None,
     ) -> None:
         """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
         找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
 
+        `budget_usd` 沒給時，每張單的預算照費用設定（`cost_settings`，分析與重構各一個數字），
+        每次開單都重讀：設定頁改了不用重開 `ef serve`。
+
         `on_opened(對話 id, 工單 id)` 在閘道把單記進對話的 `jobs.jsonl` 之後呼叫（`recorded`）：
         對話主機據此馬上推一次進度，單已經跑完就送結束通知。不在開單當下叫：那時主機在 `jobs.jsonl`
         還找不到這張單，跑得快的單結束通知會丟掉。
+
+        `on_card(對話 id, 卡 id, 新事件)` 在閘道替對話的 agent 寫完編輯卡的事件之後呼叫（ADR-0025 §3.3）：
+        對話主機據此推 `ef_card` 給畫面（例如 agent 剛提出的問題卡）。
         """
         self._data = data
         self._recipes = recipes
@@ -72,10 +80,17 @@ class Desk:
         self._budget_usd = budget_usd
         self._on_opened = on_opened
         self._rewrite_recipe = rewrite_recipe
+        self._on_card = on_card
 
     @property
     def recipe_name(self) -> str:
         return self._recipe_name
+
+    def _budget(self, kind: Literal["analysis", "rewrite"]) -> float:
+        if self._budget_usd is not None:
+            return self._budget_usd
+        settings = cost_settings.load(self._data).settings
+        return settings.analysis_budget_usd if kind == "analysis" else settings.rewrite_budget_usd
 
     def open_analysis(
         self,
@@ -102,7 +117,7 @@ class Desk:
                 goal=goal,
                 now=self._clock(),
                 fetcher=self._fetcher,
-                budget_usd=self._budget_usd,
+                budget_usd=self._budget("analysis"),
                 conversation=conversation_id,
                 again=again,
                 before_create=before_create,
@@ -167,7 +182,7 @@ class Desk:
                 persona=persona,
                 genre=genre,
                 feedback=feedback,
-                budget_usd=self._budget_usd,
+                budget_usd=self._budget("rewrite"),
                 conversation=conversation_id,
                 # 沿用來的文體（上一張單的、角色的預設）也要是 7 種之一，不然開了只會在執行器失敗
                 allowed_genres=GENRE_NAME,
@@ -196,6 +211,13 @@ class Desk:
         """閘道已經把這張單記進對話的 `jobs.jsonl`：通知對話主機（見 `on_opened`）。"""
         if self._on_opened is not None:
             self._on_opened(conversation_id, job_id)
+
+    def card_changed(
+        self, conversation_id: str, card_id: str, events: list[dict[str, Any]]
+    ) -> None:
+        """閘道替對話的 agent 寫了編輯卡的事件：通知對話主機（見 `on_card`）。"""
+        if self._on_card is not None:
+            self._on_card(conversation_id, card_id, events)
 
     def _tidy(self, reason: str) -> str:
         """原因要交給對話的模型：資料目錄的絕對路徑換成相對路徑。"""
