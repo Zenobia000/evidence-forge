@@ -1,6 +1,7 @@
-"""重構段的程式檢查（PRD v3.0 §7、ADR-0020 §3.4、`rewrite.feature`）：
+"""重構段的程式檢查（PRD v3.0 §7、ADR-0020 §3.4、ADR-0024、`rewrite.feature`）：
 
-- 擋：文章是標準 Markdown；結尾的「參考來源」一定列原文出處（有網址看網址，沒有看標題）。
+- 擋：文章是標準 Markdown；結尾的「參考來源」一定列原文出處（有網址看網址，沒有看標題）；
+  標題不用文類骨架的字；參考來源以外的內文不提原文標題與原作者。
 - 只顯示、不擋：文章正文跟原文、跟每一份來源的逐字重疊率，各一條 C3，只會 pass 或 warn。
 """
 
@@ -10,7 +11,9 @@ from evidence_forge.checks import (
     CheckEntry,
     OverlapThresholds,
     article_checks,
+    check_original_not_in_body,
     check_references,
+    check_skeleton_headings,
 )
 
 pytestmark = pytest.mark.promise("FR-RW-01")
@@ -205,3 +208,118 @@ def test_條目只列網址_標題剛好是網址的一部分_不算列了標題
     )
     [failure] = _failed(found)
     assert "標題" in failure.reason and "作者" in failure.reason
+
+
+# --- ADR-0024：骨架不當標題、內文不提原文與原作者 -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## 先講結論",
+        "## 結論",
+        "## 結論先講",
+        "## 結論與行動",
+        "## 論據一：進度要放到磁碟上",
+        "## 論據 2",
+        "### 反方怎麼說，我怎麼回應",
+        "## 反方說法與回應",
+        "## 我的建議",
+        "## 建議",
+        "## 2. **反方**",
+        "## 反方觀點",
+    ],
+)
+def test_標題用了骨架字_擋下並點名那個標題(heading: str) -> None:
+    article = f"# 圖書館開到半夜\n\n開頭。\n\n{heading}\n\n內容。\n\n" + REFERENCES
+    [failure] = _failed(check_skeleton_headings(article, file=FILE))
+    text = heading.lstrip("#").strip()
+    assert failure.reason.startswith(f"標題「{text}」")
+    assert "骨架" in failure.reason
+    assert failure.location is not None and failure.location.line == 5
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## 晚上十點，誰還在圖書館",
+        "## 建議先別急著砍購書預算",
+        "## 錢從哪裡來",
+        "## 結算一下人力成本",
+    ],
+)
+def test_標題寫這一節實際在講什麼_通過(heading: str) -> None:
+    article = f"# 圖書館開到半夜\n\n{heading}\n\n內容。\n\n" + REFERENCES
+    assert _failed(check_skeleton_headings(article, file=FILE)) == []
+
+
+def test_程式碼區塊裡的骨架字標題不算() -> None:
+    article = "# 標題\n\n```\n## 結論\n```\n\n" + REFERENCES
+    assert _failed(check_skeleton_headings(article, file=FILE)) == []
+
+
+def test_內文沒提原文標題與作者_通過() -> None:
+    entries = check_original_not_in_body(
+        BODY + REFERENCES, file=FILE, original_title=TITLE, original_author="王小明"
+    )
+    assert _failed(entries) == []
+
+
+def test_內文提到原文標題_擋下() -> None:
+    article = f"# 圖書館開到半夜\n\n這篇〈{TITLE}〉談的是延長開放。\n\n" + REFERENCES
+    [failure] = _failed(
+        check_original_not_in_body(article, file=FILE, original_title=TITLE, original_author=None)
+    )
+    assert TITLE in failure.reason and "參考來源" in failure.reason
+    assert failure.location is not None and failure.location.line == 3
+
+
+def test_內文提到原作者_擋下() -> None:
+    article = "# 圖書館開到半夜\n\n王 小明認為延長開放是對的。\n\n" + REFERENCES
+    [failure] = _failed(
+        check_original_not_in_body(
+            article, file=FILE, original_title=TITLE, original_author="王小明"
+        )
+    )
+    assert "王小明" in failure.reason
+
+
+def test_拉丁字母的作者名要整個字對上() -> None:
+    article = "# 標題\n\nSamsung 的手機與 Sam Lee 無關。\n\n" + REFERENCES
+    [failure] = _failed(
+        check_original_not_in_body(article, file=FILE, original_title=TITLE, original_author="Sam Lee")
+    )
+    assert "Sam Lee" in failure.reason
+    only_brand = "# 標題\n\nSamsung 的手機。\n\n" + REFERENCES
+    assert _failed(
+        check_original_not_in_body(only_brand, file=FILE, original_title=TITLE, original_author="Sam")
+    ) == []
+
+
+def test_網頁標題的站名不算原文標題_文章標題那一段才算() -> None:
+    article = "# 圖書館開到半夜\n\n某某部落格上常有人討論這件事。\n\n" + REFERENCES
+    assert _failed(
+        check_original_not_in_body(
+            article, file=FILE, original_title=f"{TITLE} | 某某部落格", original_author=None
+        )
+    ) == []
+    mentioned = f"# 圖書館開到半夜\n\n{TITLE}這個說法。\n\n" + REFERENCES
+    assert _failed(
+        check_original_not_in_body(
+            mentioned, file=FILE, original_title=f"{TITLE} | 某某部落格", original_author=None
+        )
+    )
+
+
+def test_原文標題太短_不比對_以免誤擋() -> None:
+    article = "# 圖書館開到半夜\n\n夜間閱讀這件事。\n\n" + REFERENCES
+    assert _failed(
+        check_original_not_in_body(article, file=FILE, original_title="夜間閱讀", original_author=None)
+    ) == []
+
+
+def test_文章的檢查合起來_骨架字標題與提到原作者都擋() -> None:
+    article = "# 圖書館開到半夜\n\n王小明說得對。\n\n## 我的建議\n\n內容。\n\n" + REFERENCES
+    reasons = [entry.reason for entry in _failed(_check(article, original_author="王小明"))]
+    assert any("我的建議" in reason for reason in reasons)
+    assert any("王小明" in reason for reason in reasons)

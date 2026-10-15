@@ -24,6 +24,8 @@ converts_to: [explainer, opinion, deep-dive, news]
 
 ## 骨架（目標是這一類時）
 
+骨架是思考的順序，不是文章的標題：標題寫那一節實際在講什麼（ADR-0024）。
+
 預設結構公式：主題分組
 
 1. 本期主題一句話

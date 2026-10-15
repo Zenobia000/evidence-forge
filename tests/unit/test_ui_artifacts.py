@@ -10,6 +10,7 @@ import pytest
 from chat_folder import (
     ARTICLE_V1,
     ARTICLE_V2,
+    OLD_REPORT,
     RECIPES,
     REPORT,
     ChatFolder,
@@ -89,7 +90,7 @@ def test_報告的查證照有爭議_過時_查不到_有佐證排_每條附來�
     assert view.checks[0].sources[0].url == "https://pricing.example/list"
     assert view.checks[0].sources[0].fetched_at == "10/13 15:01"
     assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
-    assert view.topics[0].title == "長上下文的實際成本"
+    assert [t.title for t in view.topics] == ["長上下文的帳怎麼算", "第一個字為什麼越來越慢"]
 
 
 def test_過時排在查不到前面(folder: ChatFolder) -> None:
@@ -111,9 +112,25 @@ def test_過時排在查不到前面(folder: ChatFolder) -> None:
     assert view.doubtful == 1  # 過時也算有疑慮
 
 
-def test_查證的說明從報告原文對到那一條_引用編號變成連結(folder: ChatFolder) -> None:
+def test_查證的事實與說明從報告那一條拆開_不重複標記(folder: ChatFolder) -> None:
+    # ADR-0024：報告的查證一條是「【有爭議】事實：說明」，跟 sources.json 的 fact_checks 同一個順序
     cid = folder.conversation()
     folder.analysis(cid, "a1")
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [c.claim for c in view.checks] == [
+        "長上下文比檢索省 70% 成本",
+        "八成團隊還在用檢索",
+        "上下文越長，第一個字出來得越慢",
+    ]
+    note = str(view.checks[0].note_html or "")
+    assert "價目表與廠商部落格的算法對不上" in note
+    assert "有爭議" not in note and "【" not in note
+
+
+def test_舊報告_查證的說明從報告原文對到那一條_引用編號變成連結(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=OLD_REPORT)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     note = view.checks[0].note_html or ""
@@ -122,12 +139,47 @@ def test_查證的說明從報告原文對到那一條_引用編號變成連結(
     assert "K1" not in note  # 開頭的「K1 有爭議：」是重複的標記，不再顯示
 
 
-def test_報告第一句拿來當結果卡的摘要(folder: ChatFolder) -> None:
+def test_報告第一個標題前的一句話拿來當結果卡的摘要_下一步另外放(folder: ChatFolder) -> None:
     cid = folder.conversation()
     folder.analysis(cid, "a1")
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
+    assert view.lead == "長上下文還撐不起大多數檢索場景，兩年內檢索仍是主流。"
+    assert view.next_step == "▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。"
+
+
+def test_舊報告沒有那一句話_摘要用作者在說什麼的第一句(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=OLD_REPORT)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
     assert view.lead == "作者認為超長上下文還撐不起大多數檢索場景。"
+    assert view.next_step == ""
+
+
+def test_可以寫的題材照編號_每個帶說明與用到的來源(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [(t.number, t.title) for t in view.topics] == [
+        (1, "長上下文的帳怎麼算"),
+        (2, "第一個字為什麼越來越慢"),
+    ]
+    assert "拿公開價目表替讀者算一次" in str(view.topics[0].note_html)
+    assert [[s.title for s in t.sources] for t in view.topics] == [["價目表"], ["延遲說明"]]
+    assert (view.views_heading, view.topics_heading) == ("作者的看法", "可以寫的題材")
+    assert "這是作者的判斷" in str(view.views_html)
+
+
+def test_舊報告的節名照原樣顯示(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=OLD_REPORT)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert (view.views_heading, view.topics_heading) == ("事實與觀點", "研究題材")
+    assert "長上下文比檢索省 70% 成本" in str(view.views_html)
+    assert view.topics[0].title == "長上下文的帳怎麼算"
 
 
 def test_報告裡的網頁內容不會變成標記(folder: ChatFolder) -> None:
@@ -147,7 +199,7 @@ def test_沒有來源清單時查證那一節照原文顯示_不猜結構(folder
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     assert view.checks == []
-    assert "兩份來源的算法對不上" in view.verify_html
+    assert "價目表與廠商部落格的算法對不上" in view.verify_html
 
 
 def test_報告檔不見了_說明讀不到哪一個檔_不丟例外(folder: ChatFolder) -> None:
@@ -313,7 +365,7 @@ def test_網址有括號的來源照樣是連結(folder: ChatFolder) -> None:
         "fact_checks": [{"claim": "K1", "verdict": "supported", "sources": ["S2"]}],
         "topics": [],
     }
-    report = REPORT.replace("見 [S2] 與 [S3]", "見 [S2]")
+    report = OLD_REPORT.replace("見 [S2] 與 [S3]", "見 [S2]")
     cid = folder.conversation()
     folder.analysis(cid, "a1", sources=sources, report=report)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])

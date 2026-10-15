@@ -4,7 +4,7 @@
 <span class="ch-vmark" data-verdict="{{ verdict }}">{{ icon(verdict) }}{{ label }}</span>
 {%- endmacro -%}
 {%- macro sources(refs) -%}
-{% if refs %}<div class="ch-vitem__src">{% for s in refs %}{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{% else %}<span>{% endif %}<span>{{ s.id }} {{ s.title }}</span>{% if s.fetched_at %}<span class="s0-mono s0-muted">{{ s.fetched_at }} 抓取</span>{% endif %}{% if s.url %}</a>{% else %}</span>{% endif %}{% endfor %}</div>{% endif %}
+{% if refs %}<div class="ch-vitem__src">{% for s in refs %}{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{% else %}<span>{% endif %}<span>{{ s.title }}</span>{% if s.fetched_at %}<span class="s0-mono s0-muted">{{ s.fetched_at }} 抓取</span>{% endif %}{% if s.url %}</a>{% else %}</span>{% endif %}{% endfor %}</div>{% endif %}
 {%- endmacro -%}
 {# 右側面板（IA §5）：報告、文章、花費三個分頁。整塊由 app.js 換進 #ch-panel。 #}
 {% if missing %}
@@ -33,23 +33,20 @@
 <div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到報告 {{ chosen.label }} 的檔案</p><p class="s0-small" style="margin: 0">{{ report.error }}</p></div></div>
 {% else %}
 <article class="ch-report">
+{% if report.next_step %}<div class="ch-sec ch-nextstep">{% if report.lead %}<p class="ch-nextstep__lead">{{ report.lead }}</p>{% endif %}<p class="ch-nextstep__step">{{ report.next_step }}</p></div>{% endif %}
 <section class="ch-sec" aria-labelledby="sec1">
 <h2 class="ch-sec__h" id="sec1"><span class="ch-sec__n">1</span>作者在說什麼</h2>
 <div class="ch-md">{{ report.intro_html }}</div>
 {% if report.tags %}<div class="ch-tags">{% for t in report.tags %}<span class="s0-badge">{{ t }}</span>{% endfor %}</div>{% endif %}
 </section>
 <section class="ch-sec" aria-labelledby="sec2">
-<h2 class="ch-sec__h" id="sec2"><span class="ch-sec__n">2</span>事實與觀點</h2>
-<div class="ch-md">{{ report.facts_html }}</div>
-</section>
-<section class="ch-sec" aria-labelledby="sec3">
-<h2 class="ch-sec__h" id="sec3"><span class="ch-sec__n">3</span>查證 {% if report.checks %}<span class="s0-small" style="font-weight: 400">有疑慮的排最前面</span>{% endif %}</h2>
+<h2 class="ch-sec__h" id="sec2"><span class="ch-sec__n">2</span>查證 {% if report.checks %}<span class="s0-small" style="font-weight: 400">有疑慮的排最前面</span>{% endif %}</h2>
 {% if report.checks %}
 <ul class="ch-verify">
 {% for c in report.checks %}
 <li class="ch-vitem">
 {{ mark(c.verdict, c.label) }}
-<p class="ch-vitem__claim">{{ c.claim }}</p>
+{% if c.claim %}<p class="ch-vitem__claim">{{ c.claim }}</p>{% endif %}
 {% if c.note_html %}<p class="ch-vitem__note">{{ c.note_html }}</p>{% endif %}
 {% if c.verdict == "unfound" and not c.note_html %}<p class="ch-vitem__note">查不到不代表錯，只是沒有東西可以佐證。</p>{% endif %}
 {{ sources(c.sources) }}
@@ -60,22 +57,27 @@
 <div class="ch-md">{{ report.verify_html }}</div>
 {% endif %}
 </section>
+<section class="ch-sec" aria-labelledby="sec3">
+<h2 class="ch-sec__h" id="sec3"><span class="ch-sec__n">3</span>{{ report.views_heading }}</h2>
+<div class="ch-md">{{ report.views_html }}</div>
+</section>
 <section class="ch-sec" aria-labelledby="sec4">
-<h2 class="ch-sec__h" id="sec4"><span class="ch-sec__n">4</span>研究題材</h2>
+<h2 class="ch-sec__h" id="sec4"><span class="ch-sec__n">4</span>{{ report.topics_heading }}</h2>
 {% if report.topics %}
 <ul class="ch-topics">
-{% for t in report.topics %}<li class="ch-topic"><p class="ch-topic__h">{{ t.title }}</p>{% if t.note_html %}<p>{{ t.note_html }}</p>{% endif %}{{ sources(t.sources) }}</li>{% endfor %}
+{% for t in report.topics %}<li class="ch-topic"><p class="ch-topic__h">{% if t.number %}<span class="s0-mono">{{ t.number }}.</span> {% endif %}{{ t.title }}</p>{% if t.note_html %}<div class="ch-topic__body">{{ t.note_html }}</div>{% endif %}{{ sources(t.sources) }}</li>{% endfor %}
 </ul>
 {% else %}
 <div class="ch-md">{{ report.topics_html }}</div>
 {% endif %}
 </section>
-<section class="ch-sec" aria-labelledby="sec5">
-<h2 class="ch-sec__h" id="sec5"><span class="ch-sec__n">5</span>來源清單</h2>
+{# 來源清單放最後、預設收起來（ADR-0024） #}
+<details class="ch-sec ch-sec--fold">
+<summary class="ch-sec__h"><span class="ch-sec__n">5</span>來源清單 <span class="s0-small" style="font-weight: 400">{{ report.sources|length }} 筆</span></summary>
 <ol class="ch-sources">
-{% for s in report.sources %}<li>{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}<br><span class="s0-mono">{{ "原文・" if s.id == "S1" else s.id ~ "・" }}{% if s.fetched_at %}{{ s.fetched_at }} 抓取{% else %}沒有抓取時間{% endif %}</span></li>{% endfor %}
+{% for s in report.sources %}<li>{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}<br><span class="s0-mono">{{ "原文・" if s.id == "S1" else "" }}{% if s.fetched_at %}{{ s.fetched_at }} 抓取{% else %}沒有抓取時間{% endif %}</span></li>{% endfor %}
 </ol>
-</section>
+</details>
 </article>
 {% endif %}
 </div>

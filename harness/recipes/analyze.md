@@ -1,11 +1,11 @@
 ---
 name: analyze
-description: 先分析：讀懂作者在說什麼、查證撐起論點的關鍵主張、找可以借題發揮的研究題材，交一份分析報告
+description: 先分析：讀懂作者在說什麼、查證撐起論點的關鍵主張、給幾個可以寫的題材讓創作者挑，交一份分析報告
 stages:
   - { id: brief, skill: brief, tier: local, escalate_to: [fast, strong], output: [brief.md, brief.json] }
   - { id: investigate, skill: investigate, tier: local, escalate_to: [fast, strong], output: [report.md, sources.json], tavily_credits: 24 }
 on_feedback: investigate
-default_goal: 讀懂這篇文章想說什麼，查證撐起論點的關鍵主張，找出可以借題發揮的研究題材
+default_goal: 讀懂這篇文章想說什麼，查證撐起論點的關鍵主張，給幾個可以寫的題材讓創作者挑
 max_attempts: 2
 auto_fix: 0
 ---
@@ -22,8 +22,9 @@ auto_fix: 0
    不附逐字引句。執行器驗 `brief.json` 的 schema、`brief.md` 是 Markdown 而且六節都在；
    沒過算這一次失敗，照上面的升級規則重試。
 2. `investigate`（查證與找題材）：拿 brief 的關鍵主張上網查證（有佐證、有爭議、查不到、過時），
-   找可以借題發揮的相關文章，交分析報告 `report.md`（五節標題固定，PRD §5）與來源清單 `sources.json`。
-   執行器檢查五節依序都在、查證與題材引用的編號都在清單上、清單上的網址都是這一段這一次真的抓過的
+   找相關文章、給幾個有編號的可以寫的題材，交分析報告 `report.md`（一句話、下一步、五節標題固定，PRD §5、ADR-0024）
+   與來源清單 `sources.json`。執行器檢查一句話與五節依序都在、報告沒有 K、S 編號、題材有編號、
+   查證與題材引用的編號都在清單上、清單上的網址都是這一段這一次真的抓過的
    （`runner/sources.py`），全部過了才把來源正文放進 `input/sources/S<n>.md`。
    `tavily_credits: 24` 是這一段在整張單裡的總額、含重試與升級：skill 一次最多搜 6 次 ×
    4 次嘗試（本機 `max_attempts: 2` 次、`fast` 一次、`strong` 一次）。閘道另外擋每一次最多

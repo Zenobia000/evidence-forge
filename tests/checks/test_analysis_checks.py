@@ -1,4 +1,5 @@
-"""分析配方兩段的程式檢查（PRD v3.0 §7、ADR-0020）：brief 六節、報告五節依序、引用的編號在清單上。"""
+"""分析配方兩段的程式檢查（PRD v3.0 §7、ADR-0020、ADR-0024）：brief 六節、報告五節依序、
+第一個標題前有一句話、報告沒有裸露的 K／S 編號、可以寫的題材有編號、清單上的編號與網址對得上。"""
 
 from typing import Any
 
@@ -9,10 +10,12 @@ from evidence_forge.checks import (
     REPORT_SECTIONS,
     brief_checks,
     check_claim_coverage,
-    check_report_citations,
+    check_internal_ids,
+    check_lead,
     check_sections,
     check_source_list_urls,
     check_source_refs,
+    check_topics_numbered,
     check_verdict_order,
     report_checks,
 )
@@ -20,23 +23,30 @@ from evidence_forge.checks.text import normalize_url
 
 pytestmark = pytest.mark.promise("FR-AN-01", "FR-IV-01")
 
-REPORT = """# 標題
+REPORT = """這篇在說延長開放值不值得，要看晚上的人數撐不撐得住。
+
+▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。
 
 ## 作者在說什麼
 一段話。
 
-## 事實與觀點
-事實與觀點。
-
 ## 查證（有疑慮的放最前面）
-- K1 有爭議 [S2]
+- 【有爭議】一條事實：價目表與廠商部落格的算法對不上。
 
-## 研究題材
-- 題材 [S2]
+## 作者的看法
+- 看法，不是事實。
+
+## 可以寫的題材
+
+### 1. 題材一
+- 角度：一句話。
+
+### 2. 題材二
+- 角度：一句話。
 
 ## 來源清單
-- S1 原文
-- S2 一份報告
+- 原文
+- 一份報告
 """
 
 OUTPUT: dict[str, Any] = {
@@ -52,6 +62,11 @@ def _failed(entries: list[Any]) -> list[str]:
     return [entry.reason for entry in entries if entry.status == "fail"]
 
 
+def test_報告的五節是新的節名與順序() -> None:
+    # ADR-0024：事實併進查證、觀點獨立成「作者的看法」、研究題材換成可以寫的題材
+    assert REPORT_SECTIONS == ("作者在說什麼", "查證", "作者的看法", "可以寫的題材", "來源清單")
+
+
 def test_報告五節依序都在_通過() -> None:
     entries = check_sections(REPORT, REPORT_SECTIONS, file="report.md", ordered=True)
     assert _failed(entries) == []
@@ -59,35 +74,45 @@ def test_報告五節依序都在_通過() -> None:
 
 def test_報告標題前面有編號或粗體_一樣認得() -> None:
     numbered = (
-        "## 1. 作者在說什麼\n\n## 二、事實與觀點\n\n## **查證**\n\n"
-        "## 4) 研究題材\n\n## 來源清單 ##\n"
+        "## 1. 作者在說什麼\n\n## 二、**查證**\n\n## 作者的看法\n\n"
+        "## 4) 可以寫的題材\n\n## 來源清單 ##\n"
     )
     entries = check_sections(numbered, REPORT_SECTIONS, file="report.md", ordered=True)
     assert _failed(entries) == []
 
 
-def test_報告少了研究題材_點名那一節() -> None:
+def test_報告還是舊的研究題材_點名少了可以寫的題材() -> None:
     entries = check_sections(
-        REPORT.replace("## 研究題材", "## 延伸閱讀"),
+        REPORT.replace("## 可以寫的題材", "## 研究題材"),
         REPORT_SECTIONS,
         file="report.md",
         ordered=True,
     )
-    assert _failed(entries) == ["少了「研究題材」一節（要有一個標題是「研究題材」）"]
+    assert _failed(entries) == ["少了「可以寫的題材」一節（要有一個標題是「可以寫的題材」）"]
 
 
-def test_報告的查證排在研究題材後面_順序不對() -> None:
+def test_舊的事實與觀點一節頂替不了作者的看法() -> None:
+    entries = check_sections(
+        REPORT.replace("## 作者的看法", "## 事實與觀點"),
+        REPORT_SECTIONS,
+        file="report.md",
+        ordered=True,
+    )
+    assert _failed(entries) == ["少了「作者的看法」一節（要有一個標題是「作者的看法」）"]
+
+
+def test_作者的看法排在查證前面_順序不對() -> None:
     swapped = REPORT.replace("## 查證（有疑慮的放最前面）", "## 暫時").replace(
-        "## 來源清單", "## 查證\n\n## 來源清單"
+        "## 可以寫的題材", "## 查證\n\n## 可以寫的題材"
     )
     entries = check_sections(swapped, REPORT_SECTIONS, file="report.md", ordered=True)
-    assert _failed(entries) == ["「研究題材」一節要排在「查證」後面"]
+    assert _failed(entries) == ["「作者的看法」一節要排在「查證」後面"]
 
 
 def test_程式碼區塊裡的標題不算() -> None:
-    fenced = REPORT.replace("## 研究題材", "```\n## 研究題材\n```")
+    fenced = REPORT.replace("## 可以寫的題材", "```\n## 可以寫的題材\n```")
     entries = check_sections(fenced, REPORT_SECTIONS, file="report.md", ordered=True)
-    assert "少了「研究題材」一節（要有一個標題是「研究題材」）" in _failed(entries)
+    assert "少了「可以寫的題材」一節（要有一個標題是「可以寫的題材」）" in _failed(entries)
 
 
 def test_內文裡提到節名不算一節() -> None:
@@ -128,17 +153,17 @@ def test_查證引用了清單上沒有的編號_指到那一格() -> None:
     assert entry.location.pointer == "/fact_checks/0/sources/0"
 
 
-def test_研究題材引用了清單上沒有的編號() -> None:
+def test_可以寫的題材引用了清單上沒有的編號() -> None:
     output = {**OUTPUT, "topics": [{"title": "x", "sources": ["S2", "S3"]}]}
     assert _failed(check_source_refs(output, file="sources.json")) == [
-        "研究題材引用的 S3 不在來源清單上"
+        "可以寫的題材引用的 S3 不在來源清單上"
     ]
 
 
 FETCHED = {"https://a.example"}
 
 
-def test_報告的檢查合起來_Markdown_五節_schema_引用() -> None:
+def test_報告的檢查合起來_Markdown_五節_一句話_沒有編號_題材有編號_schema() -> None:
     entries = report_checks(
         report=REPORT,
         report_file="report.md",
@@ -181,38 +206,20 @@ def test_報告整份包在程式碼區塊裡_不是標準_Markdown() -> None:
 
 def test_文章標題以節名開頭也不算一節_只看二級標題() -> None:
     # 分析一篇標題是「查證：…」的文章：H1 不能被當成「查證」一節，害順序檢查每次都錯
-    titled = "# 查證：AI 寫的新聞有多少錯\n\n" + REPORT.split("\n", 1)[1]
+    titled = "# 查證：AI 寫的新聞有多少錯\n\n" + REPORT
     entries = check_sections(titled, REPORT_SECTIONS, file="report.md", ordered=True)
     assert _failed(entries) == []
 
 
 def test_三級標題不算一節() -> None:
-    text = REPORT.replace("## 研究題材", "### 研究題材")
+    text = REPORT.replace("## 可以寫的題材", "### 可以寫的題材")
     entries = check_sections(text, REPORT_SECTIONS, file="report.md", ordered=True)
-    assert _failed(entries) == ["少了「研究題材」一節（要有一個標題是「研究題材」）"]
-
-
-def test_報告引用的編號都在清單上或是原文_通過() -> None:
-    text = REPORT + "\n原文的說法 [S1]，另見 [S2]。\n"
-    assert _failed(check_report_citations(text, {"S2"}, file="report.md")) == []
-
-
-def test_報告引用了清單上沒有的編號_點名那一個_只報一次() -> None:
-    text = REPORT + "\n另見 [S9]，又見 [S2、S9]，再見 [S2, S7]。\n"
-    assert _failed(check_report_citations(text, {"S2"}, file="report.md")) == [
-        "報告引用的 S9 不在來源清單上",
-        "報告引用的 S7 不在來源清單上",
-    ]
-
-
-def test_程式碼裡的編號不算引用() -> None:
-    text = REPORT + "\n`[S9]` 是引用的寫法。\n"
-    assert _failed(check_report_citations(text, {"S2"}, file="report.md")) == []
+    assert _failed(entries) == ["少了「可以寫的題材」一節（要有一個標題是「可以寫的題材」）"]
 
 
 SOURCE_LIST = REPORT.replace(
-    "- S2 一份報告\n",
-    "- S2 一份報告，https://a.example/report/。\n- S3 [另一份](https://b.example/x)\n",
+    "- 一份報告\n",
+    "- 一份報告，https://a.example/report/。\n- [另一份](https://b.example/x)\n",
 )
 
 
@@ -229,7 +236,7 @@ def test_來源清單列了沒抓過的網址_點名那一個() -> None:
 
 
 def test_來源清單以外的網址不歸這項管() -> None:
-    # 內文提到的網址不是來源清單；引用靠 [S<n>] 對到清單
+    # 內文提到的網址不是來源清單
     text = REPORT.replace("一段話。", "見 https://elsewhere.example/a。")
     assert _failed(check_source_list_urls(text, set(), file="report.md")) == []
 
@@ -295,27 +302,150 @@ PAREN = "https://example.com/wiki/Example_(film)"
 @pytest.mark.parametrize(
     "line",
     [
-        f"- S2 電影條目，{PAREN}",
-        f"- S2 [電影條目]({PAREN})",
-        f"- S2 電影條目（{PAREN}）",
-        f"- S2 電影條目 ({PAREN}).",
+        f"- 電影條目，{PAREN}",
+        f"- [電影條目]({PAREN})",
+        f"- 電影條目（{PAREN}）",
+        f"- 電影條目 ({PAREN}).",
     ],
     ids=["網址帶括號", "Markdown連結裡的網址帶括號", "全形括號包住", "半形括號包住加句點"],
 )
 def test_來源清單的網址帶括號_抓過完整網址就過(line: str) -> None:
-    report = REPORT.replace("- S2 一份報告\n", line + "\n")
+    report = REPORT.replace("- 一份報告\n", line + "\n")
     allowed = {normalize_url(PAREN)}
     assert _failed(check_source_list_urls(report, allowed, file="report.md")) == []
 
 
 @pytest.mark.parametrize(
     "line",
-    [f"- S2 電影條目，{PAREN}", f"- S2 [電影條目]({PAREN})"],
+    [f"- 電影條目，{PAREN}", f"- [電影條目]({PAREN})"],
     ids=["網址帶括號", "Markdown連結裡的網址帶括號"],
 )
 def test_來源清單的網址帶括號_只抓過前綴不能放行(line: str) -> None:
-    report = REPORT.replace("- S2 一份報告\n", line + "\n")
+    report = REPORT.replace("- 一份報告\n", line + "\n")
     allowed = {normalize_url("https://example.com/wiki/Example_")}
     assert _failed(check_source_list_urls(report, allowed, file="report.md")) == [
         f"來源清單列了 {PAREN}：這一段沒有用 fetch_url 抓到它，也不是原文"
     ]
+
+
+# --- ADR-0024：第一個標題前的一句話、沒有裸露編號、可以寫的題材有編號 ---------------
+
+
+def test_第一個標題前有一句話_通過() -> None:
+    assert _failed(check_lead(REPORT, file="report.md")) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        REPORT[REPORT.index("## 作者在說什麼") :],
+        "# 原文的標題\n\n" + REPORT[REPORT.index("## 作者在說什麼") :],
+    ],
+    ids=["直接從第一節開始", "只有一個一級標題"],
+)
+def test_第一個標題前沒有那一句話_擋(report: str) -> None:
+    assert _failed(check_lead(report, file="report.md")) == [
+        "第一個「##」標題之前要先有一句話，講這篇在講什麼"
+    ]
+
+
+def test_報告沒有裸露的編號_通過() -> None:
+    assert _failed(check_internal_ids(REPORT, file="report.md")) == []
+
+
+@pytest.mark.parametrize(
+    ("line", "found"),
+    [
+        ("- 【有佐證】K1 開放時間延長：見 S2。", ["K1", "S2"]),
+        ("- 【有爭議】兩份說法不同 [S2、S3]。", ["S2", "S3"]),
+        ("- S1 原文", ["S1"]),
+        ("K12：數字對不上", ["K12"]),
+    ],
+    ids=["主張與來源編號", "方括號引用", "來源清單的原文編號", "兩位數"],
+)
+def test_報告露出內部編號_每個編號點名一次(line: str, found: list[str]) -> None:
+    text = REPORT.replace("一段話。", line + "\n\n再提一次 " + found[0] + "。")
+    failures = [e for e in check_internal_ids(text, file="report.md") if e.status == "fail"]
+    assert [e.excerpt for e in failures] == found
+    assert all(e.location is not None and e.location.line for e in failures)
+    assert failures[0].reason == (
+        f"報告裡出現內部編號 {found[0]}：K、S 編號只留在 sources.json，報告裡來源用名字"
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "部署在 K8s 上，用 `S3` 存檔。",
+        "SKU12 與 KS2023 都不是編號。",
+        "見 https://a.example/S2/K1 這一頁。",
+        "```\nS2 = 1\n```",
+    ],
+    ids=["字的一部分與程式碼", "較長的英數字", "網址裡的", "程式碼區塊"],
+)
+def test_不是內部編號的不算(line: str) -> None:
+    text = REPORT.replace("一段話。", line)
+    assert _failed(check_internal_ids(text, file="report.md")) == []
+
+
+def test_給了用到的編號_只擋清單上的_產品名不誤擋() -> None:
+    text = REPORT.replace("一段話。", "Amazon S3 與 Galaxy S24 都不是編號，見 S2 才是。")
+    failures = _failed(check_internal_ids(text, file="report.md", known={"S1", "S2", "K1"}))
+    assert len(failures) == 1 and "S2" in failures[0]
+
+
+def test_報告的檢查合起來_只擋這一份用到的編號() -> None:
+    entries = report_checks(
+        report=REPORT.replace("一段話。", "存在 Amazon S3。"),
+        report_file="report.md",
+        output=OUTPUT,
+        output_file="sources.json",
+        schema=SCHEMA,
+        allowed_urls=FETCHED,
+        key_claims=["K1"],
+    )
+    assert _failed(entries) == []
+
+
+def test_可以寫的題材兩個以上而且有編號_通過() -> None:
+    assert _failed(check_topics_numbered(REPORT, file="report.md")) == []
+
+
+def test_可以寫的題材用有編號的清單也算() -> None:
+    listed = REPORT.replace("### 1. 題材一\n- 角度：一句話。", "1. **題材一**\n   - 角度：一句話。")
+    listed = listed.replace("### 2. 題材二\n- 角度：一句話。", "2. **題材二**\n   - 角度：一句話。")
+    assert _failed(check_topics_numbered(listed, file="report.md")) == []
+
+
+def test_可以寫的題材只有一個_擋() -> None:
+    single = REPORT.replace("### 2. 題材二\n- 角度：一句話。\n", "")
+    assert _failed(check_topics_numbered(single, file="report.md")) == [
+        "「可以寫的題材」要至少 2 個有編號的題材（### 1. 暫定標題），現在有 1 個"
+    ]
+
+
+def test_可以寫的題材沒有編號_擋() -> None:
+    bare = REPORT.replace("### 1. 題材一", "### 題材一").replace("### 2. 題材二", "### 題材二")
+    assert _failed(check_topics_numbered(bare, file="report.md")) == [
+        "「可以寫的題材」要至少 2 個有編號的題材（### 1. 暫定標題），現在有 0 個"
+    ]
+
+
+def test_可以寫的題材編號跳號_擋() -> None:
+    skipped = REPORT.replace("### 2. 題材二", "### 3. 題材二")
+    assert _failed(check_topics_numbered(skipped, file="report.md")) == [
+        "可以寫的題材的編號要從 1 起連續，現在是 1、3"
+    ]
+
+
+def test_報告的檢查合起來_露出編號就不過() -> None:
+    entries = report_checks(
+        report=REPORT.replace("一段話。", "見 S2。"),
+        report_file="report.md",
+        output=OUTPUT,
+        output_file="sources.json",
+        schema=SCHEMA,
+        allowed_urls=FETCHED,
+        key_claims=["K1"],
+    )
+    assert any("S2" in reason for reason in _failed(entries))

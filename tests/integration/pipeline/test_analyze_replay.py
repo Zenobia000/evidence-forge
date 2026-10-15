@@ -3,9 +3,9 @@
 錄音在 `tests/fixtures/recordings/analyze-library/`。ADR-0014：錄音與原文會進公開 repo，
 所以**種子與「搜到的」文章全部是為測試寫的虛構短文**，跟 `restructure` 的重播用同一組：
 種子是 `tests/fixtures/articles/library-night.md`，相關文章在 `tests/fixtures/web/pages/`。
-錄音時模型是真的（brief 段本機 qwen3.5:9b、查證與找題材段 Anthropic strong），網路是假的
-（ADR-0022 之後配方改成本機優先，重播用錄音當時的配方等級，見 `conftest.py`）
-（`tests/fixtures/web/fake_web.py`）。作家設定用 `tests/fixtures/authors/`（分析用不到，但開單照樣放）。
+錄音時模型是真的（brief 段本機 qwen3.5:9b、查證與找題材段 Claude Haiku 5.5，也就是 `fast`），網路是假的
+（`tests/fixtures/web/fake_web.py`）。重播用錄音當時的配方等級，見 `conftest.py`。
+作家設定用 `tests/fixtures/authors/`（分析用不到，但開單照樣放）。
 
 重錄（改了 system-prompt、skill、任務說明、文類定義、自寫文章或升了 Pi，請求就會變；
 會花 Anthropic 的錢，錄之前先照 `PIPELINE.md` 量 Windows 的記憶體額度再載本機模型）：
@@ -15,18 +15,20 @@
     echo tvly-fake-xxxx-recording > $S/tavily                        # 假 Tavily 不看金鑰
     uv run python tests/fixtures/web/fake_web.py seed $D
     uv run python tests/fixtures/web/fake_web.py tavily --port 8765 &
-    EF_DATA=$D uv run ef new --recipe analyze --budget-usd 3 \\
+    # H=<harness 的複本>：repo 的 harness/ 每一項連結過去，只有 recipes/ 換成 conftest.py 的
+    # RECORDED_STAGES 那幾行（釘在本機與 fast，不讓它升到 strong）
+    EF_DATA=$D uv run ef new --harness $H --budget-usd 0.1 \\
         --text "$(cat tests/fixtures/articles/library-night.md)"
     EF_DATA=$D EF_SECRETS=$S EF_TAVILY_URL=http://127.0.0.1:8765 EF_GATEWAY_MODE=live \\
-        uv run ef serve --once
+        uv run ef serve --harness $H --once --port <沒人用的埠>
     # 把那張工單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/analyze-library/
     # 複製前先看模型請求（kind: llm 的 request blob）裡有沒有工單 id：本機模型偶爾會 read_file
     # 讀 job.md（工單 id、預算每次開單都不同），那份錄音重播對不上，要重錄
     # 錄完卸載本機模型：curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","keep_alive":0}'
 
-2026-10-13 重錄的這一份（PR #88 第一輪審查後改了 investigate 的 SKILL.md）：brief 在本機一次就過（沒有升級），
-查證段搜 2 次、列了 3 篇來源，四條關鍵主張都是「查不到」（種子是虛構的，模型照實寫查不到，
-沒有用記憶補），三個研究題材各附抓過的文章。
+2026-10-15 重錄的這一份（#100：報告改成一句話、下一步、新的五節、可以寫的題材）：brief 在本機一次就過
+（沒有升級），查證段在 Haiku 一次就過，搜 3 次、列了 4 篇來源，四條關鍵主張都是「查不到」
+（種子是虛構的，模型照實寫查不到，沒有用記憶補），三個可以寫的題材各附抓過的文章。花 US$0.0054。
 
 重播時模型回應、搜尋、抓取都從錄音回放；讀寫工單、放來源正文、程式檢查照樣真的跑。
 不需要 Ollama，不打任何付費 API，也不連網。
@@ -65,8 +67,8 @@ pytestmark = [
     ),
 ]
 
-# 分析報告的五節，照 PRD §5 的順序（獨立寫一份，不從程式拿）
-FIVE_SECTIONS = ["作者在說什麼", "事實與觀點", "查證", "研究題材", "來源清單"]
+# 分析報告的五節，照 PRD §5、ADR-0024 的順序（獨立寫一份，不從程式拿）
+FIVE_SECTIONS = ["作者在說什麼", "查證", "作者的看法", "可以寫的題材", "來源清單"]
 
 
 @pytest.fixture
@@ -127,6 +129,17 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
     )
     headings = re.findall(r"^## (.+)$", report, flags=re.MULTILINE)
     assert headings == FIVE_SECTIONS
+    # 第一個標題之前：一句話與下一步；報告裡沒有 K、S 編號；可以寫的題材有編號（ADR-0024）
+    opening = report.split("\n## ", 1)[0]
+    assert opening.strip() and "▶ 下一步" in opening
+    assert not re.search(r"(?<![A-Za-z0-9])[KS]\d+(?![A-Za-z0-9])", report)
+    topics = report.split("## 可以寫的題材", 1)[1].split("\n## ", 1)[0]
+    numbers = re.findall(r"^### (\d+)\.", topics, flags=re.MULTILINE)
+    assert numbers == [str(n) for n in range(1, len(numbers) + 1)] and len(numbers) >= 2
+    # 查證每一條直接標結果
+    verify = report.split("## 查證", 1)[1].split("\n## ", 1)[0]
+    items = [line for line in verify.splitlines() if line.startswith("- ")]
+    assert items and all(re.match(r"- 【(有爭議|過時|查不到|有佐證)】", line) for line in items)
 
     # 兩段的檢查都是執行器自己算的，而且最後一次都過了
     reports = [
@@ -155,7 +168,7 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
 
 
 @pytest.mark.promise("FR-AN-01", "FR-IV-01")
-def test_brief_的關鍵主張每一條都有查證結果_研究題材各附抓過的文章(
+def test_brief_的關鍵主張每一條都有查證結果_可以寫的題材各附抓過的文章(
     job_dir: Path,
 ) -> None:
     brief = json.loads(
@@ -172,7 +185,7 @@ def test_brief_的關鍵主張每一條都有查證結果_研究題材各附抓�
     # 種子是虛構的：查不到就寫查不到，不用記憶補（analyze.feature「查不到不等於錯」）
     assert {check["verdict"] for check in found["fact_checks"]} == {"not_found"}
     listed = {source["id"] for source in found["sources"]}
-    assert found["topics"]
+    assert len(found["topics"]) >= 2
     assert all(set(topic["sources"]) <= listed for topic in found["topics"])
     assert brief["topics"]
 
@@ -190,12 +203,12 @@ def test_錄音的帳本_brief_在本機不花錢_沒有升級() -> None:
 
 
 @pytest.mark.promise("NFR-COST-01")
-def test_錄音的帳本_查證段用_strong_只有查證段搜尋_沒超過額度() -> None:
+def test_錄音的帳本_查證段用_fast_只有查證段搜尋_沒超過額度() -> None:
     recorded = _recorded_llm_calls()
     assert {entry.stage for entry in recorded} == {"brief", "investigate"}
     for entry in recorded:
         if entry.stage == "investigate":
-            assert entry.tier == "strong" and entry.cost_usd > 0
+            assert entry.tier == "fast" and entry.cost_usd > 0
     searches = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.kind == "search"]
     assert searches and all(e.stage == "investigate" for e in searches)
     assert len(searches) <= 6

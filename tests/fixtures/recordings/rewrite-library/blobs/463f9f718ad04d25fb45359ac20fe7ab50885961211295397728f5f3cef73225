@@ -1,0 +1,771 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg3oZWuSVWe2XtZLHeGED","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2359,"cache_read_input_tokens":8331,"cache_creation":{"ephemeral_5m_input_tokens":2359,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}   }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0             }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01NRZhx2MM8xzezFjYm2nv9F","name":"write_file","input":{},"caller":{"type":"direct"}}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"stages"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/rewrite/1/"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"article.md"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"content\": \"#"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 頭三個月的人"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"潮會騙人"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"：夜間開館的數"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"字要看第九個月之"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"後\\n\\n圖書館延長"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"到晚上十點，"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"頭幾個月人多是"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"正"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"常的，"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"不代表這件事已經"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"成功。真正該看的"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，是新鮮感退"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"去以"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"後，數字穩在"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"哪裡。\\n\\n## "}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"人潮為什麼總"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"是先來\\n\\n北岸市"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"把"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"三座分館的平日開"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"放延到晚上十點"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"市"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"立閱讀協會的"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"林佳穎追"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"蹤了一整"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"年的刷卡紀"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"錄。結果很"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"清楚：晚上八"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"點以後的人數在"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"頭三個月最高，之"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"後慢慢往下，"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"到第九個月大約"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"剩開"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館初期的六成，然"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"後就"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"穩住不"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"再掉。\\n\\n這個走"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"勢我一"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"點都不意外。新開"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的時段大家都想試"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"一下，朋友會約"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，好奇的人會"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"進"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"來看看。試過之後"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，有些人發現晚"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"上來不太"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"方便，就不來了。"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"所以前三個月的數"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"字，比較像一"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"次性的試用，不太"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"像需求本身。\\n\\n##"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 第九個月的"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"那條線，才說明"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"誰真的需要\\n\\n報告"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"最有用的地方，是"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"把第九個月以後"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"穩下來的那段"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"拿出來看。那一"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"段才回答兩個問"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"題：晚上來的人"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，有"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"沒有一"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"群固定的人；"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"而"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"這些人，是不是白"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"天真的來不了。"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\n\\n同"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"一份報告裡，三"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"座分館差"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"很"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"多"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。靠近捷運站"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的那一座，晚上"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的讀者有七成是"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"二十五到四十歲"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的上班族，週間每"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"晚都有固定的人"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。住宅區的分館"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"則多半是準備考試"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的高中生，一到"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"寒暑假就少"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"掉一半。同樣是"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"延長開放，服務的"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"其實是不同的人。"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\n\\n還有一個細節："}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"週五晚上"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"三座分館都最冷"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"清，人數大"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"約只有週一的一半"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。如果只看整體平"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"均，這個現象會被"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"藏起來。要判"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"斷一個時段值不值"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"得繼續開，至少"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"要把平日分開看。"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\n\\n##"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 下"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"班後的"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"人到"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"底缺什麼\\n\\n社"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"會學常講的「第三"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"空間」，指"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的是家與公司以外"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"，可以待著、"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"不用解釋自己在"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"做什麼的地方。"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"作"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"家吳映萱"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"訪問了二十位在市"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"中心上班的人，問"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"他們下班後想讀"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"書或做自己的事時"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"去"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"哪裡。\\n\\n一半"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的人說，"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"回家，但在家做不"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"了。有"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"四個人每個月在自"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"習室花掉"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"兩千元以上，"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"只有兩個人想到"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"圖書館，理由都"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"是「它早就關了」"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。\\n\\n這讓我覺"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"得，"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"夜間開館真正的"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"對象，可能是那些"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"還不知道它開著的"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"人。這也是為什"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"麼用入"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館人數來衡量很"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"難："}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"最需要的人，"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"往往一開始連它開"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"著都不知道。換到"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"別的館，曲線的"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"形狀可能不一"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"樣，但看法不會"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"變"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。\\n\\n## 判斷的"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"時候，我會先看"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"哪一段\\n\\n如果你是"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館方、議員，或只"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"是住在"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"附近、想知道這"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"筆錢花"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"得"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"值不值得的人，我"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的做"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"法很"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"簡單。"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"先別"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"急著用頭三個月"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的人數下結論，等"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"到第九個月以後，"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"看"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"穩定"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"下來的那條線，再"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"把"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"週間和"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"週五分開比"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"。\\n\\n所"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"以我"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"的"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"判斷是：夜間"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"開館的成績單，要"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"看的是那條穩下"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"來的線，不是開"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"幕時的人潮。"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\n\\n## 參考來源\\n\\n1"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":". 社區圖書館"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"延長開放到晚上"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"十點，值得嗎"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"（"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"原文）\\n2. "}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"夜間開館一年後："}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"三座分館的入館人"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"數怎麼變，林"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"佳穎，https://city"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-reading.example/2026"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/evening-hours-surv"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ey\\n3. 下班後"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"去哪裡：城市"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"裡的第三空間越"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"來越貴，吳映"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"萱，https://quiet"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-spaces.example/ess"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ays/third-place\\n"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}       }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1        }
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01V3uSxWY8hz4hrhHJJcX1Pn","name":"write_file","input":{},"caller":{"type":"direct"}}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"stages/rewrite"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"/1/article.json"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\", \"content\": \"{"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n  \\\"title\\\": \\\"頭三"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"個月的人潮會"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"騙人：夜間開館"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"的數字要看第九個"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"月之後\\\",\\n  \\\"title"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"_candidates\\\": [\\n    "}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"頭三個月的人"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"潮會騙人："}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"夜間開館的數字要"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"看第九個月之後\\\","}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    \\\"夜間開館"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"的"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"成績單，要看第"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"九個月\\\",\\n    \\\"開"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"館初期的人潮會"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"騙人：圖書館"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"夜間人數"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"怎麼讀\\\",\\n    "}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"新鮮感"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"退去之後，還會"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"有"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"人"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"來"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"圖書館嗎？\\\","}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    \\\""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"圖書館晚上十點"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"開門，該看的是"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"哪一段"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"曲線\\\","}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    \\\"別被開"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"幕那"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"三"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"個月"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"騙了：夜間開館"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"的人"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"數要這"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"樣看"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\","}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    \\\""}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"夜間開館的人數，"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"第"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"九個月才"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"說"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"真話"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"\\n  ]\\n}"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"}"} }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2               }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2359,"cache_read_input_tokens":8331,"output_tokens":4176,"output_tokens_details":{"thinking_tokens":2581}}   }
+
+event: message_stop
+data: {"type":"message_stop"       }
+

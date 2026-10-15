@@ -13,10 +13,12 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 - `brief`：`brief.json` 只放給程式讀的文類、主題標籤、關鍵主張（1～6 條，SKILL.md 要 3～6），不收 `quote`（ADR-0020 不附逐字引句）。
   `brief.md` 的六節由程式檢查（`checks/analysis.py` 的 `BRIEF_SECTIONS`），標題照抄 SKILL.md 的中文。
 - `investigate`：`sources.json` 的來源一筆有 `id`（`S2` 起）、`url`、`title`、`why`，另外有 `fact_checks`（每條關鍵主張的判定：
-  `supported`、`disputed`、`not_found`、`outdated`；除了 `not_found` 都要附來源）與 `topics`（每個題材至少一篇）。
-  `report.md` 的五節依序由程式檢查（`REPORT_SECTIONS`，PRD §5）；查證與題材引用的編號要在清單上。
+  `supported`、`disputed`、`not_found`、`outdated`；除了 `not_found` 都要附來源）與 `topics`（可以寫的題材，至少 2 個，每個至少一篇）。
+  `report.md` 由程式檢查（`checks/analysis.py`，PRD §5、ADR-0024）：第一個標題前有一句話、五節依序（`REPORT_SECTIONS`）、
+  沒有裸露的 K、S 編號、可以寫的題材有編號；`sources.json` 裡查證與題材引用的編號要在清單上。
 - `rewrite`：`article.json` 放選定的標題與全部候選標題。`article.md` 的格式與出處由程式檢查
-  （`checks/article.py`）：標準 Markdown、最後一節是「參考來源」而且列了原文出處；跟原文與每份來源的逐字重疊率只顯示、不擋。
+  （`checks/article.py`）：標準 Markdown、最後一節是「參考來源」而且列了原文出處、標題不用文類骨架的字、
+  參考來源以外的內文不提原文標題與原作者（ADR-0024）；跟原文與每份來源的逐字重疊率只顯示、不擋。
 
 ### 執行器看產出檔名決定跑哪些檢查
 
@@ -24,9 +26,9 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 
 | 宣告的產出 | 執行器做什麼 |
 | :--- | :--- |
-| `report.md` | 分析報告的檢查：五節依序、Markdown、同一段的 JSON 合 schema、引用的編號在清單上 |
+| `report.md` | 分析報告的檢查：一句話、五節依序、沒有內部編號、題材有編號、Markdown、同一段的 JSON 合 schema、引用的編號在清單上 |
 | `brief.md` | brief 的檢查：六節、Markdown、同一段的 JSON 合 schema |
-| `article.md` | 重構文章的檢查：Markdown、結尾參考來源列了原文出處、同一段的 JSON 合 schema；重疊率只顯示。沒過帶著結果回這一段修，最多 `auto_fix` 次 |
+| `article.md` | 重構文章的檢查：Markdown、結尾參考來源列了原文出處、標題不用骨架字、內文不提原文與原作者、同一段的 JSON 合 schema；重疊率只顯示。沒過帶著結果回這一段修，最多 `auto_fix` 次 |
 | `sources.json` | 檢查都過了之後，照清單從這一段真的抓過的網頁放來源正文；清單上有沒抓過的網址算這一次不合格 |
 
 所以 skill 改名、或新的 skill 交同一種產出，檢查照樣跑。反過來，**要交分析報告就一定叫 `report.md`、來源清單一定叫 `sources.json`**，換了名字檢查就不會跑；`tests/unit/test_skills.py` 有契約測試盯著 `analyze` 與 `rewrite` 配方。

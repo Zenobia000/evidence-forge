@@ -5,7 +5,7 @@ stages:
   - { id: rewrite, skill: rewrite, tier: local, escalate_to: [fast, strong], output: [article.md, article.json] }
 needs: [report.md]
 on_feedback: rewrite
-default_goal: 以分析報告的論點與研究題材為起點，寫一篇給台灣讀者看、有自己觀點的文章
+default_goal: 從分析報告「可以寫的題材」挑最適合的一個，用角色自己的聲音寫一篇給台灣讀者看、有自己觀點的文章
 max_attempts: 2
 auto_fix: 1
 ---
@@ -31,7 +31,7 @@ Claude Haiku 5.5、Sonnet 5.5 各試一次。輸入大到本機模型的上下�
 原文出處（標題、作者、網址）由執行器寫進任務說明，文章結尾的參考來源照抄。
 
 執行器的程式檢查（`checks/article.py`）：文章是標準 Markdown、最後一節「參考來源」列了原文出處、
-`article.json` 合 schema；沒過就帶著結果回這一段修，每一級最多 `auto_fix` 次，還沒過就升到下一級重寫，
+標題不用文類骨架的字、參考來源以外的內文不提原文標題與原作者（ADR-0024）、`article.json` 合 schema；沒過就帶著結果回這一段修，每一級最多 `auto_fix` 次，還沒過就升到下一級重寫，
 最後一級也修不好以未完成結束。
 跟原文、跟每一份來源的逐字重疊率照樣算出來寫進檢查結果，只顯示、不擋。
 

@@ -2,6 +2,7 @@
 
 > **狀態：** 已接受 | **日期：** 2026-10-11 | **決策者：** 專案擁有者
 > **後續修正：** 由 ADR-0020 修正——重構從分析報告出發，不再從來源文類的抽取欄位出發；文類骨架、作家聲音與文類風格照舊使用。
+> **後續修正：** 由 ADR-0024 修正——骨架是思考的順序，不當文章的標題。
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > 研究依據：`30-snapshot/research/2026-10-11-article-genre-survey.md`。
 

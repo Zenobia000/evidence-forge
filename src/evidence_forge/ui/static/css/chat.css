@@ -157,6 +157,15 @@
 .ch-topic { padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); display: flex; flex-direction: column; gap: 6px; }
 .ch-topic__h { margin: 0; font-size: 15px; font-weight: 600; }
 .ch-sec .ch-topic p:not(.ch-topic__h) { margin: 0; font-size: 13px; line-height: 1.7; color: var(--color-text-secondary); }
+/* 報告開頭的一句話與下一步（ADR-0024） */
+.ch-nextstep { display: flex; flex-direction: column; gap: 4px; }
+.ch-sec .ch-nextstep__lead { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.7; }
+.ch-sec .ch-nextstep__step { margin: 0; font-size: 14px; color: var(--color-text-secondary); }
+.ch-topic__body { font-size: 13px; line-height: 1.7; color: var(--color-text-secondary); }
+.ch-topic__body ul { margin: 0; padding-left: 18px; }
+/* 來源清單預設收起來 */
+.ch-sec--fold > summary { cursor: pointer; list-style: revert; }
+.ch-sec--fold[open] > summary { margin-bottom: 12px; }
 .ch-sources { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.6; }
 .ch-sources .s0-mono { font-size: 12px; color: var(--color-text-secondary); }
 
