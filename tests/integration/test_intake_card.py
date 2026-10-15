@@ -163,6 +163,15 @@ def test_再改照自己的想法寫的文章_沒有素材項目也開得出來_
     assert (again.parent, again.feed, again.card, again.feedback) == (first, None, card_id, "開頭改短")
 
 
+def test_作者素材的檔不見了_不開單_說是哪一份(data: DataDir, cid: str) -> None:
+    card_id = decided_card(data, cid, material=NOTES)
+    cards.material_path(data, cid, card_id, "M1").unlink()
+
+    with pytest.raises(ValueError, match="M1"):
+        _open(data, cid, card_id)
+    assert list(data.jobs.iterdir()) == []
+
+
 def test_作者素材的檔壞了_不開單(data: DataDir, cid: str) -> None:
     card_id = decided_card(data, cid, material=NOTES)
     stored = cards.material_path(data, cid, card_id, "M1")

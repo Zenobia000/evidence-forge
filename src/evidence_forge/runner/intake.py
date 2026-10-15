@@ -48,6 +48,9 @@ from evidence_forge.paths import DataDir
 from evidence_forge.runner import events
 from evidence_forge.runner.stage_inputs import (
     AUTHOR,
+    CARD_BRIEF,
+    CARD_EVENTS,
+    CARD_JSON,
     PREVIOUS_ARTICLE,
     carried_files,
     default_genre,
@@ -59,11 +62,6 @@ from evidence_forge.runner.stage_inputs import (
 from evidence_forge.write_once import write_once
 
 MANUAL_FEED = "manual"
-# 照編輯卡寫稿的工單放快照的地方（ADR-0025 §3.4）；寫稿讀 `card.md`，另外兩份是留底
-CARD_DIR = "input/card/"
-CARD_BRIEF = CARD_DIR + "card.md"
-CARD_JSON = CARD_DIR + "card.json"
-CARD_EVENTS = CARD_DIR + "decisions.jsonl"
 # 照編輯卡寫的工單的目標：要寫什麼都在編輯卡上，目標只指過去
 CARD_GOAL = "照編輯卡（input/card/card.md）寫一篇新文章"
 _TEXT_SUFFIXES = (".md", ".markdown", ".txt")
@@ -575,7 +573,10 @@ def open_job_from_card(
         feed = parent.feed
     materials: dict[str, bytes] = {}
     for material in card.materials:
-        content = cards.material_file(data, conversation, card.card_id, material.sha256).read_bytes()
+        try:
+            content = cards.material_file(data, conversation, card.card_id, material.sha256).read_bytes()
+        except OSError:
+            raise ValueError(f"作者素材 {material.id} 存的檔不見了，先重新貼一次") from None
         if hashlib.sha256(content).hexdigest() != material.sha256:
             raise ValueError(f"作者素材 {material.id} 存的檔跟記下的內容對不上（被改過或沒寫完），先重新貼一次")
         materials[material.sha256] = content
