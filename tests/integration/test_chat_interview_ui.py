@@ -55,10 +55,24 @@ NAME_CARD = {
 }
 
 
+# 第 6 關一定有一張圖文分鏡卡與主張清單（#110）
+STORYBOARD_CARD: dict[str, Any] = {
+    "kind": "storyboard",
+    "header": "圖文分鏡",
+    "question": "每節配不配圖？",
+    "options": [
+        {"label": "一張數據圖", "description": "第 2 節", "figures": [{"section": "成本", "kind": "chart"}]},
+        {"label": "不配圖", "description": "只有文字", "figures": []},
+    ],
+}
+CLAIMS = [{"claim": "長上下文的帳單比檢索貴", "wrong_if": "同樣的問答量帳單比較便宜"}]
+
+
 def _station(n: int) -> list[dict[str, Any]]:
     if n == 1:
         return [GENRE_CARD, THEME_CARD]
-    return [
+    extra = [STORYBOARD_CARD] if n == 6 else []
+    return [*extra, 
         {
             "header": f"關{n}",
             "question": f"第 {n} 關要怎麼定？",
@@ -84,7 +98,8 @@ class World:
         minutes: float = 1, origin: dict[str, Any] | None = None,
     ) -> str:
         written = cards.propose_questions(
-            self.folder.data, cid, card_id, station, questions or _station(station), now=at(minutes), origin=origin
+            self.folder.data, cid, card_id, station, questions or _station(station), now=at(minutes), origin=origin,
+            claims=CLAIMS if station == 6 else None,
         )
         return written.card_id
 

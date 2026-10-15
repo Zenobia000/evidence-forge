@@ -22,9 +22,10 @@ RECORDED_STAGES: dict[str, dict[str, str]] = {
         "investigate": "  - { id: investigate, skill: investigate, tier: fast, "
         "output: [report.md, sources.json], tavily_credits: 12 }",
     },
-    # 2026-10-15 錄的 rewrite-library（#106 重錄）：重構段直接用 fast
+    # 2026-10-15 錄的 rewrite-library（#110 重錄：照編輯卡寫稿）：本機先試、不行升 fast，不升 strong
+    # （錄音只准本機與 Haiku）。本機兩次都沒過檢查，第 3 次 fast 過了
     "rewrite.md": {
-        "rewrite": "  - { id: rewrite, skill: rewrite, tier: fast, "
+        "rewrite": "  - { id: rewrite, skill: rewrite, tier: local, escalate_to: [fast], "
         "output: [article.md, article.json] }",
     },
 }

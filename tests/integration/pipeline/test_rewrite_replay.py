@@ -1,36 +1,37 @@
-"""重播 `analyze` → `rewrite`：真的 Pi＋ef-tools＋閘道重播模式，先分析、再從那張分析工單開重構（#79）。
+"""重播 `analyze` → 編輯卡 → 寫稿：真的 Pi＋ef-tools＋閘道重播模式（#79、#110）。
 
-錄音在 `tests/fixtures/recordings/rewrite-library/`，只有重構那張單；分析那張用 `analyze-library` 的錄音。
+先重播分析，再把一張六關都決定好的編輯卡（`card_writing.py`，從報告的第 1 個題材開始、虛構角色 `nightowl`、
+研究評論）照畫面按「照這張編輯卡寫稿」的路開寫稿工單（工作台的 `write_from_card`），最後重播寫稿段。
+錄音在 `tests/fixtures/recordings/rewrite-library/`，只有寫稿那張單；分析那張用 `analyze-library` 的錄音。
 重播是看（段, 第幾次, 請求 hash）找回應，跟工單 id 無關，所以測試把兩份錄音併成一份交給閘道。
-ADR-0014：錄音會進公開 repo，**種子、來源、作家設定、標題與金句規則全部是為測試寫的虛構短文**
+ADR-0014：錄音會進公開 repo，**種子、來源、角色資料、標題與金句規則、編輯卡與作者素材全部是為測試寫的虛構短文**
 （`tests/fixtures/articles/library-night.md`、`tests/fixtures/web/pages/`、`tests/fixtures/authors/`、
-`tests/fixtures/style/`）。創作者自己的標題與金句規則只放 `EF_DATA`，不進錄音。
+`tests/fixtures/style/`、`card_writing.py`）。創作者自己的資料只放 `EF_DATA`，不進錄音。
 
-重錄（改了 rewrite 的 SKILL.md、任務說明、system-prompt、文類定義、自寫設定，或升了 Pi，請求就會變；
-會花 Anthropic 的錢）：
+重錄（改了 rewrite 的 SKILL.md、任務說明、編輯卡摘要的寫法、角色 fixture、文體定義，或升了 Pi，請求就會變；
+會花 Anthropic 的錢，也會載入本機模型：先看 Windows 的 commit 餘量至少 23 GB）：
 
     D=<空資料夾>; S=<空資料夾>; mkdir -p $D/style $S && cp -r tests/fixtures/authors $D/
     cp tests/fixtures/style/headline-punchline-system.md $D/style/
     ln -s ~/.config/evidence-forge/secrets/anthropic $S/anthropic   # 真的金鑰只連結、不複製
+    # $H 是配方釘在 conftest.py RECORDED_STAGES 那幾行的 harness 複本；埠避開 8787、8790
     # 1. 重播分析（不花錢）
     EF_DATA=$D EF_GATEWAY_MODE=replay EF_GATEWAY_REPLAY_DIR=$PWD/tests/fixtures/recordings/analyze-library \\
-        uv run ef new --budget-usd 3 --text "$(cat tests/fixtures/articles/library-night.md)"
+        uv run ef new --harness $H --budget-usd 3 --text "$(cat tests/fixtures/articles/library-night.md)"
     EF_DATA=$D EF_GATEWAY_MODE=replay EF_GATEWAY_REPLAY_DIR=$PWD/tests/fixtures/recordings/analyze-library \\
-        uv run ef serve --once
-    # 2. 正式跑重構（花錢）；$H 是配方釘在 conftest.py RECORDED_STAGES 那幾行的 harness 複本
-    EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef new --harness $H --from <分析工單> \\
-        --persona me --genre research-review --goal "$(cat <GOAL 那一行>)" --budget-usd 0.05
+        uv run ef serve --harness $H --once --port <沒人用的埠>
+    # 2. 照編輯卡開寫稿工單（不花錢）
+    EF_DATA=$D uv run python tests/card_writing.py <分析工單> $H
+    # 3. 正式跑寫稿段（花錢；本機先試，不行升 fast）
     EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef serve --harness $H --once --parallel 1 \\
         --port <沒人用的埠>
-    # 把重構那張單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/rewrite-library/。
-    # 複製前先看模型請求裡有沒有工單 id（agent 讀了 job.md 之類的檔），有就重錄
+    # 把寫稿那張單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/rewrite-library/。
+    # 複製前先看模型請求裡有沒有工單、卡、對話的 id 或本機路徑，有就重錄
 
-2026-10-15 重錄的這一份（#106：目標文體換成 7 種之一的研究評論，`input/target-genre.md` 是新的通用定義，
-沒有轉換說明；T3 第一輪後通用定義改用自己的話寫）：重構段直接用 `fast`（Claude Haiku 5.5），一次就過
-（沒有回去修），花 US$0.0065。目標是對話的
-agent 在創作者說「寫第 1 個」時會帶的樣子：那個題材的暫定標題與角度；文體照報告的建議文體。
+2026-10-15 重錄的這一份（#110：照編輯卡寫）：寫稿段本機（Qwen3.5 9B）寫了兩次都沒過檢查（用了骨架字當標題、
+把表格也留了圖位），第 3 次升到 `fast`（Claude Haiku 5.5）一次就過，共花 US$0.0086（本機不算錢）。
 
-錄音只准用本機與 Haiku（月底額度）；重播用錄音當時的配方等級（`conftest.py`）。
+錄音只准用本機與 Haiku；重播用錄音當時的配方等級（`conftest.py`）。
 重播時模型回應從錄音回放；開單、放參考資料、程式檢查照樣真的跑。不需要 Ollama，不打任何付費 API。
 """
 
@@ -40,24 +41,21 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
+from card_writing import GENRE, PERSONA, THEME, open_writing
 
 from evidence_forge.checks import ChecksReport
 from evidence_forge.cli import main
 from evidence_forge.documents import read_job
 from evidence_forge.harness import Harness, default_harness
 from evidence_forge.ledger_models import LedgerEntry
+from evidence_forge.paths import DataDir
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 ARTICLE = FIXTURES / "articles" / "library-night.md"
 RECORDINGS = FIXTURES / "recordings"
-# 創作者說「寫第 1 個」時，對話的 agent 帶的目標：那個題材的暫定標題與角度（chat-system-prompt.md、ADR-0024）
-GOAL = (
-    "題材 1：夜間開館的人流為什麼先高後降：頭半年的數字該怎麼看。"
-    "角度：用創作者自己的觀察說明，為什麼新開的夜間時段要等到第九個月才看得出真正的人流，以及評估時該看哪一條線。"
-    "寫給台灣上班族看的短文。"
-)
-# 那個題材的建議文體（analyze-library 錄音的報告）：研究評論（research-review）
-GENRE = "research-review"
+# 錄音時寫稿工單的預算（`card_writing.py` 當腳本跑時用的）
+RECORDED_BUDGET_USD = 0.05
 
 PI_BIN = default_harness().pi.pi_bin
 
@@ -117,22 +115,9 @@ def jobs(
     harness = ["--harness", str(recorded_harness.root)]
     analysis = _new(capsys, *harness, "--budget-usd", "3", "--text", text)
     assert main(["serve", *harness, "--once", "--port", str(port)]) == 0
-    rewrite = _new(
-        capsys,
-        *harness,
-        "--from",
-        analysis,
-        "--persona",
-        "me",
-        "--genre",
-        GENRE,
-        "--goal",
-        GOAL,
-        "--budget-usd",
-        "0.5",
-    )
+    writing = open_writing(DataDir(ef_data), recorded_harness, analysis, RECORDED_BUDGET_USD)
     assert main(["serve", *harness, "--once", "--port", str(port)]) == 0
-    return ef_data / "jobs" / analysis, ef_data / "jobs" / rewrite
+    return ef_data / "jobs" / analysis, ef_data / "jobs" / writing
 
 
 def _ledger(path: Path) -> list[LedgerEntry]:
@@ -140,73 +125,74 @@ def _ledger(path: Path) -> list[LedgerEntry]:
     return [LedgerEntry.model_validate_json(line) for line in lines]
 
 
+def _article(writing: Path) -> str:
+    job = read_job(writing / "job.md").job
+    assert job.stage is not None
+    return (writing / "stages" / "rewrite" / str(job.stage.attempt) / "article.md").read_text(encoding="utf-8")
+
+
 @pytest.mark.promise("FR-RW-01", "FR-RW-02", "FR-RC-01", "NFR-COST-06")
-def test_自己寫的短文_重播跑完分析再重構_文章合格_結尾列原文出處(
+def test_照編輯卡寫稿_重播跑完_文章照卡的文體主題角色_圖位與參考來源都對(
     jobs: tuple[Path, Path],
 ) -> None:
-    analysis, rewrite = jobs
-    job = read_job(rewrite / "job.md").job
-    assert (job.recipe, job.parent) == ("rewrite", analysis.name)
+    analysis, writing = jobs
+    job = read_job(writing / "job.md").job
+    assert (job.recipe, job.parent, job.persona, job.target_genre) == ("rewrite", analysis.name, PERSONA, GENRE)
+    assert job.card is not None
     assert job.result is not None and job.result.outcome == "complete", job.result
-    assert job.target_genre == GENRE
-    # 測試用的作家設定沒有研究評論的文體風格：標未校準
-    assert "未校準" in job.result.reason
 
-    article = (rewrite / "stages" / "rewrite" / "1" / "article.md").read_text(
-        encoding="utf-8"
-    )
-    headings = re.findall(r"^## (.+)$", article, flags=re.MULTILINE)
-    assert headings[-1] == "參考來源"
-    original = ARTICLE.read_text(encoding="utf-8").splitlines()[0].lstrip("# ")
+    article = _article(writing)
+    front = yaml.safe_load(article.split("---\n", 2)[1])
+    assert (front["genre"], front["theme"]) == (GENRE, THEME)
+    assert front["title"] and front["description"]
+    # 分鏡：一張數據圖有圖位，表格寫成 Markdown 表格
+    assert article.count("](./images/fig-1.webp)") == 1 and "fig-2" not in article
+    assert re.search(r"^\|.*\|\s*$", article, flags=re.MULTILINE)
+    # 參考來源第一條是原文；內文不提原文（研究評論不是 essay，ADR-0024）
     body, references = article.split("## 參考來源", 1)
-    # 參考來源第一條是原文；內文不提原文（ADR-0024）
+    original = ARTICLE.read_text(encoding="utf-8").splitlines()[0].lstrip("# ")
     first = next(line for line in references.splitlines() if line.strip())
     assert original in first
-    assert original not in body and "原作者" not in body and "這篇談的是" not in body
-    # 文類骨架只是思考順序，不當標題
-    skeleton = re.compile(r"^(?:先講|我的)?(?:結論|論據|反方|建議)")
-    assert not [h for h in re.findall(r"^#{1,6} (.+)$", body, flags=re.MULTILINE) if skeleton.match(h)]
-    # 不掛逐句引用編號
+    assert original not in body and "原作者" not in body
     assert not re.search(r"\[\^?S\d+\]", article)
 
-    [report] = [
+    reports = [
         ChecksReport.model_validate_json(p.read_text(encoding="utf-8"))
-        for p in sorted((rewrite / "checks").glob("checks.v*.json"))
+        for p in sorted((writing / "checks").glob("checks.v*.json"))
     ]
-    assert report.passed
-    summaries = [e for e in report.entries if e.check == "C3" and e.location is None]
-    # 重疊率對原文與分析段抓過的每一份來源各算一次
-    placed = sorted(p.stem for p in (analysis / "input" / "sources").glob("S*.md"))
-    assert [e.reason.split("：", 1)[0] for e in summaries] == ["原文", *placed]
-    assert len(placed) >= 2
-    # 新的兩項文章檢查都跑了，而且過了
-    reasons = [e.reason for e in report.entries if e.check == "C5" and e.status == "pass"]
-    assert "標題沒有用文類骨架的字" in reasons and "內文沒有提原文的標題與原作者" in reasons
+    assert reports[-1].passed
+    reasons = [e.reason for e in reports[-1].entries if e.status == "pass"]
+    for expected in ("圖文分鏡的每一張圖都有圖位", "角色列的句型都在次數以內"):
+        assert expected in reasons
+    assert any(r.startswith("front matter 齊全") for r in reasons)
 
 
-@pytest.mark.promise("FR-RW-01")
-def test_重構工單沒有原文全文_拿到的是報告_來源與規則(jobs: tuple[Path, Path]) -> None:
-    analysis, rewrite = jobs
-    inputs = rewrite / "input"
+@pytest.mark.promise("FR-RW-01", "FR-RW-02")
+def test_寫稿工單拿到編輯卡快照_報告與來源_只有這篇用得到的角色資料(jobs: tuple[Path, Path]) -> None:
+    analysis, writing = jobs
+    inputs = writing / "input"
     assert not (inputs / "content.md").exists()
-    assert (inputs / "report.md").read_bytes() == max(
-        (analysis / "stages" / "investigate").glob("*/report.md"),
-        key=lambda p: int(p.parent.name),
-    ).read_bytes()
+    assert (inputs / "card" / "card.md").is_file()
+    assert [p.name for p in (inputs / "card" / "materials").iterdir()]
     assert sorted(p.name for p in (inputs / "sources").iterdir()) == sorted(
         p.name for p in (analysis / "input" / "sources").iterdir()
     )
-    assert (inputs / "headline-punchline.md").is_file()
+    author = inputs / "author"
+    assert sorted(p.name for p in (author / "craft").iterdir()) == ["openings.md", "titles.md"]
+    assert (author / "theme.md").is_file() and (author / "lessons.md").is_file()
+    # 角色有自己的標題手藝：不再放共用的標題與金句規則
+    assert not (inputs / "headline-punchline.md").exists()
 
 
 @pytest.mark.promise("NFR-COST-06")
-def test_重構段全部從錄音回放_錄音沒有讀原文也沒有上網(
+def test_寫稿段全部從錄音回放_錄音只用本機與_fast_花費在上限內(
     jobs: tuple[Path, Path],
 ) -> None:
-    _, rewrite = jobs
-    ledger = _ledger(rewrite / "ledger.jsonl")
+    _, writing = jobs
+    ledger = _ledger(writing / "ledger.jsonl")
     assert ledger and {(e.kind, e.status) for e in ledger} == {("llm", "cache_hit")}
     recorded = _ledger(RECORDINGS / "rewrite-library" / "ledger.jsonl")
     assert len(ledger) == len(recorded)
     assert {e.kind for e in recorded} == {"llm"}
-    assert all(e.tier == "fast" for e in recorded)
+    assert {e.tier for e in recorded} <= {"local", "fast"}
+    assert sum(e.cost_usd or 0 for e in recorded) <= 0.05

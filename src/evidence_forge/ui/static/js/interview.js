@@ -277,3 +277,31 @@ export function resolveWriteConfirm(store, key, station) {
 export function isStaleConfirm(cardEvents, knownEvents) {
   return Number.isFinite(knownEvents) && Number(cardEvents) < knownEvents;
 }
+
+// ── 照這張編輯卡寫稿（票 110） ──────────────────────────────────────────────────────
+
+// 送出「照這張寫」：帶著確認卡上看到的事件筆數。伺服器拿它跟現在的卡比，對不上（確認之後卡又改過）就不開單
+export function writeRequest(conversationId, cardId, events) {
+  const count = typeof events === "number" ? events : /^\d+$/.test(String(events ?? "")) ? Number(events) : NaN;
+  if (!Number.isInteger(count) || count < 0) throw new Error(`確認卡上的事件筆數不對：${events}`);
+  const url = `/api/conversations/${encodeURIComponent(conversationId)}/cards/${encodeURIComponent(cardId)}/write`;
+  return { url, body: { confirmed_events: count } };
+}
+
+// 伺服器的回覆 → 畫面上說什麼、要不要重開確認卡。
+// 409 是卡的狀態不允許（確認之後又改過、有關卡要重確認、對話已經有單在跑…）：重開確認卡，讓創作者照現在的卡再看一次
+export function writeOutcome(status, data) {
+  if (status >= 200 && status < 300) {
+    const who = [data?.persona, data?.genre].filter(Boolean).join("、");
+    return { ok: true, reopen: false, text: `開始照編輯卡寫稿${who ? `（${who}）` : ""}，寫好會貼在對話裡。` };
+  }
+  const reason = (data && data.error) || `伺服器回 ${status}`;
+  if (status === 409) {
+    return { ok: false, reopen: true, text: `沒有開始寫稿：${reason}。確認卡重新打開了，看過再按一次「照這張寫」。` };
+  }
+  return {
+    ok: false,
+    reopen: false,
+    text: `沒有開始寫稿：${reason}。編輯卡還在，什麼都沒開、沒花錢；再按一次「照這張編輯卡寫稿」。`,
+  };
+}

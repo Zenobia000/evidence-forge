@@ -445,7 +445,10 @@ def open_job_from(
             f"工單 {parent_id} 還沒跑完（{parent.status}），等它結束再接著做"
         )
     carried = {Path(target).name for target in carried_files(parent_dir)}
-    wanted = list(recipe.needs)
+    same = parent.recipe == recipe.name
+    # 再改照創作者自己的想法或作者素材寫的稿（#110）：從來沒有報告，配方的 needs 對它不適用
+    without_report = same and parent.card is not None and parent.feed is None
+    wanted = [] if without_report else list(recipe.needs)
     if feedback is not None and feedback.strip():
         wanted.append(Path(PREVIOUS_ARTICLE).name)
     missing = [name for name in wanted if name not in carried]
@@ -454,7 +457,6 @@ def open_job_from(
             f"工單 {parent_id} 交不出 {'、'.join(missing)}（要過了程式檢查的產出），沒辦法接著做"
         )
 
-    same = parent.recipe == recipe.name
     chosen_persona = persona or (parent.persona if same else None) or AUTHOR
     _check_persona(data, chosen_persona)
     chosen_goal = (
