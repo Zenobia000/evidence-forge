@@ -35,6 +35,7 @@ brand.yaml
       regular: "NotoSansTC-Regular"   # 檔名（不含副檔名，找 .otf 再找 .ttf）或路徑
       bold: "NotoSansTC-Bold"
       dirs: ["fonts"]           # 另外找字型的資料夾；相對路徑以 brand.yaml 所在資料夾為準
+      require_cjk: true         # 建立樣式時檢查字型有常用繁體中文字的字形；只用拉丁字母的字型才設 false
     cover:                      # 封面三層詞彙：形式 form、媒材 medium、風格 style
       forms: {名稱: 「這種作品怎麼存在」的英文描述}
       media: {名稱: {forms: [可搭配的形式], description: 英文描述}}
@@ -46,6 +47,9 @@ brand.yaml
 
 字型找法：`dirs` 裡的資料夾、角色資料夾本身與其中的 `fonts/`、`~/.fonts`，依序找。
 找不到會丟 `FontNotFoundError`，訊息寫明缺哪個字型、找過哪些地方、該放到哪裡。
+沒有 brand.yaml 時一樣會找角色資料夾的 `fonts/`。找到的檔案還要打得開、有繁中字形，
+否則丟 `FontUnusableError`（缺字的字型不會報錯，只會畫出豆腐方塊，所以要在這裡擋）。
+角色資料夾與 brand.yaml 如果是符號連結而且指到 `authors/` 外面，一律拒絕（`BrandError`）。
 `palette`、`font`、`cover` 內各欄位獨立：只寫 `palette.accent` 就只換重點色，其餘照預設。
 `cover` 內的 `forms`、`media`、`styles`、`presets` 是整張字典一起換，不逐項合併。
 

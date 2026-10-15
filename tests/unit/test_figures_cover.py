@@ -164,7 +164,7 @@ def test_沒有_front_matter_就提醒沒記錄而不是默默略過(tmp_path: P
     assert (article / "article.md").read_text(encoding="utf-8") == "只有正文\n"
 
 
-def test_還沒有_article_md_也能先畫封面(tmp_path: Path) -> None:
+def test_還沒有_article_md_也能先畫封面_但明說跳過了哪三件事(tmp_path: Path) -> None:
     article = tmp_path / "01-first"
 
     result = make_cover(
@@ -172,7 +172,29 @@ def test_還沒有_article_md_也能先畫封面(tmp_path: Path) -> None:
     )
 
     assert (article / "images/cover.webp").exists()
-    assert result.warnings == []
+    assert not (article / "article.md").exists()  # 沒有替人建文章
+    assert len(result.warnings) == 1
+    warning = result.warnings[0]
+    assert "no article.md" in warning
+    for skipped in ("neighbour check", "dark-cover check", "front matter"):
+        assert skipped in warning
+
+
+def test_文章資料夾不在同層文章裡_兩個比對都會說跳過了(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    article = _article(tmp_path, "01-first")
+    monkeypatch.setattr("evidence_forge.figures.cover.siblings_of", lambda _dir: [])
+
+    result = make_cover(
+        article, FakeCoverRenderer(dark=True), DEFAULT_BRAND,
+        subject="s", form="painting", medium="oil", style="realism",
+    )
+
+    assert result.warnings == [
+        "article dir is not among its sibling articles; the neighbour check was skipped",
+        "article dir is not among its sibling articles; the dark-cover check was skipped",
+    ]
 
 
 def test_三層選錯時不會呼叫_renderer(tmp_path: Path) -> None:
@@ -286,3 +308,93 @@ def test_連續三篇最多一張深色封面(tmp_path: Path) -> None:
     )
     assert light.warnings == []
 
+
+
+# ---- 符號連結不能讓寫入或讀取跑出文章資料夾 ----
+
+
+def _try_cover(article: Path, renderer: FakeCoverRenderer) -> None:
+    make_cover(article, renderer, DEFAULT_BRAND, subject="s", form="painting", medium="oil", style="realism")
+
+
+def test_images_是指到外面的符號連結就拒絕_而且沒有呼叫_renderer(tmp_path: Path) -> None:
+    article = _article(tmp_path / "articles", "01-first")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (article / "images").symlink_to(outside, target_is_directory=True)
+    renderer = FakeCoverRenderer()
+
+    with pytest.raises(CoverError, match="符號連結"):
+        _try_cover(article, renderer)
+
+    assert list(outside.iterdir()) == []  # 外面一個檔都沒多
+    assert renderer.calls == []  # 也沒花生圖的錢
+
+
+def test_既有的封面檔是符號連結就不寫到它指的地方(tmp_path: Path) -> None:
+    article = _article(tmp_path / "articles", "01-first")
+    (article / "images").mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not touch", encoding="utf-8")
+    (article / "images" / "cover.png").symlink_to(victim)
+    renderer = FakeCoverRenderer()
+
+    with pytest.raises(CoverError, match="cover.png"):
+        _try_cover(article, renderer)
+
+    assert victim.read_text(encoding="utf-8") == "do not touch"
+    assert renderer.calls == []
+
+
+def test_article_md_是符號連結就不改它指的檔案(tmp_path: Path) -> None:
+    article = tmp_path / "articles" / "01-first"
+    article.mkdir(parents=True)
+    victim = tmp_path / "victim.md"
+    victim.write_text('---\ncover: "x"\n---\n', encoding="utf-8")
+    (article / "article.md").symlink_to(victim)
+
+    with pytest.raises(CoverError, match="article.md"):
+        _try_cover(article, FakeCoverRenderer())
+
+    assert victim.read_text(encoding="utf-8") == '---\ncover: "x"\n---\n'
+
+
+def test_符號連結的鄰居資料夾不會被讀(tmp_path: Path) -> None:
+    articles = tmp_path / "articles"
+    elsewhere = _article(tmp_path / "elsewhere", "01-first", 'cover_form: "painting"\ncover_medium: "oil"\n')
+    articles.mkdir()
+    (articles / "01-first").symlink_to(elsewhere, target_is_directory=True)
+    second = _article(articles, "02-second")
+
+    result = make_cover(
+        second, FakeCoverRenderer(), DEFAULT_BRAND,
+        subject="s", form="painting", medium="oil", style="realism",
+    )
+
+    assert result.warnings == []  # 假如讀了鄰居，這裡會有撞型提醒
+
+
+def test_鄰居的封面是指到外面的符號連結就不拿來比深淺(tmp_path: Path) -> None:
+    articles = tmp_path / "articles"
+    first = _article(articles, "01-first")
+    second = _article(articles, "02-second")
+    dark_png = tmp_path / "dark.webp"
+    Image.new("RGB", (10, 10), (0, 0, 0)).save(dark_png, "WEBP")
+    (first / "images").mkdir()
+    (first / "images" / "cover.webp").symlink_to(dark_png)
+
+    result = make_cover(
+        second, FakeCoverRenderer(dark=True), DEFAULT_BRAND,
+        subject="s", form="photography", medium="film", style="realism",
+    )
+
+    assert result.warnings == []
+
+
+def test_一般的資料夾與檔案照常寫入(tmp_path: Path) -> None:
+    article = _article(tmp_path / "articles", "01-first")
+
+    _try_cover(article, FakeCoverRenderer())
+
+    assert not (article / "images").is_symlink()
+    assert (article / "images" / "cover.png").is_file()

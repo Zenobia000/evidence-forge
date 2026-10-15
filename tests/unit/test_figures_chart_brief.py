@@ -208,7 +208,6 @@ def test_資料夾裡的帳本與_brief_一起驗過(tmp_path: Path) -> None:
 
     assert report.ok
     assert report.briefs_checked == 1
-    assert report.warnings == []
 
 
 def test_資料夾裡_brief_引用不存在的_claim_會指出是哪個檔(tmp_path: Path) -> None:
@@ -236,19 +235,26 @@ def test_帳本本身壞了也會在資料夾檢查裡報(tmp_path: Path) -> Non
     assert any(e.startswith("evidence.json:") and "source_location" in e for e in report.errors)
 
 
-def test_沒有帳本只警告不算錯(tmp_path: Path) -> None:
+def test_有_brief_卻沒有帳本是錯_引用不存在的_claim_不能過關(tmp_path: Path) -> None:
     charts = _charts_dir(tmp_path)
     (charts / "evidence.json").unlink()
     data = brief()
-    data["evidence_ids"] = ["anything"]
-    data["annotations"][0]["claim_ids"] = ["anything"]
-    data["annotations"][1]["claim_ids"] = ["anything"]
+    data["evidence_ids"] = ["ghost"]
+    data["annotations"][0]["claim_ids"] = ["ghost"]
+    data["annotations"][1]["claim_ids"] = ["ghost"]
     (charts / "fig-1.brief.json").write_text(json.dumps(data), encoding="utf-8")
 
     report = validate_charts(charts)
 
-    assert report.ok
-    assert len(report.warnings) == 1 and "claim references not checked" in report.warnings[0]
+    assert not report.ok
+    assert any("evidence.json" in e and "not found" in e for e in report.errors)
+
+
+def test_單一_brief_旁邊沒有帳本也是錯(tmp_path: Path) -> None:
+    charts = _charts_dir(tmp_path)
+    (charts / "evidence.json").unlink()
+
+    assert not validate_charts(charts / "fig-1.brief.json").ok
 
 
 def test_資料夾沒有_brief_是錯(tmp_path: Path) -> None:
@@ -274,3 +280,63 @@ def test_不是_JSON_物件的檔案回成錯誤而不是例外(tmp_path: Path) 
 
     (charts / "fig-1.brief.json").write_text("{not json", encoding="utf-8")
     assert not validate_charts(charts).ok
+
+
+# ---- 形狀不對的引用要回成錯誤，不能丟 TypeError ----
+
+
+@pytest.mark.parametrize(
+    ("claim_id", "field", "value"),
+    [
+        ("jobs-change", "input_claim_ids", [{"id": "jobs-raw"}]),  # 元素是 dict
+        ("jobs-change", "input_claim_ids", [["jobs-raw"]]),  # 元素是 list
+        ("jobs-change", "input_claim_ids", 5),  # 不是清單
+        ("jobs-change", "input_claim_ids", "jobs-raw"),  # 字串不是清單
+        ("jobs-change", "input_claim_ids", {"a": 1}),
+        ("jobs-raw", "input_claim_ids", [{"x": 1}]),  # 非 derived 的 claim 也不能亂放
+        ("jobs-raw", "claim_id", {"a": 1}),
+        ("jobs-raw", "claim_id", ["jobs-raw"]),
+        ("jobs-raw", "kind", ["observed"]),
+        ("jobs-raw", "values", [1, 2]),
+    ],
+)
+def test_帳本形狀不對回成錯誤而不是例外(claim_id: str, field: str, value: Any) -> None:
+    ledger = evidence()
+    claim = next(c for c in ledger["claims"] if c["claim_id"] == claim_id)
+    claim[field] = value
+
+    errors, _ = validate_evidence(ledger)
+
+    assert errors  # 沒有 TypeError，而且真的報了錯
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (["annotations", 0, "anchor_id"], ["bar-limit"]),  # list 不能進 set 成員測試
+        (["annotations", 0, "anchor_id"], {"a": 1}),
+        (["annotations", 0, "anchor_id"], 5),
+        (["annotations", 0, "claim_ids"], [["survey-limits"]]),
+        (["annotations", 0, "claim_ids"], [{"id": 1}]),
+        (["annotations", 0, "claim_ids"], 5),
+        (["annotations", 0, "id"], ["lbl"]),
+        (["annotations", 0, "relation"], ["callout"]),
+        (["panels", 0, "id"], ["bars"]),
+        (["panels", 0, "anchor_ids"], [["bar-limit"]]),
+        (["panels", 0, "anchor_ids"], 5),
+        (["evidence_ids"], [{"a": 1}]),
+        (["evidence_ids"], 5),
+        (["exhibit"], ["x"]),
+        (["exhibit", "title"], 5),
+        (["exhibit", "number"], [1]),
+        (["candidates"], [5, "x"]),
+        (["canvas"], 5),
+        (["canvas", "unit"], ["px"]),
+        (["outputs"], ["a"]),
+        (["engine"], {"a": 1}),
+    ],
+)
+def test_brief_形狀不對回成錯誤而不是例外(path: list[str | int], value: Any) -> None:
+    errors = _brief_with(path, value)
+
+    assert errors

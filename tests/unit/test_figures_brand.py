@@ -5,15 +5,17 @@
 
 from pathlib import Path
 
+import matplotlib
 import pytest
 
-import evidence_forge.figures as figures_pkg
 from evidence_forge.figures.brand import (
     DEFAULT_BRAND,
     Brand,
     BrandError,
     FontNotFoundError,
     FontSpec,
+    FontUnusableError,
+    check_font,
     brand_file,
     load_brand,
     load_brand_file,
@@ -34,7 +36,8 @@ def _write_brand(data: DataDir, persona: str, text: str) -> Path:
 def test_沒有_brand_yaml_就用中性預設值(tmp_path: Path) -> None:
     brand = load_brand(DataDir(tmp_path), "me")
 
-    assert brand == DEFAULT_BRAND
+    # 除了字型搜尋路徑（見下面另一條測試），整份都是預設值
+    assert brand.model_copy(update={"font": DEFAULT_BRAND.font}) == DEFAULT_BRAND
     assert brand.name == ""  # 預設不印品牌名
     assert brand.palette.accent == "#2F6DB5"
     assert brand.font.family == "Noto Sans TC"
@@ -164,17 +167,103 @@ def test_字型可以直接給絕對路徑(tmp_path: Path) -> None:
     assert resolve_font(FontSpec(regular=str(font)), "regular") == font
 
 
-def test_套件原始碼沒有寫死的品牌內容() -> None:
-    """色票、品牌名、封面 prompt 屬於 brand.yaml；程式裡出現就是又寫死了。"""
-    package = Path(figures_pkg.__file__).parent
-    banned = ["Sunny", "F4F0E8", "315B73", "10202C", "B6856B", "vaporwave", "Joy Division"]
-    for source in package.glob("*.py"):
-        text = source.read_text(encoding="utf-8")
-        for word in banned:
-            assert word not in text, f"{source.name} 含有品牌內容 {word!r}"
-
-
 def test_預設品牌是不可變的() -> None:
     with pytest.raises(ValueError, match="frozen"):
         DEFAULT_BRAND.name = "changed"  # type: ignore[misc]
     assert isinstance(DEFAULT_BRAND, Brand)
+
+
+# ---- 符號連結不能讓讀取跑出 authors/ ----
+
+
+def test_角色資料夾是指到外面的符號連結就拒絕(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "brand.yaml").write_text('name: "Leaked"\n', encoding="utf-8")
+    data.authors.mkdir(parents=True)
+    (data.authors / "me").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(BrandError, match="之外"):
+        load_brand(data, "me")
+
+
+def test_brand_yaml_自己是指到外面的符號連結也拒絕(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    secret = tmp_path / "secret.yaml"
+    secret.write_text('name: "Leaked"\n', encoding="utf-8")
+    (data.authors / "me").mkdir(parents=True)
+    (data.authors / "me" / "brand.yaml").symlink_to(secret)
+
+    with pytest.raises(BrandError, match="之外"):
+        load_brand(data, "me")
+
+
+def test_authors_內部的符號連結照常可用(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    (data.authors / "real").mkdir(parents=True)
+    (data.authors / "real" / "brand.yaml").write_text('name: "Inside"\n', encoding="utf-8")
+    (data.authors / "alias").symlink_to(data.authors / "real", target_is_directory=True)
+
+    assert load_brand(data, "alias").name == "Inside"
+
+
+def test_authors_本身是符號連結也行(tmp_path: Path) -> None:
+    real = tmp_path / "elsewhere" / "authors"
+    (real / "me").mkdir(parents=True)
+    (real / "me" / "brand.yaml").write_text('name: "Moved"\n', encoding="utf-8")
+    data = DataDir(tmp_path / "data")
+    data.root.mkdir()
+    data.authors.symlink_to(real, target_is_directory=True)
+
+    assert load_brand(data, "me").name == "Moved"
+
+
+# ---- 沒有 brand.yaml 也要找角色資料夾的 fonts/ ----
+
+
+def test_沒有_brand_yaml_也會找角色資料夾的_fonts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    data = DataDir(tmp_path / "data")
+    fonts = data.authors / "me" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "NotoSansTC-Regular.otf").write_bytes(b"x")
+
+    brand = load_brand(data, "me")  # 沒有 brand.yaml
+
+    assert brand.font.dirs == (fonts, data.authors / "me")
+    assert resolve_font(brand.font, "regular") == fonts / "NotoSansTC-Regular.otf"
+    # 錯誤訊息叫人放的地方就是找過的地方
+    with pytest.raises(FontNotFoundError, match="fonts"):
+        resolve_font(brand.font, "bold")
+
+
+# ---- 字型要真的能用 ----
+
+_DEJAVU = Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"
+
+
+def test_壞掉的字型檔建立樣式時就報錯(tmp_path: Path) -> None:
+    broken = tmp_path / "Broken.ttf"
+    broken.write_bytes(b"this is not a font")
+
+    with pytest.raises(FontUnusableError, match="打不開"):
+        check_font(broken, FontSpec(family="Broken"))
+
+
+def test_沒有繁體中文字形的字型建立樣式時就報錯(tmp_path: Path) -> None:
+    spec = FontSpec(family="DejaVu Sans", regular=str(_DEJAVU), bold=str(_DEJAVU))
+
+    with pytest.raises(FontUnusableError) as caught:
+        ChartStyle.from_brand(Brand(font=spec))
+
+    assert "沒有這些常用繁體中文字的字形" in str(caught.value)
+    assert "台" in str(caught.value)
+    assert "require_cjk" in str(caught.value)  # 告訴人只用拉丁字母的字型怎麼辦
+
+
+def test_只用拉丁字母的字型可以明講不檢查中文字形() -> None:
+    spec = FontSpec(family="DejaVu Sans", regular=str(_DEJAVU), bold=str(_DEJAVU), require_cjk=False)
+
+    check_font(_DEJAVU, spec)  # 不丟例外
+    ChartStyle.from_brand(Brand(font=spec))

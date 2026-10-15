@@ -80,25 +80,70 @@ def count(text: str) -> int:
     return len(CJK.findall(text)) + len(LATIN_WORD.findall(text))
 
 
+CAPTION = re.compile(r"^\*[^*].*\*$")
+
+
+def _line_kind(line: str) -> str:
+    stripped = line.strip()
+    if not stripped:
+        return "blank"
+    if stripped.startswith("#"):
+        return "heading"
+    if stripped.startswith("!["):
+        return "figure"
+    if stripped.startswith("|"):
+        return "table"
+    return "text"
+
+
 def blocks(md: str) -> list[Block]:
-    """把 Markdown 切成標題、圖、表、文字區塊，記錄起始行號（front matter 也算進行號）。"""
+    """把 Markdown 依「行」的結構切成標題、圖、表、文字區塊，記錄起始行號（front matter 也算進行號）。
+
+    圖片行自己就是一個區塊，前後不必空行；緊接在它後面（中間可隔空行）的 `*圖說*` 那一行算它的圖說。
+    標題也是一行一塊。連續的文字行、連續的表格行各自併成一塊，空行隔開文字。
+    """
     body = re.sub(r"^---\n[\s\S]*?\n---\n", "", md, count=1)
     offset = md[: len(md) - len(body)].count("\n")
+    lines = body.splitlines()
     out: list[Block] = []
-    for m in re.finditer(r"(?:[^\n]+\n?)+", body):
-        chunk = m.group(0).strip()
-        line = offset + body[: m.start()].count("\n") + 1
-        first = chunk.splitlines()[0]
-        if first.startswith("#"):
-            if first.lstrip("#").strip() in END_SECTIONS:
+    pending: list[str] = []  # 正在累積的文字或表格行
+    pending_kind = ""
+    pending_line = 0
+
+    def flush() -> None:
+        nonlocal pending, pending_kind
+        if pending:
+            out.append(Block(pending_kind, "\n".join(pending), pending_line))
+        pending, pending_kind = [], ""
+
+    i = 0
+    while i < len(lines):
+        line, number = lines[i], offset + i + 1
+        kind = _line_kind(line)
+        if kind == "blank":
+            flush()
+        elif kind == "heading":
+            flush()
+            if line.strip().lstrip("#").strip() in END_SECTIONS:
                 break
-            out.append(Block("heading", first, line))
-        elif first.startswith("!["):
-            out.append(Block("figure", chunk, line))
-        elif first.startswith("|"):
-            out.append(Block("table", chunk, line))
-        else:
-            out.append(Block("text", chunk, line))
+            out.append(Block("heading", line.strip(), number))
+        elif kind == "figure":
+            flush()
+            text = line.strip()
+            nxt = i + 1
+            while nxt < len(lines) and not lines[nxt].strip():
+                nxt += 1
+            if nxt < len(lines) and CAPTION.match(lines[nxt].strip()):
+                text += "\n" + lines[nxt].strip()
+                i = nxt
+            out.append(Block("figure", text, number))
+        else:  # text 或 table
+            if pending_kind != kind:
+                flush()
+                pending_kind, pending_line = kind, number
+            pending.append(line.strip())
+        i += 1
+    flush()
     return out
 
 
@@ -158,7 +203,7 @@ def check_text(md: str, allow: Collection[str] = frozenset()) -> LayoutReport:
         alt = re.match(r"!\[([^\]]*)\]", fig.text)
         if not alt or not alt.group(1).strip():
             problems.append(Problem("L6", fig.line, f"figure at line {fig.line} has no alt text"))
-        if not re.search(r"^\*[^*].*\*$", fig.text, re.M):
+        if not any(CAPTION.match(x) for x in fig.text.splitlines()[1:]):
             problems.append(Problem("L6", fig.line, f"figure at line {fig.line} has no *caption* line"))
 
     problems = [p for p in problems if p.key not in allow]

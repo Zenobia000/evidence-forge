@@ -23,6 +23,7 @@ def font_brand(**overrides: Any) -> Brand:
         family="DejaVu Sans",
         regular=str(_TTF / "DejaVuSans.ttf"),
         bold=str(_TTF / "DejaVuSans-Bold.ttf"),
+        require_cjk=False,  # DejaVu 沒有中文字形；真正的中文字型測試另外寫（test_figures_charts）
     )
     return Brand(font=font, **overrides)
 

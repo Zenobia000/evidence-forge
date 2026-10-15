@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
+from matplotlib.ft2font import FT2Font
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from evidence_forge.jobkey import check_name
@@ -17,6 +18,9 @@ from evidence_forge.paths import DataDir
 
 # 色票只收 #RRGGBB，matplotlib 與 PIL 都讀得懂
 HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
+
+# 建立樣式時拿來檢查字型有沒有繁體中文字形的幾個常用字
+_PROBE_CHARS = "的一是台灣資訊圖"
 
 # 找字型時依序嘗試的副檔名。系統的 .ttc 在 matplotlib 只會用到日文字面，繁中字形會錯，所以不收。
 _FONT_EXTENSIONS = (".otf", ".ttf")
@@ -28,6 +32,10 @@ class BrandError(ValueError):
 
 class FontNotFoundError(RuntimeError):
     """找不到設定的字型檔。訊息寫明缺哪個字型、找過哪些地方、該放到哪裡。"""
+
+
+class FontUnusableError(RuntimeError):
+    """字型檔找到了，但打不開，或沒有常用繁體中文字的字形（會畫出豆腐方塊）。"""
 
 
 class _Strict(BaseModel):
@@ -55,6 +63,8 @@ class FontSpec(_Strict):
     bold: str = "NotoSansTC-Bold"
     # 另外找字型的資料夾，排在 `~/.fonts` 前面
     dirs: tuple[Path, ...] = ()
+    # 建立樣式時檢查字型有常用繁體中文字的字形；只用拉丁字母的字型才關掉
+    require_cjk: bool = True
 
 
 class MediumSpec(_Strict):
@@ -154,10 +164,34 @@ class Brand(_Strict):
 DEFAULT_BRAND = Brand()
 
 
-def brand_file(data: DataDir, persona: str) -> Path:
-    """`$EF_DATA/authors/<角色>/brand.yaml` 的位置。角色名會拼進路徑，先擋掉 `..` 之類。"""
+def _inside(path: Path, root: Path) -> bool:
+    return path.resolve().is_relative_to(root.resolve())
+
+
+def persona_dir(data: DataDir, persona: str) -> Path:
+    """`$EF_DATA/authors/<角色>/`。角色名會拼進路徑，先擋掉 `..` 之類；
+
+    角色資料夾若是符號連結而且指到 `authors/` 外面，一律拒絕（否則讀取會跑出資料目錄）。
+    """
     check_name("角色", persona)
-    return data.authors / persona / "brand.yaml"
+    path = data.authors / persona
+    if not _inside(path, data.authors):
+        raise BrandError(f"角色資料夾 {path} 指到 {path.resolve()}，在 {data.authors} 之外")
+    return path
+
+
+def brand_file(data: DataDir, persona: str) -> Path:
+    """`$EF_DATA/authors/<角色>/brand.yaml` 的位置；它本身若是指到外面的符號連結也拒絕。"""
+    path = persona_dir(data, persona) / "brand.yaml"
+    if not _inside(path, data.authors):
+        raise BrandError(f"{path} 指到 {path.resolve()}，在 {data.authors} 之外")
+    return path
+
+
+def _with_persona_fonts(brand: Brand, base: Path, declared: tuple[Path, ...] = ()) -> Brand:
+    """字型搜尋路徑：自己宣告的在前，其次是角色資料夾的 `fonts/` 與角色資料夾本身。"""
+    font = brand.font.model_copy(update={"dirs": (*declared, base / "fonts", base)})
+    return brand.model_copy(update={"font": font})
 
 
 def load_brand_file(path: Path) -> Brand:
@@ -182,15 +216,18 @@ def load_brand_file(path: Path) -> Brand:
     declared = tuple(
         d if (d := p.expanduser()).is_absolute() else base / d for p in brand.font.dirs
     )
-    font = brand.font.model_copy(update={"dirs": (*declared, base / "fonts", base)})
-    return brand.model_copy(update={"font": font})
+    return _with_persona_fonts(brand, base, declared)
 
 
 def load_brand(data: DataDir, persona: str) -> Brand:
-    """讀角色的 brand.yaml；檔案不存在就回中性預設值（不是錯誤）。"""
+    """讀角色的 brand.yaml；檔案不存在就回中性預設值（不是錯誤）。
+
+    沒有 brand.yaml 時字型搜尋路徑仍然包含角色資料夾的 `fonts/`，
+    跟有 brand.yaml 的角色一樣：錯誤訊息叫人把字型放在那裡，放了就要找得到。
+    """
     path = brand_file(data, persona)
     if not path.is_file():
-        return DEFAULT_BRAND
+        return _with_persona_fonts(DEFAULT_BRAND, persona_dir(data, persona))
     return load_brand_file(path)
 
 
@@ -222,3 +259,23 @@ def resolve_font(spec: FontSpec, weight: Literal["regular", "bold"]) -> Path:
         "或在 brand.yaml 的 font.dirs 指定資料夾。"
         "Noto Sans TC 可以從 https://github.com/notofonts/noto-cjk 下載（OFL 授權）。"
     )
+
+
+def check_font(path: Path, spec: FontSpec) -> None:
+    """確認字型檔真的打得開，而且（`require_cjk` 時）有常用繁體中文字的字形。
+
+    只看檔案存在不夠：壞掉的檔案要到畫圖才炸，缺字的字型不會報錯，只會畫出豆腐方塊。
+    """
+    try:
+        face = FT2Font(str(path))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FontUnusableError(f"字型「{spec.family}」的檔案 {path} 打不開：{exc}") from exc
+    if not spec.require_cjk:
+        return
+    missing = [c for c in _PROBE_CHARS if face.get_char_index(ord(c)) == 0]
+    if missing:
+        raise FontUnusableError(
+            f"字型檔 {path} 沒有這些常用繁體中文字的字形：{''.join(missing)}。"
+            f"請換成「{spec.family}」或其他支援繁體中文的字型；"
+            "只用拉丁字母的字型要在 brand.yaml 設 font.require_cjk: false。"
+        )

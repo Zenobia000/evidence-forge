@@ -6,6 +6,7 @@
 """
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from figures_world import evidence, font_style
 from matplotlib.colors import to_hex
 from PIL import Image
 
-from evidence_forge.figures.brand import Palette
+from evidence_forge.figures.brand import Brand, FontSpec, FontUnusableError, Palette, check_font
 from evidence_forge.figures.chart_style import (
     BOTTOM,
     TOP,
@@ -213,3 +214,43 @@ def test_概念圖的重點色與警示色來自品牌() -> None:
 
     edges = [to_hex(p.get_edgecolor()).upper() for p in figure.ax.patches]
     assert edges == ["#AA3355", "#336699"]
+
+
+# ---- 真的繁體中文字型（機器上有才跑） ----
+
+_CJK_CANDIDATES = (
+    Path.home() / ".fonts" / "NotoSansTC-Regular.otf",
+    Path.home() / ".fonts" / "NotoSansTC-Regular.ttf",
+    Path.home() / ".fonts" / "NotoSansCJKtc-Regular.otf",
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansTC-Regular.ttf"),
+)
+
+
+def _real_cjk_font() -> Path:
+    for candidate in _CJK_CANDIDATES:
+        if candidate.is_file():
+            try:
+                check_font(candidate, FontSpec())
+            except FontUnusableError:
+                continue
+            return candidate
+    pytest.skip("這台機器沒有可用的繁體中文 .otf／.ttf 字型，找過：" + "、".join(str(c) for c in _CJK_CANDIDATES))
+
+
+def test_真的中文字型能畫出中文標題而且沒有缺字警告(tmp_path: Path) -> None:
+    font = _real_cjk_font()
+    style = ChartStyle.from_brand(Brand(font=FontSpec(regular=str(font), bold=str(font))))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # 缺字警告在這裡是失敗，不像其他測試把它濾掉
+        fig, _ax = exhibit(style, 1, "組織開始管 AI 的用量", "受訪者比例・%・2026 年", source="範例調查")
+        finish(style, fig, tmp_path / "images" / "fig-1")
+        concept = ConceptFigure(style)
+        concept.box((1, 4), "資料 Data", w=3)
+        concept.save(tmp_path / "images" / "fig-2")
+
+    for name in ("fig-1", "fig-2"):
+        with Image.open(tmp_path / "images" / f"{name}.png") as im:
+            colours = im.convert("RGB").getcolors(maxcolors=1_000_000)
+            assert colours is not None and len(colours) > 5  # 不只是一張純色底，字真的畫上去了

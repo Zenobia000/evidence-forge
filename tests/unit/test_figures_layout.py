@@ -182,3 +182,59 @@ def test_check_file_讀檔(tmp_path: Path) -> None:
     path.write_text(GOOD, encoding="utf-8")
 
     assert check_file(path).ok
+
+
+# ---- 圖片行與圖說依「行」的結構認，不靠空行 ----
+
+
+def test_圖片行緊貼在文字後面不空行也算一張圖() -> None:
+    # 1001 字後面直接接圖片行（沒有空行）：以前整段被當成文字，圖數是 0、L1 漏報
+    md = text(FIRST_MAX + 1) + "\n![圖](x.webp)\n*圖說*\n\n" + text(300) + "\n"
+
+    report = check_text(md)
+
+    assert report.stats.figures == 1
+    assert [p.rule for p in report.problems] == ["L1"]
+    assert report.stats.first_figure_at == FIRST_MAX + 1
+
+
+def test_圖片行緊貼在文字前面不空行文字照算() -> None:
+    md = "![圖](x.webp)\n*圖說*\n" + text(300) + "\n"
+
+    report = check_text(md)
+
+    assert report.stats.figures == 1
+    assert report.stats.chars == 300
+    assert [p.rule for p in report.problems] == ["L4"]  # 文章第一個區塊就是圖
+
+
+def test_圖片與圖說之間隔一個空行不算沒有圖說() -> None:
+    md = article(text(300), "![替代文字](x.webp)\n\n*圖說*", text(300))
+
+    assert check_text(md).ok
+
+
+def test_圖片與圖說之間隔了文字就不是它的圖說() -> None:
+    md = article(text(300), "![替代文字](x.webp)", text(50), "*斜體的一句話*", text(300))
+
+    problems = check_text(md).problems
+
+    assert [p.rule for p in problems] == ["L6"]
+    assert "caption" in problems[0].message
+
+
+def test_圖片行的行號就是那一行() -> None:
+    md = "intro line\n![](x.webp)\n*圖說*\n\n" + text(300) + "\n"  # 沒有替代文字的圖在第 2 行
+
+    (problem,) = check_text(md).problems
+
+    assert (problem.rule, problem.line) == ("L6", 2)
+
+
+def test_標題後面緊接文字行不被吃掉() -> None:
+    md = "# 標題\n" + text(300) + "\n![圖](x.webp)\n*圖說*\n\n" + text(300) + "\n"
+
+    report = check_text(md)
+
+    assert report.ok
+    assert report.stats.chars == 600

@@ -9,7 +9,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 Json = dict[str, Any]
 
@@ -25,6 +25,10 @@ REQUIRED = (
 
 def _nonempty(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _str_list(value: object) -> TypeGuard[list[str]]:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
 
 
 def validate_evidence(ledger: Json) -> tuple[list[str], dict[str, Json]]:
@@ -51,8 +55,8 @@ def validate_evidence(ledger: Json) -> tuple[list[str], dict[str, Json]]:
         if kind == "derived":
             if not _nonempty(c.get("formula")):
                 errors.append(f"{where}: derived claims need formula")
-            if not isinstance(c.get("input_claim_ids"), list) or not c["input_claim_ids"]:
-                errors.append(f"{where}: derived claims need input_claim_ids")
+            if not _str_list(c.get("input_claim_ids")) or not c["input_claim_ids"]:
+                errors.append(f"{where}: derived claims need input_claim_ids (a nonempty list of claim ids)")
         if kind == "hypothesis" and c.get("values"):
             errors.append(f"{where}: hypotheses must not carry values")
         values = c.get("values")
@@ -65,9 +69,14 @@ def validate_evidence(ledger: Json) -> tuple[list[str], dict[str, Json]]:
                 if not _nonempty(c.get(key)):
                     errors.append(f"{where}: claims with values need {key} (write 原文未列 if the source omits it)")
     for cid, c in by_id.items():
-        for ref in c.get("input_claim_ids") or []:
-            if ref not in by_id:
-                errors.append(f"evidence[{cid}]: input_claim_id {ref} not in ledger")
+        refs = c.get("input_claim_ids")
+        # 型別不對的上面已經報過；這裡只查字串的引用，不讓 dict／list 進成員測試
+        if _str_list(refs):
+            for ref in refs:
+                if ref not in by_id:
+                    errors.append(f"evidence[{cid}]: input_claim_id {ref} not in ledger")
+        elif refs is not None and c.get("kind") != "derived":
+            errors.append(f"evidence[{cid}]: input_claim_ids must be a list of claim ids")
     return errors, by_id
 
 
@@ -140,10 +149,11 @@ def _check_annotations(brief: Json, anchors: set[str], ids: list[str], errors: l
             seen.add(aid)
         if annotation.get("relation") not in RELATIONS:
             errors.append(f"Annotation {aid}: relation must be one of {RELATIONS}")
-        if annotation.get("anchor_id") not in anchors:
-            errors.append(f"Annotation {aid}: anchor_id not found in panels")
+        anchor = annotation.get("anchor_id")
+        if not isinstance(anchor, str) or anchor not in anchors:
+            errors.append(f"Annotation {aid}: anchor_id not found in panels (it must be a string naming a panel anchor)")
         claims = annotation.get("claim_ids")
-        if not isinstance(claims, list) or not all(isinstance(x, str) and x in ids for x in claims):
+        if not _str_list(claims) or not all(x in ids for x in claims):
             errors.append(f"Annotation {aid}: claim_ids must be listed in evidence_ids")
 
 
@@ -213,10 +223,9 @@ def validate_brief(brief: Json, ledger: dict[str, Json] | None) -> list[str]:
 
 @dataclass
 class ChartsReport:
-    """整個 `charts/` 資料夾的檢查結果。沒有錯誤才算通過；警告不擋。"""
+    """整個 `charts/` 資料夾的檢查結果。沒有錯誤才算通過。"""
 
     errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
     briefs_checked: int = 0
 
     @property
@@ -235,7 +244,7 @@ def validate_charts(target: Path, evidence_path: Path | None = None) -> ChartsRe
     """檢查一個 `charts/` 資料夾（全部 `fig-*.brief.json` 加 `evidence.json`），或單一 brief 檔。
 
     給資料夾：帳本預設是同資料夾的 `evidence.json`；給單一 brief：帳本預設在它旁邊。
-    帳本不存在只給警告（claim 的引用就沒檢查），不算錯。
+    有 brief 卻沒有帳本是錯：沒有帳本，brief 引用的 claim 就無從檢查，不能當作通過。
     """
     report = ChartsReport()
     if target.is_dir():
@@ -254,7 +263,7 @@ def validate_charts(target: Path, evidence_path: Path | None = None) -> ChartsRe
             ev_errors, ledger = validate_evidence(_load_object(evidence_path))
             report.errors.extend(f"{evidence_path.name}: {e}" for e in ev_errors)
         else:
-            report.warnings.append(f"{evidence_path} not found; claim references not checked")
+            report.errors.append(f"{evidence_path} not found; briefs cite claims that cannot be checked")
         for path in briefs:
             report.errors.extend(f"{path.name}: {e}" for e in validate_brief(_load_object(path), ledger))
             report.briefs_checked += 1

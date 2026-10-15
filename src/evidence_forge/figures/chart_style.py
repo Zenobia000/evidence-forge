@@ -31,7 +31,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from PIL import Image
 
-from evidence_forge.figures.brand import DEFAULT_BRAND, Brand, resolve_font
+from evidence_forge.figures.brand import DEFAULT_BRAND, Brand, check_font, resolve_font
 
 TOP = 0.80  # 圖區上緣（標題區下面）
 BOTTOM = 0.17  # 圖區下緣（頁尾上面）
@@ -50,11 +50,17 @@ class ChartStyle:
 
     @classmethod
     def from_brand(cls, brand: Brand = DEFAULT_BRAND) -> "ChartStyle":
-        """依品牌找字型；找不到丟 `FontNotFoundError`（不默默退回缺字的字型）。"""
+        """依品牌找字型；找不到丟 `FontNotFoundError`，打不開或缺繁中字形丟 `FontUnusableError`。
+
+        不默默退回缺字的字型：缺字只會畫出豆腐方塊，不會報錯。
+        """
+        paths = [resolve_font(brand.font, "regular"), resolve_font(brand.font, "bold")]
+        for path in paths:
+            check_font(path, brand.font)
         return cls(
             brand=brand,
-            font=fm.FontProperties(fname=str(resolve_font(brand.font, "regular"))),
-            font_bold=fm.FontProperties(fname=str(resolve_font(brand.font, "bold"))),
+            font=fm.FontProperties(fname=str(paths[0])),
+            font_bold=fm.FontProperties(fname=str(paths[1])),
         )
 
     @property
