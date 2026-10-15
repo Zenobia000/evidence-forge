@@ -769,3 +769,27 @@ def test_快照_編輯卡與到那一筆為止的事件_同一個時間點(data:
     assert taken.card.events == len(taken.events) == 5
     assert [e["n"] for e in taken.events] == [1, 2, 3, 4, 5]
     assert taken.card.stations[1].decided is True
+
+
+def test_同一份作者素材再記一次_存的檔壞了就補回來_編號不變(data: DataDir, cid: str) -> None:
+    text = "上個月的帳單：三千元"
+    first = cards.add_material(data, cid, None, text, now=NOW)
+    stored = cards.material_path(data, cid, first.card_id, "M1")
+    stored.write_bytes(text.encode()[:5])
+
+    again = cards.add_material(data, cid, first.card_id, text, now=NOW)
+
+    assert (again.material, again.created, again.events) == ("M1", False, [])
+    assert stored.read_bytes() == text.encode()
+
+
+def test_第_1_關正在重問時_編輯卡不給文體_第_3_關不能答沒有例子(data: DataDir, cid: str) -> None:
+    card_id = _to_station_3(data, cid, "explainer")
+    assert cards.read_card(data, cid, card_id).genre == "explainer"
+
+    card = cards.reask_station(data, cid, card_id, 1, now=NOW).card
+
+    assert card.genre is None
+    with pytest.raises(ToolRejected) as caught:
+        _answer_3(data, cid, card_id, no_example=True)
+    assert caught.value.status == 409

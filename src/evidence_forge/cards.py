@@ -607,14 +607,15 @@ def _compute(
                     ts=event.ts,
                 )
             )
-    genre = _decided_genre(stations[1])
+    # 第 1 關正在重問（或還沒決定）時不給文體：舊答案不能拿來判斷第 3 關、也不能交給寫稿
+    genre = _decided_genre(stations[1]) if stations[1].status() in _DECIDED else None
     states: list[StationState] = []
     for s in stations.values():
         status = s.status()
         if (
             s.number == EXAMPLE_STATION
             and status in _DECIDED
-            and _example_problem(_decision_answers(s), genre, origin) is not None
+            and _example_problem(_decision_answers(s), genre, origin, genre_known=False) is not None
         ):
             # 第 3 關的決定不再成立（例如改成要作者經驗的文體之後，原本答的是「沒有例子」）：還要作者給
             status = "pending_author"
@@ -671,8 +672,13 @@ def _is_genre_question(question: Question) -> bool:
     return all(o.value is not None for o in question.options)
 
 
-def _example_problem(answers: list[Answer], genre: str | None, origin: Origin | None) -> str | None:
+def _example_problem(
+    answers: list[Answer], genre: str | None, origin: Origin | None, *, genre_known: bool = True
+) -> str | None:
     """第 3 關的回答能不能算作者的例子；不能就回原因（ADR-0025 §3.2）。
+
+    `genre_known`：寫入時（送出、沿用）文體一定要定了才能確認「沒有例子」；重算編輯卡時第 1 關正在重問，
+    就先不拿文體判斷原本的決定（第 1 關重新送出之後，第 3 關會照規則標要重確認，那時再查）。
 
     - 作者自己的內容才算：「其他」的文字、引用作者素材，或選了提示又在補充寫下內容。只選提示不算：
       提示是 agent 列的「你有沒有遇過……」，不是作者的經歷。
@@ -681,6 +687,11 @@ def _example_problem(answers: list[Answer], genre: str | None, origin: Origin | 
     """
     for answer in answers:
         if answer.no_example:
+            if genre is None and genre_known:
+                return (
+                    f"第 1 關的文體還沒有決定，不能確認「{NO_EXAMPLE_LABEL}」："
+                    "先把第 1 關送出，再回答這一關"
+                )
             if genre in AUTHOR_EVIDENCE_GENRES:
                 return (
                     f"文體是 {genre}，主證據是作者自己的使用、測試或專案，不能「{NO_EXAMPLE_LABEL}」："
@@ -1238,9 +1249,10 @@ def add_material(
 
     def build(card: CardState, events: list[AnyEvent], next_n: int) -> tuple[list[AnyEvent], dict[str, Any]]:
         known = next((m for m in card.materials if m.sha256 == digest), None)
+        # 存的檔一律檢查：已經記過的也一樣，之前留下的殘檔在這裡補回完整內容（編號不變）
+        _store_material(folder / "materials" / digest, digest, payload)
         if known is not None:
             return [], {"created": False, "material": known.id}
-        _store_material(folder / "materials" / digest, digest, payload)
         material = f"M{len(card.materials) + 1}"
         return [
             MaterialAdded(
