@@ -31,74 +31,74 @@ name: fake-writing
 description: 測試用的假寫作系統。
 ---
 
-# Fake Writing Skill
+# 假的寫作系統
 
-## 0. Mission
+## 0. 甲節
 
 假任務：把測試寫清楚。
 
-## 1. When to Use
+## 1. 乙節
 
 這一節是給 Claude Code 判斷什麼時候用的，不是聲音。
 
-## 2. Brand Thesis
+## 2. 丙節
 
 假品牌主張：測試先行。
 
-## 4. Author Voice
+## 4. 丁節
 
-### 4.1 整體人格
+### 4.1 戊小節
 
 像一個寫測試的人。
 
-## 5. Reasoning Structure
+## 5. 己節
 
 假推論：問題 → 機制 → 邊界。
 
-## 6. Evidence & Truthfulness
+## 6. 庚節
 
 不虛構測試結果。
 
-## 7. Genres（文體）
+## 7. 辛節
 
 文體表在別處，不進聲音。
 
-## 12. Quality Gates
+## 12. 壬節
 
-### Thesis Gate
+### 別的關卡
 - [ ] 有一句主張
 
 ### AI-Smell Gate
-若出現以下模式，重寫：
+假句型清單：
 - 假句型一號
 
-## 15. Non-negotiables
+## 15. 癸節
 
 1. 不虛構假資料。
 """
 
-GENRES_README = """# Genres
+GENRES_README = """# 假的總表
 
-## 5. 主題（`theme`）
+## 5. 假的主題表（`theme`）
 
-| slug | 主題 | 常見文體 | 通常落在的網站 TOPIC |
+| slug | 名稱 | 假欄位 | 另一個假欄位 |
 |---|---|---|---|
 | `education` | 假的教學主題 | `explainer` | 假分類 |
 | `tools` | 假的工具主題 | `benchmark` | 假分類 |
 | `cooking` | 不在 8 個主題裡 | `essay` | 假分類 |
 
-一篇只有一個主題。
+表格後面的說明。
 
-## 6. 文體判定
+## 6. 別的節
 
 不進主題檔。
 """
 
-ESSAY = """# essay：隨筆
+ESSAY = """# 假的隨筆檔
 
-> 文體總表見 `README.md`。
+> 假的引言。
 
-## 一句話
+## 假的定義
 
 假的一句話。
 
@@ -108,49 +108,49 @@ ESSAY = """# essay：隨筆
 
 ## CTA
 
-同主題的下一篇測試。
+假的下一步連結。
 
-## 實戰紀錄
+## 假的紀錄
 
 01、02 篇。
 """
 
-EXPLAINER = """# explainer：理論教學
+EXPLAINER = """# 假的教學檔
 
-> 文體總表見 `README.md`。
+> 假的引言。
 
 ## 假品牌 要加的價值
 
-講清楚會改變哪個決定。
+假的教學價值。
 
-## 實戰紀錄
+## 假的一節
 
-尚無已發布文章，以上是起始規範。
+尚無已發布文章。
 """
 
-LESSONS = """# Lessons Learnt
+LESSONS = """# 假的退件紀錄
 
-> 新的寫在最上面。
+> 假的引言。
 
-| 日期 | 文章 | 發生什麼 | 改成什麼 | 規則在哪 |
+| 甲 | 乙 | 丙 | 丁 | 戊 |
 |---|---|---|---|---|
 | 2026-10-14 | 2 | 第二次退件 | 改用第二條規則 | `craft/titles.md` |
 | 2026-10-13 | 1 | 第一次退件 | 改用第一條規則 | `genres/essay.md` |
 """
 
-STRATEGY = """# Content Strategy
+STRATEGY = """# 假的策略
 
-## 北極星
+## 別的節
 
 不進主題檔。
 
-## 主題的典型主張（原 SKILL §3 Pillars）
+## 主題的典型主張
 
-### P1 — 假主題
+### 假主題
 
 假主張一。
 
-## 月主題與裂變
+## 最後一節
 
 不進主題檔。
 """
@@ -413,6 +413,46 @@ def test_子資料夾連到角色資料夾之外_拒絕_什麼都不寫(tmp_path
         import_persona(data, "me", _built(tmp_path), now=NOW)
     assert list(elsewhere.iterdir()) == []
     assert (me / "voice.md").read_text(encoding="utf-8") == "舊的聲音"
+
+
+def test_備份資料夾是符號連結_拒絕_私人資料不會被複製出去(tmp_path: Path, data: DataDir) -> None:
+    # 例：authors/.backup 被連到一個公開的 repo 裡，備份就會把品牌內容複製進去
+    elsewhere = tmp_path / "public-repo"
+    elsewhere.mkdir()
+    me = _existing(data)
+    (data.authors / ".backup").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(PersonaImportError, match=".backup"):
+        import_persona(data, "me", _built(tmp_path), now=NOW)
+    assert list(elsewhere.iterdir()) == []
+    assert (me / "voice.md").read_text(encoding="utf-8") == "舊的聲音"
+
+
+def test_已有_lessons_md_不蓋掉_只把新的條目接在後面(tmp_path: Path, data: DataDir) -> None:
+    me = data.authors / "me"
+    me.mkdir(parents=True)
+    kept = "# 退件與指正累積的規則\n\n- 2026-10-13｜第 1 篇｜第一次退件 → 改用第一條規則（規則在 `genres/essay.md`）\n- 2026-10-15｜第 3 篇｜閘道寫進來的 → 照做\n"
+    (me / "lessons.md").write_text(kept, encoding="utf-8")
+
+    result = import_persona(data, "me", _built(tmp_path), now=NOW)
+
+    lessons = (me / "lessons.md").read_text(encoding="utf-8")
+    assert lessons.startswith(kept)
+    assert lessons[len(kept):] == "- 2026-10-14｜第 2 篇｜第二次退件 → 改用第二條規則（規則在 `craft/titles.md`）\n"
+    assert "lessons.md" in result.written
+    # 再匯入一次沒有新的條目：檔案不動，說明為什麼沒寫
+    again = import_persona(data, "me", _built(tmp_path), now=NOW)
+    assert (me / "lessons.md").read_text(encoding="utf-8") == lessons
+    assert "lessons.md" not in again.written
+    assert any("lessons.md" in note for note in again.notes)
+
+
+def test_來源的文體檔是空的_標未校準(tmp_path: Path) -> None:
+    root = _folder(tmp_path)
+    (root / ".claude" / "skills" / "fake-writing" / "references" / "genres" / "essay.md").write_text(
+        "", encoding="utf-8"
+    )
+    files = build_persona(read_source(root), "me", default_genre="explainer", now=NOW)
+    assert read_frontmatter_text(files["genres/essay.md"])["calibrated"] is False
 
 
 @pytest.mark.parametrize("persona", ["../me", "", "a/b"])

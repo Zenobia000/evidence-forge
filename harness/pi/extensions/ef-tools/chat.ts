@@ -123,15 +123,17 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "list_personas",
       label: "List personas",
       description:
-        "List the personas the creator has set up (whose voice an article can be written in), each with its default genre and the genres it has a calibrated style for. Use it to understand which persona the creator means, or to offer the choices when unclear.",
+        "List the personas the creator has set up (whose voice an article can be written in), each with its default genre, the genres it has a style for, and which of those are calibrated. Use it to understand which persona the creator means, or to offer the choices when unclear.",
       parameters: Type.Object({}),
       async execute() {
         const data = await callGateway("list_personas", {});
         const personas = Array.isArray(data.personas) ? (data.personas as Record<string, unknown>[]) : [];
         if (personas.length === 0) return text("(no personas set up yet)");
         const lines = personas.map((p) => {
-          const genres = Array.isArray(p.calibrated_genres) ? (p.calibrated_genres as string[]).join(", ") : "";
-          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; calibrated genres: ${genres || "none"}`;
+          const list = (value: unknown) => (Array.isArray(value) ? (value as string[]).join(", ") : "");
+          const written = list(p.written_genres);
+          const calibrated = list(p.calibrated_genres);
+          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; genres with a style: ${written || "none"}; calibrated: ${calibrated || "none"}`;
         });
         return text(lines.join("\n"));
       },

@@ -157,8 +157,12 @@ def test_列出角色_不含範本與備份_附預設文體與寫過的文體(da
     me = data.authors / "me"
     (me / "genres").mkdir(parents=True)
     (me / "voice.md").write_text("---\ndefault_genre: essay\n---\n聲音", encoding="utf-8")
-    (me / "genres" / "essay.md").write_text("風格", encoding="utf-8")
-    # 舊的範本檔（`_` 開頭）不是寫過的文體
+    (me / "genres" / "essay.md").write_text("---\ncalibrated: true\n---\n風格", encoding="utf-8")
+    # 寫了但還沒校準的、沒有 front matter 的，都只算寫過
+    (me / "genres" / "explainer.md").write_text("---\ncalibrated: false\n---\n風格", encoding="utf-8")
+    (me / "genres" / "trend.md").write_text("沒有 front matter", encoding="utf-8")
+    # 舊的 12 種文類的檔、範本檔（`_` 開頭）都不是 7 種之一，不列
+    (me / "genres" / "opinion.md").write_text("---\ncalibrated: true\n---\n舊的", encoding="utf-8")
     (me / "genres" / "_template.md").write_text("範本", encoding="utf-8")
     (data.authors / "b2b").mkdir()
     (data.authors / "_template").mkdir()
@@ -167,8 +171,13 @@ def test_列出角色_不含範本與備份_附預設文體與寫過的文體(da
 
     assert _desk(data).personas() == {
         "personas": [
-            {"name": "b2b", "default_genre": None, "calibrated_genres": []},
-            {"name": "me", "default_genre": "essay", "calibrated_genres": ["essay"]},
+            {"name": "b2b", "default_genre": None, "written_genres": [], "calibrated_genres": []},
+            {
+                "name": "me",
+                "default_genre": "essay",
+                "written_genres": ["essay", "explainer", "trend"],
+                "calibrated_genres": ["essay"],
+            },
         ]
     }
 
@@ -288,6 +297,18 @@ def test_創作者指定的文類勝過報告建議的(me: DataDir) -> None:
     desk = _desk(me)
     result = _rewrite(desk, _analysed(me, desk), genre="實證評測", suggested_genre="隨筆")
     assert result["genre"] == "benchmark" and "note" not in result
+
+
+def test_沿用來的預設文體是舊的_不開單_列出_7_種(me: DataDir) -> None:
+    # 舊角色的 default_genre 可能還是 12 種的 id：開了單也只會在執行器放參考資料時失敗
+    desk = _desk(me)
+    analysis = _analysed(me, desk)
+    (me.authors / "me" / "voice.md").write_text("---\ndefault_genre: opinion\n---\n聲音", encoding="utf-8")
+    result = _rewrite(desk, analysis)
+    assert result["status"] == "rejected"
+    reason = str(result["reason"])
+    assert "opinion" in reason and "essay（隨筆）" in reason and "trend（趨勢解讀）" in reason
+    assert [p.name for p in me.jobs.iterdir()] == [analysis]
 
 
 def test_角色不存在_原因不帶資料目錄的完整路徑(me: DataDir) -> None:

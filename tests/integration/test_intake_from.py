@@ -141,6 +141,29 @@ def test_再改帶一句意見_沿用上一版的角色文體目標_每一版一
     assert (job.goal, job.target_genre, job.persona) == ("寫給 PM", "explainer", "me")
 
 
+SEVEN = {"essay": "隨筆", "explainer": "理論教學"}
+
+
+def test_沿用上一版的舊文類_給了認得的文體清單就不開單_列出有哪些(data: DataDir) -> None:
+    # 舊的重構單記的是 12 種的 id；再改時沿用它，開出來的單只會在執行器失敗
+    v1 = _rewrite(data, _analysis(data), genre="explainer", goal="寫給 PM")
+    (data.job_dir(v1) / "input").mkdir(exist_ok=True)
+    (data.job_dir(v1) / "input" / "report.md").write_text("報告", encoding="utf-8")
+    _finish(data, v1, "rewrite", {"article.md": "# 第一版", "article.json": "{}"})
+    job_md = data.job_dir(v1) / "job.md"
+    doc = read_job(job_md)
+    write_job(job_md, JobDocument(job=doc.job.model_copy(update={"target_genre": "opinion"}), notes=doc.notes))
+    before = sorted(p.name for p in data.jobs.iterdir())
+
+    with pytest.raises(ValueError, match="opinion") as raised:
+        _rewrite(data, v1, feedback="短一點", allowed_genres=SEVEN)
+
+    assert "essay（隨筆）" in str(raised.value) and "explainer（理論教學）" in str(raised.value)
+    assert sorted(p.name for p in data.jobs.iterdir()) == before
+    # 沒給清單（命令列）照舊開單，由執行器放參考資料時擋
+    assert _rewrite(data, v1, feedback="短一點")
+
+
 def test_上一張單還在跑_不開單(data: DataDir) -> None:
     parent = open_job(data, ANALYZE, PastedText("還沒跑完"), goal=None, now=NOW).job.id
     with pytest.raises(ValueError, match="還沒跑完"):

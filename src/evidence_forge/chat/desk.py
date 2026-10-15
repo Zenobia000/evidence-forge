@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from evidence_forge.documents import read_job
+from evidence_forge.documents import FrontmatterError, read_frontmatter, read_job
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.models import Recipe, RecipeStage
 from evidence_forge.paths import DataDir
@@ -169,6 +169,8 @@ class Desk:
                 feedback=feedback,
                 budget_usd=self._budget_usd,
                 conversation=conversation_id,
+                # 沿用來的文體（上一張單的、角色的預設）也要是 7 種之一，不然開了只會在執行器失敗
+                allowed_genres=GENRE_NAME,
             )
         except ValueError as exc:
             return {"status": "rejected", "reason": self._tidy(str(exc))}
@@ -244,8 +246,9 @@ class Desk:
     def personas(self) -> dict[str, Any]:
         """現有的角色：`authors/` 底下每個資料夾一個（`_`、`.` 開頭的是範本或暫存，不算）。
 
-        每個角色附預設文體與寫過風格的文體（`genres/<文體>.md`）；沒寫過的文體寫出來是未校準。
-        匯入角色前的備份放在 `authors/.backup/`，`.` 開頭，不算角色。
+        每個角色附預設文體、寫過風格的文體（`genres/<文體>.md`）與其中校準過的
+        （front matter 寫 `calibrated: true`）；只列 7 種，舊的 12 種文類與範本檔不算。
+        沒校準的文體寫出來標未校準。匯入角色前的備份放在 `authors/.backup/`，`.` 開頭，不算角色。
         """
         root = self._data.authors
         found: list[dict[str, Any]] = []
@@ -253,21 +256,17 @@ class Desk:
             for folder in sorted(root.iterdir()):
                 if not folder.is_dir() or folder.name.startswith(("_", ".")):
                     continue
-                genres_dir = folder / "genres"
-                calibrated = (
-                    sorted(
-                        p.stem
-                        for p in genres_dir.glob("*.md")
-                        if not p.name.startswith(("_", "."))
-                    )
-                    if genres_dir.is_dir()
-                    else []
-                )
+                written = [
+                    slug for slug in sorted(GENRE_NAME) if (folder / "genres" / f"{slug}.md").is_file()
+                ]
                 found.append(
                     {
                         "name": folder.name,
                         "default_genre": default_genre(self._data, folder.name),
-                        "calibrated_genres": calibrated,
+                        "written_genres": written,
+                        "calibrated_genres": [
+                            slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
+                        ],
                     }
                 )
         return {"personas": found}
@@ -305,6 +304,14 @@ class Desk:
 
 # 報告「建議文體」的寫法：中文名（slug），括號全形半形都收
 _NAME_AND_SLUG = re.compile(r"^(.+?)\s*[（(]\s*([^）)]+?)\s*[）)]$")
+
+
+def _calibrated(style: Path) -> bool:
+    """文體風格檔的 front matter 寫了 `calibrated: true`；讀不懂當成沒校準（跟 `stage_inputs.uncalibrated` 同一條）。"""
+    try:
+        return read_frontmatter(style).get("calibrated") is True
+    except (FrontmatterError, OSError):
+        return False
 
 
 def _genre_id(genre: str) -> str | None:

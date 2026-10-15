@@ -6,7 +6,7 @@
       SKILL.md                         # 編號的節：§0 任務、§2 品牌主張、§4 聲音……
       references/genres/<slug>.md      # 每種文體的寫法、價值、CTA；README.md 有主題表
       references/craft/*.md            # 開場、標題、金句與收尾、圖文編排、配圖……
-      references/strategy/*.md         # 主題的典型主張、標題範例
+      references/strategy/*.md         # 各主題的主張、標題範例
       references/lessons-learnt.md     # 退件紀錄（表格，新的在上）
       scripts/chart_style.py           # 色票（字面值）
       scripts/make_cover.py            # 封面三層用語（字面值）
@@ -30,7 +30,7 @@ import shutil
 import sys
 import zipfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -71,6 +71,10 @@ _LESSONS = "references/lessons-learnt.md"
 _CHART_STYLE = "scripts/chart_style.py"
 _MAKE_COVER = "scripts/make_cover.py"
 
+# 只增不改的檔：已經有內容就只把新的條目接在後面（ADR-0026 §3.3：lessons 之後只有閘道寫）
+_APPEND_ONLY = ("lessons.md",)
+_BACKUP_DIR = ".backup"
+
 _FENCE = re.compile(r"^(```|~~~)")
 _HEADING = re.compile(r"^(#{1,6}) ")
 _THEME_ROW = re.compile(r"^\|\s*`([a-z0-9-]+)`\s*\|")
@@ -95,6 +99,8 @@ class SourceTree:
 class ImportResult:
     backup: Path | None
     written: list[str]
+    # 沒寫的檔與原因（例：lessons.md 沒有新的條目）
+    notes: list[str] = field(default_factory=list)
 
 
 # --- 讀來源 -------------------------------------------------------------------
@@ -264,8 +270,8 @@ def _genre_style(text: str, persona: str, slug: str, stamp: str) -> str:
         "author": persona,
         "genre": slug,
         "samples": [],
-        # 來源自己寫「尚無已發布文章」的文體只是起始規範，還沒校準
-        "calibrated": "尚無已發布文章" not in text,
+        # 空檔、或來源自己寫「尚無已發布文章」的文體只是起始規範，還沒校準
+        "calibrated": bool(body) and "尚無已發布文章" not in text,
     }
     comment = f"角色的文體風格（ADR-0026 §3.3）。由 scripts/import_persona.py 匯入（{stamp}）"
     return _frontmatter(fields, comment) + body + "\n"
@@ -289,7 +295,7 @@ def _themes(source: SourceTree, persona: str, stamp: str, known: set[str]) -> st
     strategy = source.get(_STRATEGY)
     claims = _section(strategy, 2, lambda t: t.startswith("主題的典型主張")) if strategy else None
     if claims is not None:
-        parts.append("## 主題的典型主張\n\n" + _body_after_heading(claims))
+        parts.append("## 對每個主題的主張\n\n" + _body_after_heading(claims))
     comment = f"角色對主題的看法（ADR-0026 §3.2、§3.3）。由 scripts/import_persona.py 匯入（{stamp}）"
     return _frontmatter({"author": persona, "themes": slugs}, comment) + "\n\n".join(parts) + "\n"
 
@@ -467,8 +473,19 @@ def unused_sources(source: SourceTree) -> list[str]:
 # --- 寫進角色資料夾 -------------------------------------------------------------
 
 
+def _backup_root(data: DataDir) -> Path:
+    """`authors/.backup/`：必須就在 `authors/` 底下，不能是連到別處的符號連結。
+
+    備份會把私人的角色資料整份複製過去；它若被連到公開的 repo 裡，品牌內容就跟著被複製出去。
+    """
+    root = data.authors / _BACKUP_DIR
+    if root.is_symlink() or (root.exists() and root.resolve() != data.authors.resolve() / _BACKUP_DIR):
+        raise PersonaImportError(f"{root} 是符號連結或指到別處（{root.resolve()}），不備份也不寫")
+    return root
+
+
 def _backup_dir(data: DataDir, persona: str, now: datetime) -> Path:
-    base = data.authors / ".backup" / f"{persona}-{now.strftime('%Y%m%d-%H%M%S')}"
+    base = _backup_root(data) / f"{persona}-{now.strftime('%Y%m%d-%H%M%S')}"
     candidate = base
     number = 2
     while candidate.exists():
@@ -492,6 +509,7 @@ def import_persona(
             )
         if target.is_symlink() and not target.resolve().is_relative_to(real):
             raise PersonaImportError(f"{relative} 是連到角色資料夾之外的符號連結，不寫")
+    _backup_root(data)  # 什麼都還沒寫之前就先擋
 
     backup: Path | None = None
     if folder.is_dir() and any(folder.iterdir()):
@@ -501,14 +519,30 @@ def import_persona(
         shutil.copytree(folder, backup, symlinks=True)
 
     written: list[str] = []
+    notes: list[str] = []
     for relative, content in files.items():
         target = folder / relative
+        if relative in _APPEND_ONLY and target.is_file() and target.read_text(encoding="utf-8").strip():
+            merged = _append_new_entries(target.read_text(encoding="utf-8"), content)
+            if merged is None:
+                notes.append(f"{relative} 已經有內容，來源沒有新的條目，沒改")
+                continue
+            content = merged
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         temporary.write_text(content, encoding="utf-8")
         os.replace(temporary, target)
         written.append(relative)
-    return ImportResult(backup=backup, written=written)
+    return ImportResult(backup=backup, written=written, notes=notes)
+
+
+def _append_new_entries(existing: str, generated: str) -> str | None:
+    """原本的內容一字不動，只把還沒有的條目（`- ` 開頭的行）接在後面；沒有新的就是 None。"""
+    have = set(existing.splitlines())
+    new = [line for line in generated.splitlines() if line.startswith("- ") and line not in have]
+    if not new:
+        return None
+    return existing + ("" if existing.endswith("\n") else "\n") + "\n".join(new) + "\n"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -550,6 +584,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"寫進 {target}：")
         for relative in result.written:
             print(f"  {relative}")
+        for note in result.notes:
+            print(f"沒寫：{note}")
     unused = unused_sources(source)
     if unused:
         print("來源裡沒有拆進角色資料夾的檔：")
