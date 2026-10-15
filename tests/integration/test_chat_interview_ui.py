@@ -529,7 +529,7 @@ PERSONA_CARD = {
     "header": "角色",
     "question": "用哪個角色寫？",
     "options": [
-        {"label": "Sunny 本人", "description": "用他的聲音。", "value": "sunny"},
+        {"label": "Alex 本人", "description": "用他的聲音。", "value": "alex"},
         {"label": "我自己", "description": "用我的聲音。", "value": "me"},
     ],
 }
@@ -541,9 +541,9 @@ def _picks(html: str) -> str:
 
 def test_第_1_關選好之後_標題底下寫文體_主題_角色的中文名(world: World) -> None:
     cid = world.conversation()
-    (world.folder.data.authors / "sunny").mkdir(parents=True)
+    (world.folder.data.authors / "alex").mkdir(parents=True)
     (world.folder.data.authors / "me").mkdir(parents=True)
-    (world.folder.data.authors / "sunny" / "persona.json").write_text('{"display_name": "Sunny"}', encoding="utf-8")
+    (world.folder.data.authors / "alex" / "persona.json").write_text('{"display_name": "Alex"}', encoding="utf-8")
     card_id = world.propose(cid, None, 1, [GENRE_CARD, THEME_CARD, PERSONA_CARD])
     world.submit(cid, card_id, 1, picks={"主題": "[主題 B]"})
 
@@ -552,7 +552,7 @@ def test_第_1_關選好之後_標題底下寫文體_主題_角色的中文名(w
     # 文體用中文名、主題用 themes.md 的說明、角色用顯示名稱，後面都附 slug
     assert "理論教學（explainer）" in picks
     assert "AI 時代的工作與職涯（worldview）" in picks
-    assert "Sunny（sunny）" in picks
+    assert "Alex（alex）" in picks
 
 
 def test_沒問角色就是_me_第_1_關沒選好的時候標題底下不列(world: World) -> None:
@@ -567,7 +567,7 @@ def test_沒問角色就是_me_第_1_關沒選好的時候標題底下不列(wor
 
 def test_文體_主題_角色卡都沒有其他_跟別的選項卡一樣畫(world: World) -> None:
     cid = world.conversation()
-    (world.folder.data.authors / "sunny").mkdir(parents=True)
+    (world.folder.data.authors / "alex").mkdir(parents=True)
     (world.folder.data.authors / "me").mkdir(parents=True)
     world.propose(cid, None, 1, [GENRE_CARD, THEME_CARD, PERSONA_CARD])
 
@@ -575,7 +575,7 @@ def test_文體_主題_角色卡都沒有其他_跟別的選項卡一樣畫(worl
 
     assert 'data-kind="other"' not in html
     assert html.count('<fieldset class="ch-q"') == 3
-    assert "Sunny 本人" in html and "[主題 A]" in html
+    assert "Alex 本人" in html and "[主題 A]" in html
 
 
 def test_要重確認的關有沿用和重問兩顆按鈕_重問帶出後面有決定的關(world: World) -> None:
