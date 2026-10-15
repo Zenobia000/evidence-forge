@@ -2,7 +2,7 @@
 
 - `POST /tools/<名稱>`：ef-tools 的工具呼叫。段（工單鑰匙）用 `read_file`、`list_files`、
   `write_file`、`fetch_url`、`web_search`、`run_script`；對話（對話鑰匙）只能用 `analyze`、
-  `read_report`、`read_article`、`job_status`、`list_personas`（`rewrite` 先回 501）
+  `read_report`、`read_article`、`job_status`、`list_personas`、`rewrite`
   （`chat_tools.py`、ADR-0021）。兩邊互相拿對方的工具一律 403。
 - `POST /v1/messages`：Pi 的模型請求（Anthropic Messages 格式），見 `messages.py`。
 - `GET /health`、`GET /health/anthropic`：執行器的開跑前檢查用（閘道活著、金鑰有效）。

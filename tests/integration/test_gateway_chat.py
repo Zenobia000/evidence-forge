@@ -1,13 +1,14 @@
 """閘道 ↔ 對話鑰匙（ADR-0021、NFR-SEC-02、chat.feature 的 @security 與「對話本身的花費也入帳」）。
 
-- 對話只能用對話的工具（analyze、read_report、job_status），段的工具一律 403。
+- 對話只能用對話的工具（analyze、read_report、read_article、job_status、list_personas、rewrite），段的工具一律 403。
 - 段的鑰匙不能用對話的工具。
 - 對話只讀得到自己 `jobs.jsonl` 裡的工單；別的對話開的一律 403。
 - 接回之後只認最新那一把；Pi 結束撤銷之後也拒絕。
 - 對話本身的模型呼叫記在對話的帳本、受對話的預算管、不走模型快取。
 - 每個對話同一時間最多幾張工單在跑（預設 1）。
+- `rewrite` 只從這個對話自己的工單接著做；從分析開是新的版本鏈，同一個角色再改接在同一條鏈上，換角色另開一條（#102）。
 
-開單用真的投入（`runner.intake.open_job`）；模型後端是本機的假 Anthropic，金鑰是假的。
+開單用真的投入（`runner.intake.open_job`、`open_job_from`）；模型後端是本機的假 Anthropic，金鑰是假的。
 """
 
 import json
@@ -26,6 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from evidence_forge import conversations
+from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, create_app
@@ -34,7 +36,7 @@ from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.models import JobResult, Recipe, RecipeStage
 from evidence_forge.paths import DataDir
 from evidence_forge.gateway.active import StaleKey
-from evidence_forge.runner.intake import PastedText, open_job
+from evidence_forge.runner.intake import PastedText, open_job, open_job_from
 
 NOW = datetime(2026, 10, 13, 5, 0, tzinfo=UTC)
 FAKE_KEY = "sk-fake-xxxx-anthropic-chat-canary"
@@ -44,6 +46,14 @@ RECIPE = Recipe(
     stages=(RecipeStage(id="echo", skill="echo", tier="local", output=("a.json",)),),
     on_feedback="echo",
     default_goal="用兩三句話說明這篇文章在講什麼",
+)
+REWRITE = Recipe(
+    name="rewrite",
+    description="test",
+    stages=(RecipeStage(id="rewrite", skill="rewrite", tier="local", output=("article.md",)),),
+    on_feedback="rewrite",
+    needs=("report.md",),
+    default_goal="寫一篇",
 )
 SSE = (
     'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1",'
@@ -71,6 +81,12 @@ class IntakeDesk:
     def __init__(self, data: DataDir) -> None:
         self.data = data
         self.opened: list[dict[str, Any]] = []
+        self.rewrites: list[dict[str, Any]] = []
+        # 閘道通知「記好了」時：(對話, 工單, 那時這張單在不在對話的 jobs.jsonl 裡)
+        self.recorded_calls: list[tuple[str, str, bool]] = []
+        # 開了單就馬上當成跑完（很快的執行器）
+        self.finish_at_once = False
+        self.recipe_name = RECIPE.name
         # 開單前故意等一下：讓兩個同時送來的請求撞在一起
         self.delay_s = 0.0
         # 不照實回：開完單卻回另一張單的 id（閘道不能相信工作台）
@@ -100,10 +116,57 @@ class IntakeDesk:
             again=again,
             before_create=before_create,
         )
+        if self.finish_at_once:
+            _mark_done(self.data, intake.job.id)
         return {
             "job_id": self.forged_job_id or intake.job.id,
             "created": intake.created,
             "status": intake.job.status,
+        }
+
+    def recorded(self, conversation_id: str, job_id: str) -> None:
+        listed = conversations.owns_job(self.data, conversation_id, job_id)
+        self.recorded_calls.append((conversation_id, job_id, listed))
+
+    def open_rewrite(
+        self,
+        *,
+        conversation_id: str,
+        from_job: str,
+        persona: str | None,
+        genre: str | None,
+        suggested_genre: str | None,
+        goal: str | None,
+        feedback: str | None,
+    ) -> dict[str, Any]:
+        self.rewrites.append(
+            {
+                "conversation_id": conversation_id,
+                "from_job": from_job,
+                "genre": genre,
+                "suggested_genre": suggested_genre,
+            }
+        )
+        try:
+            job = open_job_from(
+                self.data,
+                REWRITE,
+                from_job,
+                goal=goal,
+                now=NOW,
+                persona=persona,
+                genre=genre,
+                feedback=feedback,
+                conversation=conversation_id,
+            )
+        except ValueError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        if self.finish_at_once:
+            _mark_done(self.data, job.id)
+        return {
+            "job_id": self.forged_job_id or job.id,
+            "created": True,
+            "status": job.status,
         }
 
     def status(self, job_id: str) -> dict[str, Any]:
@@ -118,6 +181,15 @@ class IntakeDesk:
 
     def personas(self) -> dict[str, Any]:
         return {"personas": [{"name": "me", "default_genre": "opinion"}]}
+
+
+def _mark_done(data: DataDir, job_id: str) -> None:
+    path = data.job_dir(job_id) / "job.md"
+    job = read_job(path).job
+    write_job(
+        path,
+        JobDocument(job=job.model_copy(update={"status": "done", "result": JobResult(outcome="complete")})),
+    )
 
 
 @dataclass
@@ -179,10 +251,35 @@ class Env:
         )
 
     def finish(
-        self, job_id: str, outcome: str = "complete", reason: str = "跑完"
+        self,
+        job_id: str,
+        outcome: str = "complete",
+        reason: str = "跑完",
+        *,
+        stage: str = "echo",
+        files: dict[str, str] | None = None,
     ) -> None:
-        """把工單改成跑完（結束）：執行器會做的事，這裡直接寫 `job.md`。"""
-        path = self.data.job_dir(job_id) / "job.md"
+        """把工單改成跑完（結束）：執行器會做的事，這裡直接寫 `job.md`。
+
+        給了 `files` 就連同那一段的產出與過了的檢查結果一起寫（重構要從它接著做）。
+        """
+        job_dir = self.data.job_dir(job_id)
+        if files:
+            attempt = job_dir / "stages" / stage / "1"
+            attempt.mkdir(parents=True)
+            for name, text in files.items():
+                (attempt / name).write_text(text, encoding="utf-8")
+            write_checks_report(
+                job_dir,
+                ChecksReport(
+                    stage=stage,
+                    attempt=1,
+                    files=tuple(f"stages/{stage}/1/{name}" for name in files),
+                    created_at=NOW,
+                    entries=(CheckEntry(check="C5", status="pass", reason="測試"),),
+                ),
+            )
+        path = job_dir / "job.md"
         job = read_job(path).job
         done = job.model_copy(
             update={
@@ -199,6 +296,9 @@ class Env:
 def env(tmp_path: Path, serve: Serve) -> Iterator[Env]:
     data = DataDir(tmp_path / "data")
     data.ensure()
+    # 重構要有角色資料夾：me 是創作者自己，ally 是另一個角色
+    for persona in ("me", "ally"):
+        (data.authors / persona).mkdir(parents=True)
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / "anthropic").write_text(FAKE_KEY + "\n", encoding="utf-8")
@@ -337,12 +437,146 @@ def test_讀得到自己開的文章_列得出角色(env: Env) -> None:
     assert personas.json()["personas"][0]["name"] == "me"
 
 
-def test_重構先留介面_接上之前回_501_不開單(env: Env) -> None:
-    job_id = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
-    response = env.call("rewrite", env.mine, from_job=job_id, persona="me")
-    assert response.status_code == 501
-    assert "重構還沒接上" in response.json()["error"]
+# --- rewrite ----------------------------------------------------------------
+
+
+def _analysed(env: Env, key: ConversationKey | None = None, text: str = "# 一篇\n\n內容") -> str:
+    """這個對話開一張分析、跑完，交得出過了檢查的報告。"""
+    job_id = _opened(env.call("analyze", key or env.mine, text=text))
+    env.finish(job_id, files={"report.md": "報告"})
+    return job_id
+
+
+def _written(env: Env, from_job: str, **body: object) -> str:
+    """從 `from_job` 開一張重構、跑完，交得出過了檢查的文章。"""
+    job_id = _opened(env.call("rewrite", env.mine, from_job=from_job, **body))
+    # 執行器開工前會把上一張的報告放進 input/；再改從這一版拿報告
+    (env.data.job_dir(job_id) / "input").mkdir()
+    (env.data.job_dir(job_id) / "input" / "report.md").write_text("報告", encoding="utf-8")
+    env.finish(job_id, stage="rewrite", files={"article.md": "# 一篇文章"})
+    return job_id
+
+
+def _chain(env: Env) -> list[tuple[str, int, str | None]]:
+    return [(r.job_id, r.version, r.parent) for r in conversations.jobs(env.data, env.mine.conversation_id)]
+
+
+def test_rewrite_從這個對話的分析開_新的一條版本鏈(env: Env) -> None:
+    analysis = _analysed(env)
+    response = env.call("rewrite", env.mine, from_job=analysis, goal="題材 1：夜班的人力。角度：成本")
+    job_id = _opened(response)
+    assert response.json()["created"] is True
+    assert _chain(env) == [(analysis, 1, None), (job_id, 1, analysis)]
+    job = read_job(env.data.job_dir(job_id) / "job.md").job
+    assert (job.conversation, job.parent, job.persona, job.goal) == (
+        env.mine.conversation_id,
+        analysis,
+        "me",
+        "題材 1：夜班的人力。角度：成本",
+    )
+
+
+@pytest.mark.promise("NFR-SEC-02")
+def test_rewrite_拿別的對話的工單當_from_job_被拒_不說那張單存不存在(env: Env) -> None:
+    theirs = _analysed(env, env.other, "# 別人的\n\n內容")
+    response = env.call("rewrite", env.mine, from_job=theirs)
+    assert response.status_code == 403
+    assert response.json() == env.call("rewrite", env.mine, from_job="no-such-job").json()
+    assert env.desk.rewrites == []
+    assert conversations.jobs(env.data, env.mine.conversation_id) == []
+
+
+def test_rewrite_創作者指定的文類與報告建議的文類分開交給工作台(env: Env) -> None:
+    analysis = _analysed(env)
+    _opened(env.call("rewrite", env.mine, from_job=analysis, genre="opinion", suggested_genre="評論"))
+    assert env.desk.rewrites[-1]["genre"] == "opinion"
+    assert env.desk.rewrites[-1]["suggested_genre"] == "評論"
+
+
+def test_rewrite_帶意見再改_同一個角色接在同一條鏈上(env: Env) -> None:
+    analysis = _analysed(env)
+    first = _written(env, analysis)
+    second = _opened(env.call("rewrite", env.mine, from_job=first, feedback="開頭太長，直接講結論"))
+    assert _chain(env)[1:] == [(first, 1, analysis), (second, 2, first)]
+    assert read_job(env.data.job_dir(second) / "job.md").job.feedback == "開頭太長，直接講結論"
+
+
+def test_rewrite_換角色_另開一條鏈(env: Env) -> None:
+    analysis = _analysed(env)
+    first = _written(env, analysis)
+    other = _opened(env.call("rewrite", env.mine, from_job=first, persona="ally"))
+    assert _chain(env)[-1] == (other, 1, first)
+    assert read_job(env.data.job_dir(other) / "job.md").job.persona == "ally"
+
+
+def test_rewrite_對話已有工單在跑_被拒_不開單(env: Env) -> None:
+    analysis = _analysed(env)
+    running = _opened(env.call("analyze", env.mine, text="# 另一篇\n\n內容"))
+    response = env.call("rewrite", env.mine, from_job=analysis)
+    assert response.status_code == 409
+    assert running in response.json()["error"]
+    assert env.desk.rewrites == []
+
+
+def test_rewrite_工作台不開單_原因交回對話(env: Env) -> None:
+    analysis = _analysed(env)
+    response = env.call("rewrite", env.mine, from_job=analysis, persona="nobody")
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+    assert "沒有角色 nobody" in response.json()["reason"]
+    assert _chain(env) == [(analysis, 1, None)]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"from_job": None},
+        {"from_job": 3},
+        {"persona": 1},
+        {"genre": ["opinion"]},
+        {"suggested_genre": 5},
+        {"goal": 2},
+        {"feedback": True},
+    ],
+    ids=["沒有_from_job", "from_job_不是字串", "persona", "genre", "suggested_genre", "goal", "feedback"],
+)
+def test_rewrite_欄位不對_400_不開單(env: Env, body: dict[str, object]) -> None:
+    analysis = _analysed(env)
+    # None 表示不帶這個欄位
+    merged = {k: v for k, v in ({"from_job": analysis} | body).items() if v is not None}
+    response = env.call("rewrite", env.mine, **merged)
+    assert response.status_code == 400
+    assert env.desk.rewrites == []
+
+
+def test_一開就跑完的單_記進_jobs_jsonl_之後才通知工作台(env: Env) -> None:
+    # 主機靠 jobs.jsonl 找「這張單是哪個對話的、要不要通知」：先通知再記，跑得快的單通知就丟了
+    env.desk.finish_at_once = True
+    analysis = _opened(env.call("analyze", env.mine, text="# 很快的\n\n內容"))
+    env.finish(analysis, files={"report.md": "報告"})
+    rewrite = _opened(env.call("rewrite", env.mine, from_job=analysis))
+    mine = env.mine.conversation_id
+    assert env.desk.recorded_calls == [(mine, analysis, True), (mine, rewrite, True)]
+
+
+def test_有重構在跑時丟同一篇_不會被當成拿回在跑的那張_抓之前就擋下(env: Env) -> None:
+    # 重構單跟分析共用同一份素材項目：「同一份素材在跑」只看分析配方的單
+    analysis = _analysed(env, text="# 第一篇\n\n內容")
+    running = _opened(env.call("rewrite", env.mine, from_job=analysis))
+    response = env.call("analyze", env.mine, text="# 第一篇\n\n內容")
+    assert response.status_code == 409
+    assert running in response.json()["error"]
+    # 工作台沒被叫到：沒有對外抓取，也沒有寫投入帳
     assert len(env.desk.opened) == 1
+
+
+def test_rewrite_工作台回別的對話的單_不記進來(env: Env) -> None:
+    theirs = _analysed(env, env.other, "# 別人的\n\n內容")
+    analysis = _analysed(env)
+    env.desk.forged_job_id = theirs
+    response = env.call("rewrite", env.mine, from_job=analysis)
+    assert response.status_code == 500
+    assert not conversations.owns_job(env.data, env.mine.conversation_id, theirs)
 
 
 @pytest.mark.promise("NFR-SEC-02")
@@ -392,6 +626,7 @@ def test_段的鑰匙不能用對話的工具(env: Env, tool: str, body: dict[st
     response = env.call(tool, key, **body)
     assert response.status_code == 403
     assert env.desk.opened == []
+    assert env.desk.rewrites == []
 
 
 # --- 鑰匙換代與撤銷 ---------------------------------------------------------

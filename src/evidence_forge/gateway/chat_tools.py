@@ -8,18 +8,23 @@
 - `read_article`：讀這個對話開過的某張重構工單的文章（#85）。
 - `job_status`：一張工單現在跑到哪。
 - `list_personas`：現有的角色與它們寫過的文類（#85；創作者說「用 me 寫」時對話的 agent 才聽得懂）。
-- `rewrite`：重構。介面先留好，#79（PR #92）合併、工作台接上 `--from` 之前一律回 501，
-  ef-tools 也只在 `EF_CHAT_REWRITE=1` 時才註冊它，模型平常看不到。
+- `rewrite`：從這個對話的一張分析或重構工單接著做，開一張重構工單（等同 `ef new --from`，#102），
+  **開了就回**，跟 `analyze` 一樣。`from_job` 一定要是這個對話自己的單（跟讀報告同一條範圍，403 不說存不存在）。
+  記進 `jobs.jsonl` 時接上版本鏈（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）：`parent` 是 `from_job`；
+  從同一個角色的上一版重構接著做是那條鏈的下一版，從分析開、或換了角色，是新的一條鏈的第 1 版。
 
 範圍：
 - 只碰得到列在這個對話 `jobs.jsonl` 裡的工單，別的對話的一律 403，而且不說那張單存不存在。
 - 段的工具（讀寫檔、抓網頁、搜尋、跑腳本）拿對話鑰匙來一律 403；對話的工具拿段的鑰匙來也是（`app.py`）。
-- 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1）：
+- 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1；`analyze`、`rewrite` 都算）：
   對話的 agent 可以一直開單，每張單各有預算，不擋的話總花費只剩月上限管得到。
   只擋「要開新單」：同一篇文章再丟一次（連按兩下）照樣拿回那一張，即使它還在跑。
   「在跑幾張」看 `job.md` 記的是哪個對話開的，不看 `jobs.jsonl`：開了單、還沒記進去就當掉的那張也算。
   已經滿了而這次不會是拿回在跑的那一張，就在抓網頁之前擋下，不對外抓、不寫投入帳。
+  `rewrite` 不走去重，每次都是新單，所以滿了就直接擋。
 - 工作台回的工單，閘道先讀它的 `job.md`：不是這個對話開的就不記、回 500。範圍由閘道自己把關。
+- 記進 `jobs.jsonl` 之後才叫工作台的 `recorded`（它再通知對話主機）：主機靠 `jobs.jsonl` 找工單是哪個對話的，
+  先通知再記的話，開了馬上跑完的單會漏掉結束通知。
 
 真正開單、讀結果的事交給 `Desk`（對話主機注入，知道配方與 harness）；閘道只管鑰匙、範圍與記帳。
 """
@@ -37,6 +42,7 @@ from evidence_forge.gateway.config import GatewayConfig
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Job
 from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
+from evidence_forge.runner.stage_inputs import job_persona
 
 CHAT_TOOLS = frozenset(
     {"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"}
@@ -47,6 +53,11 @@ _RUNNING = frozenset({"queued", "running"})
 
 class Desk(Protocol):
     """開分析工單、讀工單狀態與結果的那一層。"""
+
+    @property
+    def recipe_name(self) -> str:
+        """`analyze` 開的配方：「這次是不是拿回在跑的那一張」只看這份配方的單。"""
+        ...
 
     def open_analysis(
         self,
@@ -62,6 +73,28 @@ class Desk(Protocol):
         讀不到網址回 `{"status": "unavailable", "reason"}`，不開單。可以花幾秒抓網頁。
         `conversation_id`、`again` 與 `before_create` 原樣傳給投入（`open_job`）：去重的鍵含對話 id；
         `before_create` 只在要開新單時呼叫，它丟的 `ToolRejected` 要原樣往外丟。"""
+        ...
+
+    def open_rewrite(
+        self,
+        *,
+        conversation_id: str,
+        from_job: str,
+        persona: str | None,
+        genre: str | None,
+        suggested_genre: str | None,
+        goal: str | None,
+        feedback: str | None,
+    ) -> dict[str, Any]:
+        """從 `from_job` 接著開一張重構工單；`genre` 是創作者明說的文類（對不上就不開），
+        `suggested_genre` 是報告建議的文類（對不上用預設文類、附 `note`）；回 `{"job_id", "created": True, "status", …}`。
+        開不了（角色不存在、上一張交不出報告…）回 `{"status": "rejected", "reason"}`。
+        `from_job` 是不是這個對話的，閘道呼叫之前已經查過。"""
+        ...
+
+    def recorded(self, conversation_id: str, job_id: str) -> None:
+        """閘道把開出來（或拿回）的單記進對話的 `jobs.jsonl` 之後呼叫。
+        對話主機靠 `jobs.jsonl` 決定要不要送結束通知，所以通知主機要等到這時候。"""
         ...
 
     def status(self, job_id: str) -> dict[str, Any]: ...
@@ -107,8 +140,7 @@ class ChatTools:
         if name == "list_personas":
             return await run_in_threadpool(desk.personas)
         if name == "rewrite":
-            # 介面先留好（#85）：開重構工單要 `--from` 與重構配方，等 #79 合併後由工作台接上
-            raise ToolRejected(501, "重構還沒接上（等 #79 合併）；請創作者先讀報告")
+            return await self._rewrite(desk, key, body)
         raise ToolRejected(404, f"沒有這個工具：{name}")
 
     async def _analyze(
@@ -130,28 +162,25 @@ class ChatTools:
 
         limit = self._config.chat_max_running_jobs
 
-        def full(running: list[Job]) -> ToolRejected:
-            ids = "、".join(job.id for job in running)
-            return ToolRejected(
-                409,
-                f"這個對話已經有 {len(running)} 張工單在跑（{ids}），"
-                f"同一時間最多 {limit} 張；等它跑完再開，或請創作者決定",
-            )
-
         def room_for_new_job() -> None:
             # 在投入的鎖裡、確定要開新單時才數：去重拿回舊單不受上限影響
             running = self._running_jobs(conversation_id)
             if len(running) >= limit:
-                raise full(running)
+                raise self._full(running)
 
         def open_and_record() -> dict[str, Any]:
             # 已經滿了，而這次也不會是拿回在跑的那一張（換了素材，或要重做）：
             # 抓網頁之前就擋下，不然每次都先對外抓、寫投入帳，最後才拒絕
+            # 只看分析的單：重構單跟分析共用同一份素材項目，但丟同一篇文章不會拿回重構單
             running = self._running_jobs(conversation_id)
             if len(running) >= limit and (
-                again or not any(same_source(data, job, source) for job in running)
+                again
+                or not any(
+                    job.recipe == desk.recipe_name and same_source(data, job, source)
+                    for job in running
+                )
             ):
-                raise full(running)
+                raise self._full(running)
             # 開單與記進 jobs.jsonl 在同一個執行緒裡做完：請求中途被取消（關機、斷線）時，
             # 不會留下開了單卻沒記在對話底下的工單
             opened = desk.open_analysis(
@@ -172,11 +201,83 @@ class ChatTools:
                         job_id=job_id, ts=self._config.clock()
                     ),
                 )
+                desk.recorded(conversation_id, job_id)
             return opened
 
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             return await run_in_threadpool(open_and_record)
+
+    async def _rewrite(
+        self, desk: Desk, key: ConversationKey, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        # 跟讀報告同一條範圍：只從這個對話自己的單接著做，別的對話的不說存不存在（ADR-0021 §3.4）
+        from_job = self._owned_job(key, body, "from_job")
+        persona = _optional(body, "persona")
+        genre = _optional(body, "genre")
+        suggested_genre = _optional(body, "suggested_genre")
+        goal = _optional(body, "goal")
+        feedback = _optional(body, "feedback")
+        data = self._config.data
+        conversation_id = key.conversation_id
+
+        def open_and_record() -> dict[str, Any]:
+            # 重構不走去重，每次都是新單：滿了就擋，不叫工作台
+            running = self._running_jobs(conversation_id)
+            if len(running) >= self._config.chat_max_running_jobs:
+                raise self._full(running)
+            opened = desk.open_rewrite(
+                conversation_id=conversation_id,
+                from_job=from_job,
+                persona=persona,
+                genre=genre,
+                suggested_genre=suggested_genre,
+                goal=goal,
+                feedback=feedback,
+            )
+            job_id = opened.get("job_id")
+            if isinstance(job_id, str):
+                job = self._check_opened_here(conversation_id, job_id)
+                conversations.add_job(
+                    data,
+                    conversation_id,
+                    conversations.ConversationJob(
+                        job_id=job_id,
+                        ts=self._config.clock(),
+                        version=self._next_version(conversation_id, from_job, job),
+                        parent=from_job,
+                    ),
+                )
+                desk.recorded(conversation_id, job_id)
+            return opened
+
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            return await run_in_threadpool(open_and_record)
+
+    def _next_version(self, conversation_id: str, from_job: str, job: Job) -> int:
+        """新的重構在版本鏈上是第幾版（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）。
+
+        上一張是同一份配方、同一個角色的單：那條鏈的下一版。從分析開、或換了角色：新的一條鏈的第 1 版。
+        """
+        try:
+            parent = read_job(self._config.data.job_dir(from_job) / "job.md").job
+        except (OSError, ValueError):
+            return 1
+        same_chain = parent.recipe == job.recipe and job_persona(parent) == job_persona(job)
+        if not same_chain:
+            return 1
+        rows = conversations.jobs(self._config.data, conversation_id)
+        previous = next((row for row in rows if row.job_id == from_job), None)
+        return (previous.version if previous is not None else 1) + 1
+
+    def _full(self, running: list[Job]) -> ToolRejected:
+        ids = "、".join(job.id for job in running)
+        return ToolRejected(
+            409,
+            f"這個對話已經有 {len(running)} 張工單在跑（{ids}），"
+            f"同一時間最多 {self._config.chat_max_running_jobs} 張；等它跑完再開，或請創作者決定",
+        )
 
     def _running_jobs(self, conversation_id: str) -> list[Job]:
         """這個對話開的、還在排隊或在跑的工單。
@@ -198,7 +299,7 @@ class ChatTools:
                 found.append(job)
         return found
 
-    def _check_opened_here(self, conversation_id: str, job_id: str) -> None:
+    def _check_opened_here(self, conversation_id: str, job_id: str) -> Job:
         """工作台回的工單真的是這個對話開的；不是就不記、回 500（ADR-0021 §3.4）。
 
         記進 `jobs.jsonl` 就讀得到，所以不能只聽工作台的：工作台寫錯，別的對話的單就漏進來。
@@ -211,11 +312,14 @@ class ChatTools:
             raise ToolRejected(
                 500, f"工作台回的工單 {job_id} 不是這個對話開的，沒有記下"
             )
+        return job
 
-    def _owned_job(self, key: ConversationKey, body: dict[str, Any]) -> str:
-        job_id = body.get("job_id")
+    def _owned_job(
+        self, key: ConversationKey, body: dict[str, Any], field: str = "job_id"
+    ) -> str:
+        job_id = body.get(field)
         if not isinstance(job_id, str) or not job_id:
-            raise ToolRejected(400, "缺少字串欄位 job_id")
+            raise ToolRejected(400, f"缺少字串欄位 {field}")
         if not conversations.owns_job(self._config.data, key.conversation_id, job_id):
             # 不說那張單存不存在：對話不該知道別的對話開了什麼
             raise ToolRejected(403, "這張工單不是這個對話開的")
