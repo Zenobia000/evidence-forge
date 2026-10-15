@@ -10,6 +10,7 @@
 """
 
 import json
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -405,6 +406,54 @@ def test_通知記錄_只對已經決定而且決定對得上的提議算數_冪
     assert [e["type"] for e in world.raw()].count("notified") == 1
     # notified 不改決定
     assert lesson_proposals.read_proposals(world.data, world.cid)[0].status == "approved"
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_同意時拿角色的檔案鎖_鎖檔不在角色資料夾裡_別人拿著鎖就等(world: World) -> None:
+    proposal = world.propose().proposal
+    finished = threading.Event()
+
+    def approve() -> None:
+        lesson_proposals.approve(world.data, world.cid, proposal.id, now=LATER)
+        finished.set()
+
+    with lesson_proposals._persona_lock(world.data, "nightowl"):
+        worker = threading.Thread(target=approve)
+        worker.start()
+        # 鎖被別的檔案描述（可以是另一個程序）拿著：同意要等，什麼都還沒寫
+        assert not finished.wait(0.3)
+        assert not world.lessons.exists()
+    worker.join(10)
+
+    assert finished.is_set()
+    assert world.lessons.read_text(encoding="utf-8") == "- 2026-10-16｜" + RULE + "\n"
+    # 鎖檔在 $EF_DATA/run/locks，角色資料夾裡沒有多出任何檔
+    assert (world.data.run / "locks" / "lessons-nightowl.lock").is_file()
+    assert sorted(p.name for p in world.folder.iterdir()) == ["lessons.md", "voice.md"]
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_兩個執行緒同時同意同一句_只寫一次(world: World) -> None:
+    first = world.propose(cid=world.cid).proposal
+    second = world.propose(cid=world.other).proposal
+    barrier = threading.Barrier(2)
+    results: list[lesson_proposals.Written] = []
+
+    def approve(cid: str, proposal_id: str) -> None:
+        barrier.wait()
+        results.append(lesson_proposals.approve(world.data, cid, proposal_id, now=LATER))
+
+    threads = [
+        threading.Thread(target=approve, args=(world.cid, first.id)),
+        threading.Thread(target=approve, args=(world.other, second.id)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert world.lessons.read_text(encoding="utf-8").count(RULE) == 1
+    assert sorted(w.proposal.already_present for w in results) == [False, True]
 
 
 # --- confined.append_text（只增不改的附加；不跟隨連結）------------------------------------

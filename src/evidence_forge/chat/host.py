@@ -72,6 +72,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -206,6 +207,8 @@ class _Live:
     card_notice_ids: set[str] = field(default_factory=set)
     # 這次開的 Pi 已經送過 /ef-lesson 的提議（`<編號> <決定>`）；每次開都重來
     lessons_sent: set[str] = field(default_factory=set)
+    # 重試用完、放棄的 `<編號> <決定>`：同一個 Pi 不再送（下一個決定來也不會把它帶出去），下次開 Pi 才重來
+    lessons_given_up: set[str] = field(default_factory=set)
     # 送出去、還沒收到回應的 /ef-lesson 指令：指令 id → `<編號> <決定>`
     lesson_notice_ids: dict[str, str] = field(default_factory=dict)
     # 這次開的 Pi 每張單（或每筆 lesson 提議）重送過幾次
@@ -601,22 +604,29 @@ class ConversationHost:
         for proposal in self._lessons_unnotified(conversation_id):
             sent = f"{proposal.id} {proposal.status}"
             with self._lock:
-                if sent in live.lessons_sent:
+                if sent in live.lessons_sent or sent in live.lessons_given_up:
                     continue
                 live.lessons_sent.add(sent)
                 live.pending += 1
                 live.last_active = self._monotonic()
+            # 回應可能在 send 回傳之前就到：先登記再寫（`PiProcess.send` 的 `on_id`）
+            register = partial(self._register_lesson_notice, live, sent)
             try:
-                request_id = live.pi.send(
-                    {"type": "prompt", "message": f"/ef-lesson {proposal.id} {proposal.status} {proposal.persona}"}
+                live.pi.send(
+                    {"type": "prompt", "message": f"/ef-lesson {proposal.id} {proposal.status} {proposal.persona}"},
+                    on_id=register,
                 )
             except BaseException:
                 with self._lock:
                     live.lessons_sent.discard(sent)
+                    for request_id in [r for r, key in live.lesson_notice_ids.items() if key == sent]:
+                        del live.lesson_notice_ids[request_id]
                 self._settle_pending(live)
                 raise
-            with self._lock:
-                live.lesson_notice_ids[request_id] = sent
+
+    def _register_lesson_notice(self, live: _Live, sent: str, request_id: str) -> None:
+        with self._lock:
+            live.lesson_notice_ids[request_id] = sent
 
     def _deliver_lessons(self, conversation_id: str) -> None:
         """排著的 lesson 通知：送進這個對話的 Pi（沒開就接回，接回時會一起補送）；沒送成告訴畫面。"""
@@ -648,6 +658,7 @@ class ConversationHost:
                 if tries <= MAX_NOTICE_RETRIES:
                     retry = True
                 else:
+                    live.lessons_given_up.add(key)
                     given_up.append(key.split(" ")[0])
         for proposal in given_up:
             self._emit(
@@ -675,6 +686,11 @@ class ConversationHost:
             self._enqueue(("card", f"{conversation_id} {written.card_id} {last} {action} {station}"))
         return {"card": written.card.model_dump(mode="json"), "events": written.events}
 
+    def _register_card_notice(self, live: _Live, registered: list[str], request_id: str) -> None:
+        with self._lock:
+            live.card_notice_ids.add(request_id)
+        registered.append(request_id)
+
     def _deliver_card(self, conversation_id: str, command: str) -> None:
         """把 `/ef-card …` 送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
         try:
@@ -683,13 +699,19 @@ class ConversationHost:
                 with self._lock:
                     live.pending += 1
                     live.last_active = self._monotonic()
+                registered: list[str] = []
                 try:
-                    request_id = live.pi.send({"type": "prompt", "message": command})
+                    # 回應可能在 send 回傳之前就到：先登記再寫
+                    live.pi.send(
+                        {"type": "prompt", "message": command},
+                        on_id=partial(self._register_card_notice, live, registered),
+                    )
                 except BaseException:
+                    # 寫不出去：剛登記的 id 不會有回應了
+                    with self._lock:
+                        live.card_notice_ids.difference_update(registered)
                     self._settle_pending(live)
                     raise
-                with self._lock:
-                    live.card_notice_ids.add(request_id)
         except Exception as exc:
             _log.warning("編輯卡的通知沒送到對話 %s", conversation_id, exc_info=True)
             self._emit(
@@ -1018,13 +1040,21 @@ class ConversationHost:
             live.pending += 1
             live.last_active = self._monotonic()
         # 擴充指令：Pi 正在回答時也會馬上執行；通知本身排在回答之後（ef-tools 的 deliverAs followUp）
+        # 回應可能在 send 回傳之前就到：先登記再寫
         try:
-            request_id = live.pi.send({"type": "prompt", "message": f"/ef-job-done {job_id}"})
+            live.pi.send(
+                {"type": "prompt", "message": f"/ef-job-done {job_id}"},
+                on_id=partial(self._register_job_notice, live, job_id),
+            )
         except BaseException:
             with self._lock:
                 live.notified.discard(job_id)
+                for request_id in [r for r, j in live.notice_ids.items() if j == job_id]:
+                    del live.notice_ids[request_id]
             self._settle_pending(live)
             raise
+
+    def _register_job_notice(self, live: _Live, job_id: str, request_id: str) -> None:
         with self._lock:
             live.notice_ids[request_id] = job_id
 

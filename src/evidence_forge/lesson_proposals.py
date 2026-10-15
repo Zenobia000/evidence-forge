@@ -201,8 +201,25 @@ def _persona_folder(data: DataDir, persona: object) -> tuple[str, Path]:
 
 _guard = threading.Lock()
 _locks: dict[str, threading.Lock] = {}
-# 寫角色的 lessons.md 一次一個：兩個對話同時同意同一個角色的提議，不會兩邊都讀到同一個檔尾
-_persona_lock = threading.Lock()
+
+
+@contextmanager
+def _persona_lock(data: DataDir, persona: str) -> Iterator[None]:
+    """寫這個角色的 lessons.md 一次一個：「讀有沒有一樣的一行 → 附加」不能被另一個同意插進來，
+    不然兩個對話同時同意同一個角色、同一天的同一句規則，兩邊都讀到「還沒有」、各附加一次。
+
+    用檔案鎖（flock），不只是程序內的鎖：另一個 `ef serve` 或手動的工具也排隊。flock 鎖的是開啟的檔案描述，
+    同一個程序裡的兩條執行緒各自開檔也互相擋。鎖檔放在 `$EF_DATA/run/locks/`，**不放角色資料夾**：
+    角色頁與角色規格（`persona_spec.PARTS`）不會看到多出來的檔。角色名已經過 `check_name`，可以直接當檔名。
+    """
+    folder = data.run / "locks"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / f"lessons-{persona}.lock").open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _folder(data: DataDir, conversation_id: str) -> Path:
@@ -384,7 +401,7 @@ def approve(
             raise ToolRejected(409, "這筆 lesson 已經被你按了「不要」，不能再同意；要的話請 agent 重新提議")
         _, persona_folder = _persona_folder(data, proposal.persona)
         line = lesson_line(proposal.proposed_at, proposal.text)
-        with _persona_lock:
+        with _persona_lock(data, proposal.persona):
             present = _has_line(persona_folder, line)
             if not present:
                 _append_to_lessons(persona_folder, line)

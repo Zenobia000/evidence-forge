@@ -663,3 +663,65 @@ def test_ef_lesson_一直丟錯_重試用完_推_ef_error_決定留著沒有_not
     assert not _notified(world, cid, written.proposal.id)
     # 決定本身已經記下，只是通知沒送到
     assert [p.status for p in lesson_proposals.read_proposals(world.data, cid)] == ["rejected"]
+
+
+def test_Pi_在_send_回傳之前就回應_回應也算數_不會一直不閒置(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """回應在指令寫出去的同時就到（讀取執行緒另外在跑）：登記要在寫之前，不然回應找不到人、`pending` 永遠不歸零。
+
+    這裡讓 `PiProcess._write` 不真的寫，改成當場餵一則成功的 `response`：登記晚於寫的話，回應就先到了。
+    `/ef-lesson` 不開新的一輪，`pending` 沒有別的歸零機會；`/ef-job-done` 與 `/ef-card` 走同一個 `send`。
+    """
+    from evidence_forge.chat.pi_rpc import PiProcess
+
+    cid, proposal = _lesson_world(world)
+    host = world.host()
+    wait_until(lambda: _notified(world, cid, proposal), what="啟動時的補送")
+    # Pi 已經開著；之後的指令都「立刻回應、不真的寫」
+    live = host._live[cid]
+    answered: list[str] = []
+
+    def answer_first(self: PiProcess, command: dict[str, Any], request_id: str) -> None:
+        answered.append(str(command["message"]).split()[0])
+        host._on_pi_event(cid, self.key, {"type": "response", "id": request_id, "success": True, "command": "prompt"})
+
+    monkeypatch.setattr(PiProcess, "_write", answer_first)
+
+    second = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    lesson_proposals.reject(world.data, cid, second.proposal.id, now=NOW)
+    host._deliver_lessons(cid)
+    host._deliver_card(cid, "/ef-card card-x 1 submit 1")
+    job_id = world.job(cid)
+    world.finish(job_id)
+    with host._conversation_lock(cid):
+        host._notify(cid, live, job_id)
+
+    assert answered == ["/ef-lesson", "/ef-card", "/ef-job-done"]
+    assert live.pending == 0
+    assert live.lesson_notice_ids == {} and live.card_notice_ids == set() and live.notice_ids == {}
+
+
+def test_重試用完放棄的通知_同一個_Pi_不會被下一個決定帶出去_下次開_Pi_才重來(world: World) -> None:
+    _lesson_persona(world)
+    cid = world.conversation()
+    first = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    # 第一筆：送出去加三次重試都丟錯（共 4 次），然後放棄；第二筆之後的指令都成功
+    host = world.host(world.harness(fail_lesson=4), notice_retry_s=0.05)
+    host.reject_lesson(cid, first.proposal.id)
+    first_command = f"/ef-lesson {first.proposal.id} rejected nightowl"
+    wait_until(lambda: _lesson_commands(world, cid).count(first_command) == 4, what="重試用完")
+    live = host._live[cid]
+    wait_until(lambda: f"{first.proposal.id} rejected" in live.lessons_given_up, what="放棄")
+
+    second = lesson_proposals.propose(world.data, cid, "nightowl", "第 4 篇｜標題太長 → 標題限 20 字", "太長", now=NOW)
+    host.reject_lesson(cid, second.proposal.id)
+
+    wait_until(lambda: _notified(world, cid, second.proposal.id), what="第二筆送到")
+    # 第二筆來的時候，放棄的第一筆沒有被一起帶出去
+    assert _lesson_commands(world, cid).count(first_command) == 4
+    assert not _notified(world, cid, first.proposal.id)
+    # 下次開 Pi（新的一次開）才重來：第一筆補送、送到（假 Pi 的丟錯次數是每個程序各算，新的 Pi 改成不丟錯）
+    world.harness()
+    host.stop_conversation(cid, "shutdown")
+    host.send(cid, "嗨")
+    wait_until(lambda: _notified(world, cid, first.proposal.id), what="新的 Pi 補送")
+    assert conversations.read(world.data, cid).launches == 2
