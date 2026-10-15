@@ -193,7 +193,7 @@ class ConversationHost:
         clock: Callable[[], datetime],
         board: JobBoard | None = None,
         idle_s: float = DEFAULT_IDLE_S,
-        tier: str = "strong",
+        tier: str = "fast",
         base_env: Mapping[str, str] | None = None,
         request_timeout_s: float = 30.0,
         notice_retry_s: float = 5.0,

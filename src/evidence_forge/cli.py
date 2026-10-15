@@ -335,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         help="對話的 Pi 閒置幾分鐘就關掉（預設 10）；再有訊息時接回同一份紀錄",
     )
     serve.add_argument(
-        "--chat-tier", default="strong", help="對話本身用哪一級模型（預設 strong）"
+        "--chat-tier", default="fast", help="對話本身用哪一級模型（預設 fast）"
     )
     serve.set_defaults(handler=_serve)
 

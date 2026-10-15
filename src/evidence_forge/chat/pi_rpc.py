@@ -67,7 +67,7 @@ def build_rpc_command(
     key: ConversationKey,
     gateway_url: str,
     base_env: Mapping[str, str],
-    tier: str = "strong",
+    tier: str = "fast",
     thinking: str = "low",
 ) -> RpcCommand:
     """組出對話的 Pi 指令列與環境變數。純函式，不碰檔案。"""
