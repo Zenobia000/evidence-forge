@@ -34,6 +34,16 @@ export function costBody(values) {
   return { body };
 }
 
+// 存成功之後怎麼辦：平常整頁重讀（上面的數字跟著新設定重算）；改動紀錄沒寫成時設定其實已經生效，
+// 留在這頁把話說清楚，不重讀（重讀就看不到這句了）
+export function saveOutcome(reply) {
+  if (reply?.log_failed) {
+    const reason = reply.log_error ? `（${reply.log_error}）` : "";
+    return { reload: false, message: `設定已經生效，但改動紀錄沒寫進去${reason}。重新整理頁面就會看到新的數字。` };
+  }
+  return { reload: true, message: "" };
+}
+
 if (typeof document !== "undefined") {
   const form = document.getElementById("cost-settings");
   const result = form?.querySelector("[data-result]");
@@ -56,8 +66,12 @@ if (typeof document !== "undefined") {
         result.textContent = reply.error ?? `沒存成（${response.status}）`;
         return;
       }
-      // 上面的數字（剩多少、讀不懂的警告）跟著新設定重算：整頁重讀
-      window.location.reload();
+      const outcome = saveOutcome(reply);
+      if (outcome.reload) {
+        window.location.reload();
+      } else {
+        result.textContent = outcome.message;
+      }
     } catch (problem) {
       result.textContent = `沒存成：${problem}`;
     }

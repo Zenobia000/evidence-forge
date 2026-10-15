@@ -236,3 +236,85 @@ def test_換檔失敗就不記改動(data: DataDir, monkeypatch: pytest.MonkeyPa
         cost_settings.save(data, CostSettings(monthly_cap_usd=3.0), now=NOW)
     assert not (data.root / "settings" / "changes.jsonl").exists()
     assert cost_settings.load(data).settings == CostSettings()
+
+
+# --- codex 第 2 輪：改動紀錄的每一行先驗形狀、沿用最近一筆合法的值、紀錄寫不進去不算存檔失敗 --------------
+
+
+def _log_lines(data: DataDir, rows: list[object]) -> None:
+    path = data.root / "settings" / "changes.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_改動紀錄有形狀不對的行_跳過_不讓閘道讀設定時當掉(data: DataDir) -> None:
+    _log_lines(
+        data,
+        [
+            {"field": "monthly_cap_usd", "new": 7.0},
+            {"field": ["monthly_cap_usd"], "new": 1.0},
+            {"field": {"a": 1}, "new": 1.0},
+            {"field": 3, "new": 1.0},
+            {"field": None, "new": 1.0},
+            ["monthly_cap_usd", 1.0],
+            "monthly_cap_usd",
+            42,
+        ],
+    )
+    _write(data, "{壞掉")
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.settings == CostSettings(monthly_cap_usd=7.0)
+    assert loaded.problem is not None
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_最後一筆不合法就往前找最近一筆合法的(data: DataDir) -> None:
+    _log_lines(
+        data,
+        [
+            {"field": "monthly_cap_usd", "old": None, "new": 10.0},
+            {"field": "monthly_cap_usd", "old": 10.0, "new": 12.0},
+            {"field": "monthly_cap_usd", "old": 12.0, "new": -5},
+            {"field": "monthly_cap_usd", "old": -5, "new": "很多"},
+            {"field": "analysis_budget_usd", "old": 0.5, "new": 0.7},
+            {"field": "analysis_budget_usd", "old": 0.7, "new": 0},
+        ],
+    )
+    _write(data, "{壞掉")
+
+    assert cost_settings.load(data).settings == CostSettings(monthly_cap_usd=12.0, analysis_budget_usd=0.7)
+
+
+def test_最後一筆合法的是不設_就是不設(data: DataDir) -> None:
+    _log_lines(
+        data,
+        [
+            {"field": "monthly_cap_usd", "old": None, "new": 10.0},
+            {"field": "monthly_cap_usd", "old": 10.0, "new": None},
+        ],
+    )
+    _write(data, "{壞掉")
+
+    assert cost_settings.load(data).settings.monthly_cap_usd is None
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_換好檔但改動紀錄寫不進去_設定照樣生效_回報紀錄沒寫成(data: DataDir) -> None:
+    # 紀錄的位置被一個資料夾佔住：附加寫入一定失敗
+    (data.root / "settings" / "changes.jsonl").mkdir(parents=True)
+
+    saved = cost_settings.save(data, CostSettings(monthly_cap_usd=4.0), now=NOW)
+
+    assert cost_settings.load(data).settings == CostSettings(monthly_cap_usd=4.0)
+    assert [(c["field"], c["new"]) for c in saved.changes] == [("monthly_cap_usd", 4.0)]
+    assert saved.log_error is not None
+
+
+def test_改動紀錄寫得進去時_沒有錯誤(data: DataDir) -> None:
+    saved = cost_settings.save(data, CostSettings(monthly_cap_usd=4.0), now=NOW)
+
+    assert saved.log_error is None
+    assert len(_changes(data)) == 1

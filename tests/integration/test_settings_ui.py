@@ -277,3 +277,26 @@ def test_設定頁的欄位名跟設定檔的欄位一一對得上() -> None:
 
     # 設定檔多一個欄位卻忘了在這裡給名字，存設定就會把它當成「不認得的欄位」拒絕
     assert set(FIELD_LABELS) == set(CostSettings.model_fields)
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_存設定時改動紀錄寫不進去_設定照樣生效_回成功並說紀錄沒寫成(world: tuple[str, ChatFolder]) -> None:
+    url, folder = world
+    # 紀錄的位置被一個資料夾佔住：附加寫入一定失敗
+    (folder.data.root / "settings" / "changes.jsonl").mkdir(parents=True)
+
+    saved = httpx.post(f"{url}/api/settings/costs", json={"monthly_cap_usd": 6.0})
+
+    assert saved.status_code == 200
+    reply = saved.json()
+    assert reply["settings"]["monthly_cap_usd"] == 6.0
+    assert reply["log_failed"] is True and reply["log_error"]
+    assert cost_settings.load(folder.data).settings.monthly_cap_usd == 6.0
+
+
+def test_存設定成功時_log_failed_是_false(world: tuple[str, ChatFolder]) -> None:
+    url, _ = world
+
+    reply = httpx.post(f"{url}/api/settings/costs", json={"monthly_cap_usd": 6.0}).json()
+
+    assert reply["log_failed"] is False and reply["log_error"] is None

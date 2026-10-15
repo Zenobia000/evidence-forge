@@ -1,6 +1,7 @@
 """UI 的靜態檔與模板守則：沒有建置、只用 token、字型自己放、不載外部資源（ADR-0007、ADR-0017 §3.3）。"""
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -33,14 +34,31 @@ def test_no_hard_coded_colors(path: Path) -> None:
     assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", text)
 
 
-def _outside_loads(text: str) -> list[str]:
-    """會讓瀏覽器自己去外面載東西的寫法：任何標籤的 `src=`、`<link href=>`（樣式、字型、預載）。
+class _LoadFinder(HTMLParser):
+    """收集會讓瀏覽器自己去外面載東西的屬性：任何標籤的 `src`、`<link>` 的 `href`（樣式、字型、預載）。
 
-    `<a href>` 是給人點的連結，不是載入，照樣准（費用設定頁連到雲端平台的後台，票 115）。
+    用 HTML 解析器而不是正規表示式：只認真的屬性（單雙引號都算），`data-src` 這種別的屬性、
+    屬性值裡或標籤外的文字都不算。`<a href>` 是給人點的連結，不是載入，照樣准（費用設定頁連到雲端平台的後台，票 115）。
     """
-    loaded = re.findall(r'\bsrc="https?://[^"]*"', text)
-    linked = re.findall(r'<link\b[^>]*\bhref="https?://[^"]*"', text)
-    return loaded + linked
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            loads = name == "src" or (tag == "link" and name == "href")
+            if loads and value is not None and re.match(r"\s*https?://", value, re.IGNORECASE):
+                self.found.append(f"<{tag} {name}={value}>")
+
+    handle_startendtag = handle_starttag
+
+
+def _outside_loads(text: str) -> list[str]:
+    finder = _LoadFinder()
+    finder.feed(text)
+    finder.close()
+    return finder.found
 
 
 def test_outside_loads_catches_loaded_resources_but_not_links() -> None:
@@ -51,6 +69,15 @@ def test_outside_loads_catches_loaded_resources_but_not_links() -> None:
     assert _outside_loads('<iframe src="https://evil.example/"></iframe>')
     assert not _outside_loads('<a href="https://console.anthropic.com/settings/limits">Anthropic</a>')
     assert not _outside_loads('<link rel="stylesheet" href="/static/css/s0.css">')
+    # 單引號一樣是載入
+    assert _outside_loads("<script src='https://cdn.example/x.js'></script>")
+    assert _outside_loads("<link rel='stylesheet' href='https://fonts.example/a.css'>")
+    # 屬性名只認整個字：data-src 不是瀏覽器會去載的屬性
+    assert not _outside_loads('<img alt="" data-src="https://cdn.example/a.png" src="/static/a.png">')
+    assert not _outside_loads('<link rel="stylesheet" data-href="https://x.example/a.css" href="/static/a.css">')
+    # 不是真的屬性：屬性值裡、或標籤外的文字出現 src="https://… 不算
+    assert not _outside_loads('<a title="src=\'https://x.example\'" href="/settings">x</a>')
+    assert not _outside_loads('範例寫法 src="https://cdn.example/x.js" 不要這樣寫')
 
 
 @pytest.mark.parametrize("path", [*TEMPLATES, *SCRIPTS], ids=lambda p: p.name)

@@ -105,10 +105,13 @@ def _reason(exc: ValueError | RecursionError) -> str:
 
 
 def _last_saved(data: DataDir) -> dict[str, Any]:
-    """`changes.jsonl` 裡每個欄位最後一次存的值（`new`），只留各自讀得懂、合法的。讀不到紀錄就是空的。
+    """`changes.jsonl` 裡每個欄位最近一筆合法的值（`new`）。讀不到紀錄就是空的。
 
     設定檔只經 `update` 寫，每次寫都把跟原本不同的欄位記進來，所以這就是壞掉之前最後一份好的設定
     （有人手改過設定檔又沒留紀錄的話例外，那時就以紀錄為準）。
+
+    閘道每次預留都可能走到這裡，所以每一行都先驗形狀：不是物件、`field` 不是認得的欄位名（陣列、
+    物件、數字都算）、沒有 `new`、或 `new` 不合法的行一律跳過——不合法的那筆不蓋掉前面合法的。
     """
     try:
         lines = changes_file(data).read_text(encoding="utf-8").splitlines()
@@ -120,16 +123,17 @@ def _last_saved(data: DataDir) -> dict[str, Any]:
             row = json.loads(line)
         except (ValueError, RecursionError):
             continue  # 寫到一半的半行
-        if isinstance(row, dict) and row.get("field") in CostSettings.model_fields and "new" in row:
-            found[row["field"]] = row["new"]
-    valid: dict[str, Any] = {}
-    for name, value in found.items():
+        if not isinstance(row, dict) or "new" not in row:
+            continue
+        name = row.get("field")
+        if not isinstance(name, str) or name not in CostSettings.model_fields:
+            continue
         try:
-            CostSettings.model_validate({name: value})
+            CostSettings.model_validate({name: row["new"]})
         except ValidationError:
             continue
-        valid[name] = value
-    return valid
+        found[name] = row["new"]
+    return found
 
 
 def env_monthly_cap(environ: Mapping[str, str]) -> float | None:
@@ -172,19 +176,28 @@ def effective(data: DataDir, environ: Mapping[str, str]) -> Effective:
     return Effective(load(data), env_cap)
 
 
-def save(data: DataDir, new: CostSettings, *, now: datetime) -> list[dict[str, Any]]:
+@dataclass(frozen=True)
+class Saved:
+    # 改到的欄位（每個一筆：時間、欄位、舊值、新值）
+    changes: list[dict[str, Any]]
+    # 設定已經生效、改動紀錄卻沒寫進去時的原因；寫進去了（或沒有改動）是 None
+    log_error: str | None = None
+
+
+def save(data: DataDir, new: CostSettings, *, now: datetime) -> Saved:
     """整份換成 `new`；見 `update`。"""
     return update(data, lambda _: new, now=now)
 
 
 def update(
     data: DataDir, change: Callable[[CostSettings], CostSettings], *, now: datetime
-) -> list[dict[str, Any]]:
+) -> Saved:
     """讀出現在的設定、交給 `change` 改、寫回去，三步在同一把鎖裡（同時改不同欄位不會互相蓋掉）。
-    跟寫之前實際在用的值（檔案讀不懂時就是 `load` 沿用的那一份）不同的欄位，在 `changes.jsonl` 各記一筆；
-    回傳記下的那幾筆。`change` 丟的例外原樣丟出，什麼都不寫。
+    跟寫之前實際在用的值（檔案讀不懂時就是 `load` 沿用的那一份）不同的欄位，在 `changes.jsonl` 各記一筆。
+    `change` 丟的例外原樣丟出，什麼都不寫；換檔失敗的例外也原樣丟出。
 
-    先換檔再記改動：換檔失敗就什麼都沒記（紀錄裡不會有沒生效的改動）。換好檔、還沒記到紀錄就當掉的話，
+    先換檔再記改動：換檔失敗就什麼都沒記（紀錄裡不會有沒生效的改動）。換好檔之後紀錄寫不進去，
+    設定已經生效，不算存檔失敗：原因放在 `Saved.log_error` 交給畫面說。換好檔、還沒記到紀錄就當掉的話，
     設定已經生效、紀錄少這一筆——接受：比紀錄說改了、其實沒改好查。
     """
     with _write_lock:
@@ -205,10 +218,16 @@ def update(
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
-        if changes:
+        if not changes:
+            return Saved(changes)
+        try:
             with changes_file(data).open("a", encoding="utf-8") as log:
                 log.write("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in changes))
-        return changes
+        except OSError as exc:
+            reason = f"{changes_file(data).name} 寫不進去：{exc.strerror or exc}"
+            _log.warning("費用設定已經生效，但%s", reason)
+            return Saved(changes, reason)
+        return Saved(changes)
 
 
 def _broken(data: DataDir, reason: str) -> Loaded:

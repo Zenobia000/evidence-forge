@@ -5,7 +5,7 @@
 | `GET /`、`GET /c/<對話 id>` | 聊天室外框：三欄。內容由 `static/js/app.js` 依下面的片段與 API 填 |
 | `GET /bills?month=2026-10` | 帳單：伺服器整頁產生，沒有前端狀態；頂部寫每月上限（未設，或還剩多少） |
 | `GET /settings` | 費用設定（#115）：這個月花了多少、各供應商後台的連結、每月上限與預設預算的表單 |
-| `POST /api/settings/costs` | 存費用設定：`{"monthly_cap_usd": 數字或 null, "analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd"}`，只給要改的也行 → `{"settings", "changes"}`；不合法 400 |
+| `POST /api/settings/costs` | 存費用設定：`{"monthly_cap_usd": 數字或 null, "analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd"}`，只給要改的也行 → `{"settings", "changes", "log_failed", "log_error"}`（設定生效了、改動紀錄沒寫成時 `log_failed` 是 true）；不合法 400 |
 | `GET /ui/list?current=<id>` | 對話清單（HTML 片段） |
 | `GET /ui/c/<id>/thread` | 對話串流（HTML 片段）：Pi 的完整紀錄加工單；Pi 接不回來回 503 的錯誤片段 |
 | `GET /ui/c/<id>/panel?tab=report｜article｜cost&v=<工單 id>&diff=1` | 右側面板（HTML 片段） |
@@ -402,13 +402,21 @@ def install(
             return JSONResponse({"error": "請求內容要是 JSON"}, status_code=400)
         try:
             # 讀、合併、寫在同一把鎖裡：只給部分欄位的兩個請求同時到，也不會互相蓋掉
-            changes = await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 cost_settings.update, data, lambda current: costs.parse_update(body, current), now=clock()
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         saved = await asyncio.to_thread(cost_settings.load, data)
-        return JSONResponse({"settings": saved.settings.model_dump(), "changes": changes})
+        # 改動紀錄寫不進去時設定已經生效：照樣回成功，另外說紀錄沒寫成，畫面照實告訴創作者
+        return JSONResponse(
+            {
+                "settings": saved.settings.model_dump(),
+                "changes": result.changes,
+                "log_failed": result.log_error is not None,
+                "log_error": result.log_error,
+            }
+        )
 
     @app.post("/api/extract")
     async def extract(request: Request) -> Response:
