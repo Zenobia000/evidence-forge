@@ -5,6 +5,7 @@
 """
 
 import io
+import os
 import subprocess
 import sys
 import zipfile
@@ -154,6 +155,55 @@ def test_範本預設值與公開預設色票不算私人內容(tmp_path: Path) 
 
     assert hits_in_text(template, fingerprints) == hits_in_text(template, Fingerprints.fixed())
     assert hits_in_text(default_brand, fingerprints) == hits_in_text(default_brand, Fingerprints.fixed())
+
+
+def test_公開品牌名只算頂層的name_巢狀的name不算(tmp_path: Path) -> None:
+    folder = tmp_path / "ef" / "authors" / "plain"
+    folder.mkdir(parents=True)
+    (folder / "brand.yaml").write_text(
+        "name: Marbled Fox Atelier\nfonts:\n  - name: Hollowbrook Serif\ncover:\n  name: Glimmerfen Press\n",
+        encoding="utf-8",
+    )
+    fingerprints = load_fingerprints({"EF_DATA": str(tmp_path / "ef")})
+    in_docs = {("", "docs/x.md"): {1}}
+
+    for text, exempt in (("Marbled Fox Atelier", True), ("Hollowbrook Serif", False), ("Glimmerfen Press", False)):
+        diff = _added("docs/x.md", text)
+        assert (scan_diff(diff, fingerprints) == {}) is exempt, text
+        assert scan_diff(_added("src/x.py", text), fingerprints), text  # 程式裡一律擋
+    assert in_docs
+
+
+@pytest.mark.parametrize("kind", ["permission", "not-utf8", "too-large", "directory"])
+def test_角色來源檔存在卻讀不了_是掃不了_不是略過(tmp_path: Path, kind: str) -> None:
+    data = tmp_path / "ef"
+    persona = _persona(data)
+    target = persona / "voice.md"
+    if kind == "permission":
+        if os.geteuid() == 0:
+            pytest.skip("root 讀得到 chmod 000 的檔")
+        target.chmod(0)
+    elif kind == "not-utf8":
+        target.write_bytes(b"---\nname: \xff\xfe\n---\n")
+    elif kind == "too-large":
+        target.write_text("x" * 1_100_000, encoding="utf-8")
+    else:
+        target.unlink()
+        target.mkdir()
+
+    try:
+        with pytest.raises(GuardError):
+            load_fingerprints({"EF_DATA": str(data)})
+    finally:
+        if kind == "permission":
+            target.chmod(0o644)
+
+
+def test_角色來源檔沒有就是沒有_不算錯(tmp_path: Path) -> None:
+    folder = tmp_path / "ef" / "authors" / "bare"
+    folder.mkdir(parents=True)  # 沒有 voice.md、brand.yaml、persona.json
+
+    assert load_fingerprints({"EF_DATA": str(tmp_path / "ef")}).source_files == 0
 
 
 def test_隱藏資料夾不當角色(data: Path) -> None:

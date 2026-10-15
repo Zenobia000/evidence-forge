@@ -537,7 +537,7 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   tb 0 "git commit -m x" "私人內容：repo 啟用了 .githooks，commit 放行"
   tb 0 "git push origin HEAD" "私人內容：啟用了，push 放行"
   tb 0 "git status" "私人內容：不是 commit／push 的指令不碰"
-  tb 0 "git config --get core.hooksPath" "私人內容：只讀 core.hooksPath 放行"
+  tb 2 "git config --get core.hooksPath" "私人內容：指令裡有 hooksPath：關鍵字擋，連只讀也擋" "hooksPath"
   tb 0 "git -C $repo commit -m x" "私人內容：-C 指到啟用的 repo，放行" "" "$plain"
   tb 0 "cd $repo && git commit -m x" "私人內容：cd 到啟用的 repo，放行" "" "$plain"
 
@@ -571,6 +571,19 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   tb 2 "git push --no-verify origin HEAD" "私人內容：push --no-verify 擋" "pre-push"
   tb 2 "git -C $repo commit -n -m x" "私人內容：git -C … commit -n 擋（舊規則的樣式看不到 -C）" "--no-verify"
   tb 2 "git commit -anm x" "私人內容：-anm（n 在短旗標裡）擋" "--no-verify"
+
+  # 守衛 3b：追 shell 寫法追不完，所以按關鍵字與「沒完整解析的包裝指令」擋
+  tb 2 "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null; git commit -m x" "私人內容：export GIT_CONFIG_*; git commit 擋（關鍵字）" "GIT_CONFIG_"
+  tb 2 "git push origin HEAD --no-verify" "私人內容：push 後面的 --no-verify 擋（舊規則只管 commit）" "--no-verify"
+  tb 2 "xargs git push" "私人內容：xargs git push 擋（即使目標有啟用）" "沒完整解析"
+  tb 2 "sudo git commit -m x" "私人內容：sudo git commit 擋" "沒完整解析"
+  tb 2 "nohup git push origin HEAD" "私人內容：nohup git push 擋" "沒完整解析"
+  tb 2 "env -i git commit -m x" "私人內容：env 帶了沒解析的選項，擋" "env"
+  tb 2 "(git commit -m x)" "私人內容：子 shell 括號裡的 commit 擋" "子 shell"
+  tb 0 "xargs git status" "私人內容：包裝指令後面接的不可能是 commit／push：不擋"
+  tb 2 "env -C $plain git commit -m x" "私人內容：env -C 指到沒啟用的 repo，擋（有解析，按目標判）" "core.hooksPath"
+  tb 0 "env -C $repo git commit -m x" "私人內容：env -C 指到啟用的 repo，放行" "" "$plain"
+  tb 0 "env FOO=1 git -C $repo commit -m x" "私人內容：env VAR=val 解析得清楚，放行" "" "$plain"
 
   # 守衛 4：算不出目標 → 擋
   tb 2 'cd $SOMEWHERE && git commit -m x' "私人內容：cd 到變數：算不出來，擋" "算不出"

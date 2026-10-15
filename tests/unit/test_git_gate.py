@@ -120,6 +120,7 @@ def test_目標_全域旗標與環境變數與包裝指令不擋住辨識(tmp_pa
     (inv,) = parse_command("FOO=1 time git --no-pager -c user.name=x -p commit -m x", tmp_path)
 
     assert (inv.name, inv.dir) == ("git commit", tmp_path)
+    assert "time" in inv.ambiguous
     assert inv.c_values == ["user.name=x"]
     assert inv.env == ["FOO=1"]
     assert [i.name for i in parse_command("/usr/bin/git push", tmp_path)] == ["git push"]
@@ -216,12 +217,45 @@ def test_把hook關掉的寫法都擋(hooked: Path) -> None:
         "git commit --no-verify -m x",
         "git commit -n -m x",
         "git -C . commit -anm x",
+        "git config --get core.hooksPath",  # 只讀也擋：關鍵字，不去分寫法
+        "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null; git commit",
+        "export GIT_CONFIG_COUNT=1; git commit -m x",
+        "gh pr create --title 'mention --no-verify here'",
     ]
     for cmd in blocked:
         assert _check(cmd, hooked), cmd
     # 只讀、與跟 hook 無關的類似寫法放行
-    for cmd in ("git config --get core.hooksPath", "git config --list", "git -c user.name=x commit -m x", "git commit -m 'note -n'"):
+    for cmd in ("git config --list", "git -c user.name=x commit -m x", "git commit -m 'note -n'"):
         assert _check(cmd, hooked) == [], cmd
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    ["xargs", "sudo", "nohup", "command", "exec", "time", "nice -n 5", "timeout 5", "stdbuf -oL", "env -i", "env -u FOO"],
+)
+def test_沒完整解析的包裝指令後面接commit或push就擋_即使目標有啟用(hooked: Path, launcher: str) -> None:
+    for tail in ("git commit -m x", "git push origin HEAD", "gh pr create --title t"):
+        problems = _check(f"{launcher} {tail}", hooked)
+        assert any("沒完整解析" in p or "沒解析" in p for p in problems), (launcher, tail, problems)
+    # 不可能是 commit／push 的不擋
+    assert _check(f"{launcher} git status", hooked) == []
+
+
+def test_子shell括號裡的commit擋_但括號裡的唯讀指令不擋(hooked: Path) -> None:
+    assert any("子 shell" in p for p in _check("(git commit -m x)", hooked))
+    assert any("子 shell" in p for p in _check("true && (cd . && git push)", hooked))
+    assert _check("(git status)", hooked) == []
+
+
+def test_env_VAR等於值與_C_有解析_照目標repo判(hooked: Path, plain: Path) -> None:
+    # 常見寫法：解析得清楚，目標有啟用就放行、沒啟用就擋
+    assert _check(f"env FOO=1 git -C {hooked} commit -m x", plain) == []
+    assert _check(f"env -C {hooked} git commit -m x", plain) == []
+    assert _check(f"env --chdir={hooked} FOO=1 git push", plain) == []
+    assert any("core.hooksPath" in p for p in _check(f"env -C {plain} git commit -m x", hooked))
+    assert any("core.hooksPath" in p for p in _check(f"env --chdir {plain} git push", hooked))
+    # env 的其他選項解析不了：擋
+    assert any("env" in p for p in _check(f"env -i git -C {hooked} commit -m x", plain))
 
 
 def test_算不出目標或資料夾不存在或不是repo都擋(hooked: Path, tmp_path: Path) -> None:

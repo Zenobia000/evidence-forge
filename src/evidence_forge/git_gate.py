@@ -4,8 +4,8 @@
 `git config core.hooksPath .githooks` 啟用）。Claude 守衛的工作變成兩件事：
 1. 目標 repo 沒有啟用這些 hook（`core.hooksPath` 不是 `.githooks`、或 hook 檔缺了）就擋下
    `git commit`／`git push`／`gh pr create`／`gh pr merge`——沒有 hook 的 repo，守衛一個一個指令掃也掃不乾淨。
-2. 不准用指令把 hook 關掉：`-c core.hooksPath=…`、`GIT_CONFIG_*` 環境變數、改 `core.hooksPath` 的 `git config`、
-   `git push --no-verify`、`git commit --no-verify`／`-n`（任何位置）。
+2. 不准用指令把 hook 關掉：`-c core.hooksPath=…`、`GIT_CONFIG_*` 環境變數、碰 `core.hooksPath` 的 `git config`、
+   `--no-verify`、`git commit -n`（任何位置）。
 另外掃指令裡的文字（commit message、PR 標題與內文）與 `-F`／`--body-file` 指到的檔。
 
 「目標 repo」不等於守衛的工作目錄：`git -C <dir> commit`、`cd <dir> && git commit`、
@@ -13,7 +13,11 @@
 這裡把指令切成片段、一路追 `cd`／`-C`，目標資料夾（起點是 hook 輸入的 `.cwd`）算不出來就**擋下**
 （`$VAR`、`cd -` 這類算不出來的寫法也一樣）：看不清楚的 commit，不放行。
 
-不處理的（寫出來，免得以為它保證了全部）：`xargs git …`、函式與 alias 在 shell 裡才定義的別名（git 設定裡的
+**追 shell 的寫法追不完，所以另外按關鍵字擋**：指令裡有 `GIT_CONFIG_`、`hooksPath`、`--no-verify` 就擋；
+git／gh 前面接著沒完整解析的包裝指令（`xargs`、`sudo`、`nohup`、`command`、`exec`、`time`、`nice`、帶選項的 `env`、子 shell 括號）
+而且可能是 commit／push，也擋。`env VAR=val`、`env -C dir` 這個常見寫法有解析，照目標 repo 判。
+
+不處理的（寫出來，免得以為它保證了全部）：函式與 alias 在 shell 裡才定義的別名（git 設定裡的
 alias 會查）、腳本檔裡面的 git 指令。這些情況由 git 原生 hook 在 commit／push 當下接住——那也是它是主關卡的原因。
 """
 
@@ -25,7 +29,19 @@ from pathlib import Path
 from evidence_forge.brand_guard import Fingerprints, GuardError, _git, _read_small, scan_text
 
 _SEP_CHARS = frozenset("&|;\n()`")
-_WRAPPERS = frozenset({"command", "builtin", "exec", "time", "nice", "nohup", "env", "sudo", "doas"})
+# 「包裝指令」：它們後面接的指令會在別的條件下跑（換使用者、換資料夾、批次餵參數…），這裡沒有完整解析。
+# 後面接著可能是 commit／push 的 git／gh 時，一律擋——看不清楚的 commit，不放行。（`env` 的常見寫法另外解析。）
+_LAUNCHERS = frozenset(
+    {
+        "command", "builtin", "exec", "time", "nice", "nohup", "sudo", "doas", "xargs", "stdbuf", "timeout",
+        "setsid", "ionice", "watch", "parallel", "chroot", "strace", "unbuffer",
+    }
+)
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 整條指令只要出現這些字（而且那是一條 git／gh 指令）就擋，不去管它是怎麼拼出來的：
+# 追 shell 的寫法追不完，關鍵字是追得完的那一邊。
+_BYPASS_KEYWORDS = re.compile(r"GIT_CONFIG_|hookspath|--no-verify", re.IGNORECASE)
+_GIT_OR_GH_WORD = re.compile(r"(^|[^\w.-])(git|gh)(\s|$)")
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 _HOOKS = ("pre-commit", "commit-msg", "pre-push")
 _MAX_DEPTH = 4
@@ -40,6 +56,7 @@ _KNOWN_SUBS = frozenset(
 )  # fmt: skip
 _VALUE_OPTS = ("-m", "-F", "-C", "-c", "-t", "--message", "--file", "--reuse-message", "--reedit-message", "--template", "--author", "--date")
 MASK_FILE = "檔名已遮蔽"
+_SAFE_SUBS = _KNOWN_SUBS - {"commit", "push", "config"}
 _SENSITIVE = frozenset({"git commit", "git push", "gh pr create", "gh pr merge"})
 
 FIX_HINT = (
@@ -57,6 +74,7 @@ class Invocation:
     git_opts: list[str] = field(default_factory=list)  # 原樣帶給後面查設定用的 --git-dir／--work-tree
     c_values: list[str] = field(default_factory=list)  # `-c k=v` 的 k=v
     env: list[str] = field(default_factory=list)  # 指令前面的 VAR=value
+    ambiguous: str = ""  # 非空＝它前面有沒完整解析的東西（子 shell、包裝指令…），說明是哪一種
 
     @property
     def name(self) -> str:
@@ -230,44 +248,74 @@ def parse_command(cmd: str, base: Path | None, depth: int = 0) -> list[Invocatio
     stack: list[Path | None] = []
     words: list[str] = []
 
-    def segment() -> None:
-        nonlocal cur, words
-        seg, words = words, []
+    def launched(rest: list[str], d: Path | None, why: str, env: list[str]) -> None:
+        """包裝指令後面第一個 git／gh：照它自己解析，但標成「前面有沒解析完的東西」。"""
+        for k, word in enumerate(rest):
+            if os.path.basename(word) in ("git", "gh"):
+                command([*env, *rest[k:]], d, why)
+                return
+
+    def command(seg: list[str], d: Path | None, ambiguous: str) -> Path | None:
+        """處理一個指令片段，回傳之後的目前資料夾（只有 cd 會改它）。"""
+        seg = list(seg)
         env: list[str] = []
-        while seg and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[0]):
+        while seg and _ASSIGN.match(seg[0]):
             env.append(seg.pop(0))
-        while seg and os.path.basename(seg[0]) in _WRAPPERS:
-            seg.pop(0)
-            while seg and (seg[0].startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[0])):
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[0]):
-                    env.append(seg[0])
-                seg.pop(0)
         if not seg:
-            return
+            return d
         head = os.path.basename(seg[0])
         if head in ("cd", "pushd"):
             args = [a for a in seg[1:] if a not in ("--", "-L", "-P", "-e", "-@")]
             if not args:
-                cur = Path.home()
-            elif args[0] == "-" or len(args) > 1:
-                cur = None
-            else:
-                cur = _join(cur, args[0])
-        elif head == "popd":
-            cur = None
-        elif head in _SHELLS:
+                return Path.home()
+            return None if args[0] == "-" or len(args) > 1 else _join(d, args[0])
+        if head == "popd":
+            return None
+        if head in _SHELLS:
             for k, a in enumerate(seg[1:], 1):
                 if a.startswith("-") and not a.startswith("--") and "c" in a and k + 1 < len(seg):
-                    invocations.extend(parse_command(seg[k + 1], cur, depth + 1))
+                    invocations.extend(parse_command(seg[k + 1], d, depth + 1))
                     break
         elif head == "eval":
-            invocations.extend(parse_command(" ".join(seg[1:]), cur, depth + 1))
+            invocations.extend(parse_command(" ".join(seg[1:]), d, depth + 1))
+        elif head == "env":
+            # 常見寫法：env [VAR=val]... [-C dir | --chdir dir] 指令。其他選項（-i、-u、-S…）一律當成沒解析完。
+            rest, edir, i = seg[1:], d, 0
+            while i < len(rest):
+                a = rest[i]
+                if _ASSIGN.match(a):
+                    env.append(a)
+                    i += 1
+                elif a in ("-C", "--chdir") and i + 1 < len(rest):
+                    edir = _join(edir, rest[i + 1])
+                    i += 2
+                elif a.startswith("--chdir="):
+                    edir = _join(edir, a.split("=", 1)[1])
+                    i += 1
+                elif a.startswith("-"):
+                    launched(rest[i:], edir, "env 帶了沒解析的選項", env)
+                    return d
+                else:
+                    break
+            command([*env, *rest[i:]], edir, ambiguous)
+        elif head in _LAUNCHERS:
+            launched(seg[1:], d, f"{head}（沒有完整解析的包裝指令）", env)
         elif head == "git":
-            invocations.append(_parse_git(seg[1:], cur, env))
+            inv: Invocation | None = _parse_git(seg[1:], d, env)
+            assert inv is not None
+            inv.ambiguous = ambiguous
+            invocations.append(inv)
         elif head == "gh":
-            found = _parse_gh(seg[1:], cur, env)
-            if found is not None:
-                invocations.append(found)
+            inv = _parse_gh(seg[1:], d, env)
+            if inv is not None:
+                inv.ambiguous = ambiguous
+                invocations.append(inv)
+        return d
+
+    def segment() -> None:
+        nonlocal cur, words
+        seg, words = words, []
+        cur = command(seg, cur, "子 shell（括號裡）" if stack else "")
 
     for kind, value in items:
         if kind == "w":
@@ -372,9 +420,16 @@ def guard_command(
     base = Path(cwd) if cwd else Path.cwd()
     problems: list[str] = []
     text_checked = False
+    if _GIT_OR_GH_WORD.search(cmd) and _BYPASS_KEYWORDS.search(cmd):
+        problems.append(
+            "git／gh 指令裡出現了 GIT_CONFIG_、hooksPath 或 --no-verify——這些是把 hook 關掉的字，"
+            "不管它是怎麼拼出來的一律不放行（要改 hook 設定是使用者的事；commit 說明請改寫成不含這幾個字）。"
+        )
     for inv in parse_command(cmd, base):
         if (issue := _config_problem(inv)) is not None:
             problems.append(f"{inv.name}：{issue}")
+        if inv.ambiguous and (inv.name in _SENSITIVE or (inv.tool == "git" and inv.sub not in _SAFE_SUBS)):
+            problems.append(f"{inv.name}：它前面有沒完整解析的寫法（{inv.ambiguous}），看不清楚目標 repo 與設定，不放行。")
         if inv.name not in _SENSITIVE:
             continue
         problems.extend(f"{inv.name}：{p}" for p in _bypass_problems(inv))

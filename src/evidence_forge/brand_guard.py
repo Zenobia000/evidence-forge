@@ -242,7 +242,7 @@ def _hex_fingerprints(text: str) -> Fingerprints:
 def brand_fingerprints(text: str) -> Fingerprints:
     """`brand.yaml` 的指紋：`name`、封面預設名稱、色碼、長句子的前八個詞。
 
-    `name`（品牌名）算「已經公開的品牌名」那一組（`public_*`）。
+    頂層的 `name`（品牌名）算「已經公開的品牌名」那一組（`public_*`）；巢狀的 `name` 不算。
     不靠 PyYAML：這支要能在沒有裝相依的 `python3` 底下跑（git 的 hook 不一定在 uv 環境裡）。
     寫法是逐行看縮排，形狀不對的行直接略過——漏掉一個欄位比整支壞掉好，而且色碼是整份文字用樣式找的。
     """
@@ -266,7 +266,7 @@ def brand_fingerprints(text: str) -> Fingerprints:
             stack.append((indent, key))
         elif key in _NAME_KEYS:
             found = term_fingerprints(value, split_words=True)
-            if key == "name":
+            if key == "name" and indent == 0:  # 只有頂層的 name 是品牌名；巢狀的 name（字型、預設…）不是
                 found.public_words |= found.words
                 found.public_cjk |= found.cjk
             _merge(out, found)
@@ -297,15 +297,15 @@ def persona_fingerprints(persona_dir: Path) -> tuple[Fingerprints, int]:
     out = Fingerprints()
     files = 0
     _merge(out, term_fingerprints(persona_dir.name, split_words=True))
-    voice = _read_small(persona_dir / "voice.md")
+    voice = _read_required(persona_dir / "voice.md")
     if voice is not None:
         files += 1
         _merge(out, _voice_fingerprints(voice))
-    brand = _read_small(persona_dir / "brand.yaml")
+    brand = _read_required(persona_dir / "brand.yaml")
     if brand is not None:
         files += 1
         _merge(out, brand_fingerprints(brand))
-    meta = _read_small(persona_dir / "persona.json")
+    meta = _read_required(persona_dir / "persona.json")
     if meta is not None:
         files += 1
         try:
@@ -362,6 +362,25 @@ def import_fingerprints(imports: Path) -> tuple[Fingerprints, int]:
         except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
             raise GuardError("imports 裡有讀不開的 zip") from exc
     return out, files
+
+
+def _read_required(path: Path) -> str | None:
+    """角色資料夾裡的來源檔：沒有這個檔回 None；**有卻讀不了（權限、不是 UTF-8、太大、不是檔案）就是掃不了**。
+
+    靜靜略過的話，這個角色的名字與色碼就不在指紋裡，保護少了一塊而沒人知道。
+    """
+    if not (path.exists() or path.is_symlink()):
+        return None
+    try:
+        if not path.is_file():
+            raise GuardError("角色資料夾裡有來源檔不是一般檔案")
+        if path.stat().st_size > _MAX_FILE_BYTES:
+            raise GuardError("角色資料夾裡有來源檔太大，讀不了")
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise GuardError("角色資料夾裡有來源檔不是 UTF-8，讀不了") from exc
+    except OSError as exc:
+        raise GuardError("角色資料夾裡有來源檔讀不到（權限？）") from exc
 
 
 def _read_small(path: Path) -> str | None:
