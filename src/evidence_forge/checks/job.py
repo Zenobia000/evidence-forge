@@ -19,10 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from evidence_forge.checks.analysis import brief_checks, report_checks
-from evidence_forge.checks.article import article_checks
+from evidence_forge.checks.article import article_checks, genre_skeleton
 from evidence_forge.checks.format import SchemaError
 from evidence_forge.checks.overlap import OverlapThresholds
 from evidence_forge.checks.report import CheckEntry, CheckId, Location
+
+# 重構工單裡的目標文類定義（執行器放的，`runner/stage_inputs.py` 的 TARGET_GENRE）
+TARGET_GENRE = "input/target-genre.md"
 
 
 class _Unreadable(Exception):
@@ -181,6 +184,9 @@ def run_article_checks(
     if isinstance(read, list):
         return read
     text, payload = read
+    # 目標文類的骨架（ADR-0024）：標題剛好等於骨架的某一項就擋；沒有目標文類就只擋通用的骨架字
+    genre = job_dir / TARGET_GENRE
+    skeleton = genre_skeleton(genre.read_text(encoding="utf-8")) if genre.is_file() else []
     return article_checks(
         article=text,
         article_file=article.as_posix(),
@@ -192,4 +198,5 @@ def run_article_checks(
         original_author=original_author,
         texts=texts,
         thresholds=thresholds,
+        skeleton=skeleton,
     )

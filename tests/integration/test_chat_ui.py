@@ -247,6 +247,7 @@ def test_報告分頁_五節_查證排序_每條附來源(world: tuple[str, Chat
     titles = re.findall(r'<span class="ch-sec__n">\d</span>([^<]+)', html)
     assert [title.strip() for title in titles] == ["作者在說什麼", "查證", "作者的看法", "可以寫的題材", "來源清單"]
     assert "▶ 下一步" in html
+    assert '<p class="ch-nextstep__lead">長上下文還撐不起' in html
     order = [html.index(label) for label in ("有爭議", "查不到", "有佐證")]
     assert order == sorted(order)
     # 報告裡沒有內部編號：來源用名字（ADR-0024）

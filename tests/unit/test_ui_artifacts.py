@@ -13,6 +13,7 @@ from chat_folder import (
     OLD_REPORT,
     RECIPES,
     REPORT,
+    SOURCES_JSON,
     ChatFolder,
 )
 
@@ -104,11 +105,15 @@ def test_過時排在查不到前面(folder: ChatFolder) -> None:
         ],
         "topics": [],
     }
+    # 報告的查證照 fact_checks 的順序寫（畫面照位置接來源），畫面再照有疑慮的排前面
+    verify = REPORT[REPORT.index("## 查證") : REPORT.index("## 作者的看法")]
+    report = REPORT.replace(verify, "## 查證\n- 【有佐證】甲：有。\n- 【查不到】乙：沒有。\n- 【過時】丙：變了。\n\n")
     cid = folder.conversation()
-    folder.analysis(cid, "a1", sources=sources)
+    folder.analysis(cid, "a1", sources=sources, report=report)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     assert [c.verdict for c in view.checks] == ["outdated", "unfound", "supported"]
+    assert [c.claim for c in view.checks] == ["丙", "乙", "甲"]
     assert view.doubtful == 1  # 過時也算有疑慮
 
 
@@ -128,6 +133,104 @@ def test_查證的事實與說明從報告那一條拆開_不重複標記(folder
     assert "有爭議" not in note and "【" not in note
 
 
+def test_報告的查證跟_fact_checks_對不上_照報告原文顯示_不接來源_數字照_sources_json(
+    folder: ChatFolder,
+) -> None:
+    # T3 第一輪：順序對不上時硬接，來源會掛到別條上；寧可只給原文
+    sources = {
+        **SOURCES_JSON,
+        "fact_checks": [
+            {"claim": "K3", "verdict": "supported", "sources": ["S4"]},
+            {"claim": "K1", "verdict": "disputed", "sources": ["S2", "S3"]},
+            {"claim": "K2", "verdict": "not_found", "sources": []},
+        ],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.checks == []
+    assert "價目表與廠商部落格的算法對不上" in str(view.verify_html)
+    assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
+
+
+def test_報告的查證少一條_一樣不接來源(folder: ChatFolder) -> None:
+    report = REPORT.replace("- 【查不到】八成團隊還在用檢索：搜了三次找不到這個數字的出處。\n", "")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.checks == []
+    assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
+
+
+def test_題材順序跟_sources_json_不一樣_一個來源都不接(folder: ChatFolder) -> None:
+    # codex 第二輪：對得上（同樣多、同標題、同順序）才照位置接；對不上就都不接
+    sources = {
+        **SOURCES_JSON,
+        "topics": [
+            {"title": "第一個字為什麼越來越慢", "sources": ["S4"]},
+            {"title": "長上下文的帳怎麼算", "sources": ["S2"]},
+        ],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [t.sources for t in view.topics] == [[], []]
+    assert [t.number for t in view.topics] == [1, 2]
+
+
+def test_題材有一個在_sources_json_找不到同名的_整組都不接來源(folder: ChatFolder) -> None:
+    sources = {
+        **SOURCES_JSON,
+        "topics": [{"title": "長上下文的帳怎麼算", "sources": ["S2"]}, {"title": "完全不同", "sources": ["S4"]}],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [(t.number, t.sources) for t in view.topics] == [(1, []), (2, [])]
+
+
+def test_兩個題材同名_照位置各接各的來源(folder: ChatFolder) -> None:
+    # codex 第二輪：用標題當 dict 的鍵，同名的兩個都拿到最後一個的來源
+    report = REPORT.replace("### 2. 第一個字為什麼越來越慢", "### 2. 長上下文的帳怎麼算")
+    sources = {
+        **SOURCES_JSON,
+        "topics": [
+            {"title": "長上下文的帳怎麼算", "sources": ["S2"]},
+            {"title": "長上下文的帳怎麼算", "sources": ["S3"]},
+        ],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report, sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [[s.id for s in t.sources] for t in view.topics] == [["S2"], ["S3"]]
+
+
+def test_新格式的報告查證沒有任何標記_不走舊報告那一套_不接來源(folder: ChatFolder) -> None:
+    report = REPORT.replace("- 【有爭議】", "- ").replace("- 【查不到】", "- ").replace("- 【有佐證】", "- ")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.checks == []
+    assert "價目表與廠商部落格的算法對不上" in str(view.verify_html)
+    assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
+
+
+def test_新格式的報告題材沒有編號_不走舊報告那一套_不接來源(folder: ChatFolder) -> None:
+    report = REPORT.replace("### 1. ", "### ").replace("### 2. ", "### ")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.topics == []
+    assert "長上下文的帳怎麼算" in str(view.topics_html)
+
+
 def test_舊報告_查證的說明從報告原文對到那一條_引用編號變成連結(folder: ChatFolder) -> None:
     cid = folder.conversation()
     folder.analysis(cid, "a1", report=OLD_REPORT)
@@ -145,7 +248,17 @@ def test_報告第一個標題前的一句話拿來當結果卡的摘要_下一�
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     assert view.lead == "長上下文還撐不起大多數檢索場景，兩年內檢索仍是主流。"
+    assert view.summary == "長上下文還撐不起大多數檢索場景，兩年內檢索仍是主流。"
     assert view.next_step == "▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。"
+
+
+def test_一句話與下一步各自有就各自放(folder: ChatFolder) -> None:
+    report = REPORT.replace("▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。\n", "")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.summary.startswith("長上下文還撐不起") and view.next_step == ""
 
 
 def test_舊報告沒有那一句話_摘要用作者在說什麼的第一句(folder: ChatFolder) -> None:
@@ -154,7 +267,7 @@ def test_舊報告沒有那一句話_摘要用作者在說什麼的第一句(fol
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     assert view.lead == "作者認為超長上下文還撐不起大多數檢索場景。"
-    assert view.next_step == ""
+    assert view.summary == "" and view.next_step == ""
 
 
 def test_可以寫的題材照編號_每個帶說明與用到的來源(folder: ChatFolder) -> None:
@@ -312,7 +425,7 @@ def test_來源網址只放行_http_和_https_agent_寫的_javascript_不會變�
         "topics": [],
     }
     cid = folder.conversation()
-    folder.analysis(cid, "a1", sources=sources)
+    folder.analysis(cid, "a1", sources=sources, report=OLD_REPORT)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
     urls = {s.id: s.url for c in view.checks for s in c.sources}

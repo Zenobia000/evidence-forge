@@ -12,7 +12,7 @@
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from evidence_forge.checks.analysis import headings, strip_heading
@@ -137,6 +137,16 @@ def check_references(
         _missing(entry, original_url, original_title, original_author)
         for entry in _entries(references)
     ]
+    # 原文出處要是第一條（ADR-0024 §3.2 第 4 點）；有列但不在第一條也擋
+    later_index = next((i for i, gap in enumerate(gaps) if not gap), None)
+    if later_index is not None and later_index > 0:
+        return [
+            _fail(
+                f"原文出處要放在「{REFERENCES_HEADING}」的第一條，現在在第 {later_index + 1} 條",
+                file,
+                line,
+            )
+        ]
     if any(not gap for gap in gaps):
         return [
             CheckEntry(check="C5", status="pass", reason="結尾的參考來源列了原文出處")
@@ -161,23 +171,59 @@ def check_references(
 _ANY_HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$")
 # 文類骨架的字當標題（ADR-0024 §3.2）：「先講結論」「論據一：…」「反方怎麼說」「我的建議」「結論與行動」。
 # 結論、論據、建議後面接的是編號、標點、或「與／說法／怎麼說／回應／先講」才算；「建議先別急著買」這種有實際內容的不算
+_PUNCT = r"[：:，,、。！？!?（(]"
 _SKELETON = re.compile(
-    r"^(?:反方"  # 「反方」開頭的一律是骨架那一節（反方觀點、反方的想法）
-    r"|(?:先講|先說|我的|最後的?)?(?:結論|論據|建議)"
+    # 「反方」後面接觀點、說法、怎麼說、的、意見或標點才算（「反方向思考」不算）
+    rf"^(?:反方(?:$|{_PUNCT}|觀點|說法|怎麼說|的|意見|與|和)"
+    # 「論點一」「論點 2」
+    r"|論點\s*[一二三四五六七八九十\d]+"
+    rf"|(?:先講|先說|我的|最後的?)?(?:結論|論據|建議|總結|行動建議)"
     r"(?:\s*[一二三四五六七八九十\d]+)?\s*"
-    r"(?:$|[：:，,、。！？!?（(]|與|和|說法|怎麼說|的?回應|先講))"
+    rf"(?:$|{_PUNCT}|與|和|說法|怎麼說|的?回應|先講))"
 )
+# 目標文類骨架的一項：`## 骨架` 那一節裡的有編號清單
+_SKELETON_ITEM = re.compile(r"^\s*\d+[.)]\s+(.+?)\s*$")
 
 
-def check_skeleton_headings(article: str, *, file: str) -> list[CheckEntry]:
+def genre_skeleton(definition: str) -> list[str]:
+    """從文類定義（`input/target-genre.md`）讀出骨架的每一項。
+
+    「論據 1～3（各附證據）」「情境：發生了什麼」這種帶說明的，另外放一份去掉說明的（「論據 1～3」「情境」）。
+    """
+    found: list[str] = []
+    inside = False
+    for line in definition.split("\n"):
+        if line.startswith("## "):
+            inside = line[3:].strip().startswith("骨架")
+            continue
+        match = _SKELETON_ITEM.match(line) if inside else None
+        if match is None:
+            continue
+        item = match.group(1)
+        found.append(item)
+        base = re.split(r"[（(：:]", item, maxsplit=1)[0].strip()
+        if base and base != item:
+            found.append(base)
+    return found
+
+
+def check_skeleton_headings(
+    article: str, *, file: str, skeleton: Sequence[str] = ()
+) -> list[CheckEntry]:
     """文章的標題不能是文類骨架的字：骨架只是思考順序，標題寫這一節實際在講什麼（ADR-0024）。
 
-    每個用了骨架字的標題一條 fail；程式碼區塊裡的不算。
+    擋兩種：結論、論據、反方、建議這類骨架字（`_SKELETON`），與剛好等於目標文類骨架某一項的標題
+    （`skeleton`，由 `genre_skeleton` 讀出；案例拆解的「背景」「做法」「結果」這類）。
+    每個這樣的標題一條 fail；程式碼區塊裡的不算。
     """
+    items = {normalize_for_match(item) for item in skeleton}
     failures: list[CheckEntry] = []
     for number, line in enumerate(mask_code(article).split("\n"), start=1):
         match = _ANY_HEADING.match(line)
-        if match is None or not _SKELETON.match(strip_heading(match.group(2))):
+        if match is None:
+            continue
+        text = strip_heading(match.group(2))
+        if not _SKELETON.match(text) and normalize_for_match(text) not in items:
             continue
         failures.append(
             CheckEntry(
@@ -223,25 +269,48 @@ def _mentions(body: str, normalized_body: str, name: str) -> bool:
     return normalize_for_match(name) in normalized_body
 
 
+def _other_sources(references: str | None, url: str | None, title: str) -> list[str]:
+    """參考來源裡原文以外的每一筆（網址拿掉）；原文那一筆是列了原文網址或原文標題的。"""
+    if references is None:
+        return []
+    forms = [normalize_for_match(form) for form in _title_forms(title)]
+    others: list[str] = []
+    for entry in _entries(references):
+        urls = {normalize_url(found.rstrip(").,")) for found in _URL.findall(entry)}
+        text = _URL.sub(" ", entry)
+        if (url and normalize_url(url) in urls) or any(f in normalize_for_match(text) for f in forms):
+            continue
+        others.append(text)
+    return others
+
+
 def check_original_not_in_body(
     article: str,
     *,
     file: str,
     original_title: str,
     original_author: str | None,
+    original_url: str | None = None,
 ) -> list[CheckEntry]:
     """參考來源以外的內文不能出現原文的標題與原作者名（ADR-0024 §3.2 第 2 點）。
 
     原文只列在參考來源。標題認完整的與去掉結尾站名的（`_title_forms`）；太短的標題、作者不比。
+    作者名在參考來源裡別的來源也出現（同一個品牌發的文件、同一位作者的系列文、別篇的標題）時不擋：
+    那是在講那份來源，rewrite 的 SKILL 也要文章用發布者的名字講來源。原文標題照擋。
     """
-    body, _, _ = split_references(article)
+    body, references, _ = split_references(article)
     text = normalize_for_match(body)
     named: list[tuple[str, str]] = [
         ("標題", form)
         for form in _title_forms(original_title)
         if len(normalize_for_match(form)) >= MIN_TITLE_CHARS
     ]
-    if original_author and len(normalize_for_match(original_author)) >= MIN_AUTHOR_CHARS:
+    others = _other_sources(references, original_url, original_title)
+    if (
+        original_author
+        and len(normalize_for_match(original_author)) >= MIN_AUTHOR_CHARS
+        and not any(_mentions(entry, normalize_for_match(entry), original_author) for entry in others)
+    ):
         named.append(("作者", original_author))
     failures: list[CheckEntry] = []
     reported: set[str] = set()
@@ -268,6 +337,42 @@ def check_original_not_in_body(
     return [CheckEntry(check="C5", status="pass", reason="內文沒有提原文的標題與原作者")]
 
 
+# 回應原文的說法（ADR-0024 §3.2 第 2 點）：內文不提原文、不提原作者。
+# 「原文」一律擋，只放過幾個跟「那篇原文」無關的固定說法（`_BENIGN_ORIGINAL`）
+_REPLY_PHRASE = re.compile(r"原作者|這篇(?:文章)?談的是|原文")
+# 不是在講「那篇原文」的「原文」：原文書、英文原文、照原文、依原文、原文翻譯、原文照登
+_BENIGN_ORIGINAL = re.compile(r"(?:英|日|中|德|法|韓)文原文|[照依]原文|原文(?:書|翻譯|照登)")
+
+
+def check_reply_phrases(article: str, *, file: str) -> list[CheckEntry]:
+    """參考來源以外的內文不能有回應原文的說法：「原作者」「這篇談的是」與「原文」（幾個固定說法除外）。每種說法報一次。"""
+    body, _, _ = split_references(article)
+    failures: list[CheckEntry] = []
+    reported: set[str] = set()
+    masked = _BENIGN_ORIGINAL.sub(lambda match: " " * len(match.group(0)), mask_code(body))
+    for number, line in enumerate(masked.split("\n"), start=1):
+        for match in _REPLY_PHRASE.finditer(line):
+            phrase = match.group(0)
+            if phrase in reported:
+                continue
+            reported.add(phrase)
+            failures.append(
+                CheckEntry(
+                    check="C5",
+                    status="fail",
+                    reason=(
+                        f"內文寫了「{phrase}」：文章用角色自己的聲音寫這個主題，"
+                        "不提原文、不回應原文，原文只列在參考來源"
+                    ),
+                    location=Location(file=file, line=number, column=match.start() + 1),
+                    excerpt=phrase,
+                )
+            )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="內文沒有回應原文的說法")]
+
+
 def article_checks(
     *,
     article: str,
@@ -280,8 +385,11 @@ def article_checks(
     original_author: str | None,
     texts: Mapping[str, str],
     thresholds: OverlapThresholds,
+    skeleton: Sequence[str] = (),
 ) -> list[CheckEntry]:
     """重構段的產出：格式、原文出處（擋）與跟每一份文字的逐字重疊（只顯示）。
+
+    `skeleton` 是目標文類骨架的每一項（`genre_skeleton`）；標題剛好等於其中一項就擋。
 
     `texts` 是要比重疊的文字：給人看的名字（「原文」「S2」）→ 正文，照給的順序各算一份。
     """
@@ -295,13 +403,15 @@ def article_checks(
             original_title=original_title,
             original_author=original_author,
         ),
-        *check_skeleton_headings(article, file=article_file),
+        *check_skeleton_headings(article, file=article_file, skeleton=skeleton),
         *check_original_not_in_body(
             article,
             file=article_file,
             original_title=original_title,
             original_author=original_author,
+            original_url=original_url,
         ),
+        *check_reply_phrases(article, file=article_file),
         *check_schema(output, schema, file=output_file),
         *(
             entry

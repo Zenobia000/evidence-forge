@@ -26,7 +26,14 @@ from pydantic import ValidationError
 
 from evidence_forge import conversations
 from evidence_forge.budget import micros_to_usd, usd_to_micros
-from evidence_forge.checks.text import tokenize
+from evidence_forge.checks.analysis import (
+    MARK,
+    VERDICT_MARKS,
+    fact_check_marks,
+    section_items,
+    topic_entries,
+)
+from evidence_forge.checks.text import normalize_for_match, tokenize
 from evidence_forge.conversations import ConversationJob
 from evidence_forge.documents import read_job
 from evidence_forge.jobkey import check_name
@@ -67,11 +74,7 @@ SECTIONS = ("作者在說什麼", "查證", "作者的看法", "可以寫的題�
 _OLD_SECTIONS = {"作者的看法": "事實與觀點", "可以寫的題材": "研究題材"}
 _CITATION = re.compile(r"\[(S\d+)\](?!\()")
 _LEAD_LABEL = re.compile(r"^\s*(?:[-*]\s*)?(?:K\d+)?\s*(?:有爭議|過時|有佐證|查不到)?\s*[:：]\s*")
-# 新報告查證一條的開頭標記：【有爭議】【過時】【查不到】【有佐證】
-_MARK = re.compile(r"^【(有爭議|過時|查不到|有佐證)】\s*")
 _LIST_MARKER = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
-# 可以寫的題材一個：`### 1. 暫定標題`
-_TOPIC_HEADING = re.compile(r"^#{3,6}\s+(?:\*\*)?(\d+)[.)、]\s*(.+?)(?:\*\*)?\s*$")
 # C3 總結條目的理由（`checks/overlap.py`）：「<份>：4-gram 重疊率 6.0%（提醒門檻…）」；沒有「<份>：」的舊寫法當成原文
 _OVERLAP = re.compile(r"^(?:(?P<label>[^：]+)：)?\d+-gram 重疊率 (?P<rate>\d+(?:\.\d+)?)%")
 
@@ -417,7 +420,10 @@ class ReportView:
     spent_usd: float
     finished: datetime | None
     error: str | None = None
+    # 結果卡的摘要：報告開頭那一句話，舊報告用「作者在說什麼」的第一句
     lead: str = ""
+    # 報告開頭那一句話（第一個 `##` 之前、不是下一步的那一行）；舊報告沒有
+    summary: str = ""
     # 「▶ 下一步：…」那一行；舊報告沒有
     next_step: str = ""
     intro_html: Markup = Markup("")
@@ -614,14 +620,20 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
         return markdown.render(_link_citations(body, urls)) if body else Markup("")
 
     verify_blocks = _blocks(sections.get("查證", ""))
-    checks = _fact_checks(listed_raw, brief, verify_blocks, listed, placed, urls)
+    # 舊報告（ADR-0024 之前）：節名是「事實與觀點」「研究題材」，查證帶 K 編號、照編號對；
+    # 新格式的報告只照標記與位置對，對不上就不接來源，不退回舊的那一套
+    legacy = any(name in sections for name in _OLD_SECTIONS.values())
+    checks = _fact_checks(report, listed_raw, brief, verify_blocks, listed, placed, urls, legacy=legacy)
     views = _slot(sections, "作者的看法")
     topics_name = _slot(sections, "可以寫的題材")
-    topics = _topics(listed_raw, sections.get(topics_name, ""), listed, placed, urls)
+    topics = _topics(
+        report, listed_raw, sections.get(topics_name, ""), listed, placed, urls, legacy=legacy
+    )
     opening, next_step = _opening(report)
     ordered = sorted(listed.values(), key=lambda s: int(s.id[1:]) if s.id[1:].isdigit() else 0)
     sources = [original, *_source_refs([s.id for s in ordered], listed, placed)]
-    counts = {v: sum(1 for c in checks if c.verdict == v) for v in VERDICT_ORDER}
+    # 數字照 sources.json：報告文字跟它對不上、不接來源時，結果卡的數字也不能跟著不見
+    counts = _verdict_counts(listed_raw)
     tags: list[str] = []
     if isinstance(brief, dict):
         genre = brief.get("genre")
@@ -631,6 +643,7 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
     return ReportView(
         error=None,
         lead=_first_sentence(opening or sections.get("作者在說什麼", "")),
+        summary=opening,
         next_step=next_step,
         intro_html=html("作者在說什麼"),
         views_heading=views,
@@ -660,58 +673,67 @@ def _read_brief(job_dir: Path) -> Any | None:
     return None
 
 
+def _verdict_counts(listed_raw: Any) -> dict[Verdict, int]:
+    """sources.json 的 fact_checks 裡每一種結果有幾條。"""
+    counts: dict[Verdict, int] = dict.fromkeys(VERDICT_ORDER, 0)
+    entries = listed_raw.get("fact_checks", []) if isinstance(listed_raw, dict) else []
+    for entry in entries:
+        verdict = _VERDICT_OF.get(str(entry.get("verdict"))) if isinstance(entry, dict) else None
+        if verdict is not None:
+            counts[verdict] += 1  # type: ignore[index]
+    return counts
+
+
 def _fact_checks(
+    report: str,
     listed_raw: Any,
     brief: Any,
     blocks: list[str],
     listed: dict[str, SourceRef],
     placed: dict[str, SourceRef],
     urls: dict[str, str | None],
+    *,
+    legacy: bool,
 ) -> list[FactCheck]:
     """查證一條一條：結果與來源看 `sources.json`，文字看報告。
 
-    舊報告每條帶著主張編號（「K1 有爭議：…」），照編號對；新報告沒有編號（ADR-0024），
-    每條開頭是【有爭議】這類標記、順序跟 `fact_checks` 一樣，就照順序拿同一種標記還沒用過的下一條。
+    新報告沒有編號（ADR-0024），每條開頭是【有爭議】這類標記，順序跟 `fact_checks` 一樣：
+    標記一條一條對得上（`checks/analysis.py` 也這樣擋）才照位置把來源接上去；對不上（連一個標記都沒有也算）
+    就回空的，畫面照報告原文顯示那一節，不把來源掛到別條上。
+    `legacy`（舊報告）每條帶著主張編號（「K1 有爭議：…」），照編號對。
     """
     if not isinstance(listed_raw, dict):
         return []
-    claims: dict[str, str] = {}
-    if isinstance(brief, dict):
-        for claim in brief.get("key_claims", []):
-            if isinstance(claim, dict) and isinstance(claim.get("id"), str):
-                claims[claim["id"]] = str(claim.get("claim", ""))
-    marks = [_MARK.match(_LIST_MARKER.sub("", block)) for block in blocks]
-    marked = any(mark is not None for mark in marks)
-    used: set[int] = set()
+    entries = [entry for entry in listed_raw.get("fact_checks", []) if isinstance(entry, dict)]
+    if not legacy:
+        items = section_items(report, "查證")
+        marks = [match.group(1) if (match := MARK.match(text)) else None for _, text in items]
+        if not items or marks != fact_check_marks(listed_raw):
+            return []
+        paired = [(entry, _split_fact(text, urls)) for entry, (_, text) in zip(entries, items, strict=True)]
+    else:
+        claims: dict[str, str] = {}
+        if isinstance(brief, dict):
+            for claim in brief.get("key_claims", []):
+                if isinstance(claim, dict) and isinstance(claim.get("id"), str):
+                    claims[claim["id"]] = str(claim.get("claim", ""))
+        paired = []
+        for entry in entries:
+            claim_id = str(entry.get("claim", ""))
+            text = claims.get(claim_id, claim_id)
+            paired.append((entry, (text, _note(blocks, [claim_id, text[:10]], urls))))
     found: list[FactCheck] = []
-    for entry in listed_raw.get("fact_checks", []):
-        if not isinstance(entry, dict):
-            continue
+    for entry, (text, note) in paired:
         verdict = _VERDICT_OF.get(str(entry.get("verdict")))
-        claim_id = str(entry.get("claim", ""))
         if verdict is None:
             continue
-        label = VERDICT_LABEL[verdict]  # type: ignore[index]
-        text = claims.get(claim_id, claim_id)
-        note = None if marked else _note(blocks, [claim_id, text[:10]], urls)
-        position = next(
-            (
-                index
-                for index, mark in enumerate(marks)
-                if mark is not None and mark.group(1) == label and index not in used
-            ),
-            None,
-        )
-        if position is not None:
-            used.add(position)
-            text, note = _split_fact(blocks[position], urls)
         ids = [s for s in entry.get("sources", []) if isinstance(s, str)]
         found.append(
             FactCheck(
-                claim_id=claim_id,
+                claim_id=str(entry.get("claim", "")),
                 claim=text,
                 verdict=verdict,  # type: ignore[arg-type]
-                label=label,
+                label=VERDICT_MARKS[str(entry.get("verdict"))],
                 note_html=note,
                 sources=_source_refs(ids, listed, placed),
             )
@@ -720,9 +742,9 @@ def _fact_checks(
     return sorted(found, key=lambda c: rank[c.verdict])
 
 
-def _split_fact(block: str, urls: dict[str, str | None]) -> tuple[str, Markup | None]:
+def _split_fact(text: str, urls: dict[str, str | None]) -> tuple[str, Markup | None]:
     """新報告的一條查證「【有爭議】事實：說明」拆成（事實, 說明）；沒有冒號就整條是事實。"""
-    body = _MARK.sub("", _LIST_MARKER.sub("", block), count=1).strip()
+    body = MARK.sub("", text, count=1).strip()
     fact, sep, rest = body.partition("：")
     if not sep or not rest.strip():
         return body.replace("**", ""), None
@@ -741,45 +763,46 @@ def _note(blocks: list[str], needles: list[str], urls: dict[str, str | None]) ->
     return None
 
 
-def _numbered_topics(section: str) -> list[tuple[int, str, str]]:
-    """新報告的可以寫的題材：（編號, 暫定標題, 底下的內文），照 `### 1. 標題` 切。"""
-    found: list[tuple[int, str, list[str]]] = []
-    for line in section.splitlines():
-        match = _TOPIC_HEADING.match(line.strip())
-        if match is not None:
-            found.append((int(match.group(1)), match.group(2).replace("**", "").strip(), []))
-        elif found:
-            found[-1][2].append(line)
-    return [(number, title, "\n".join(body).strip()) for number, title, body in found]
-
-
 def _topics(
+    report: str,
     listed_raw: Any,
     section: str,
     listed: dict[str, SourceRef],
     placed: dict[str, SourceRef],
     urls: dict[str, str | None],
+    *,
+    legacy: bool,
 ) -> list[Topic]:
-    """可以寫的題材。新報告照 `### 1.` 的編號切，第 N 個的來源是 `sources.json` 第 N 個 `topics` 的；
-    舊報告（研究題材）照 `sources.json` 的題材標題去報告裡找說明。"""
+    """可以寫的題材。新報告照 `### 1.` 切（跟 `checks/analysis.py` 同一份切法）；
+    題材跟 `sources.json` 的 topics 一樣多、標題一樣、順序一樣（`check_topic_alignment` 擋的那一條）
+    才照位置接來源，對不上就一個都不接，不拿別的題材的來頂。新報告沒切出題材就回空的，畫面照原文顯示。
+    `legacy`（舊報告的研究題材）照 `sources.json` 的題材標題去報告裡找說明。"""
     raw = listed_raw.get("topics", []) if isinstance(listed_raw, dict) else []
     entries = [entry for entry in raw if isinstance(entry, dict)]
 
-    def refs(index: int) -> list[SourceRef]:
-        if index >= len(entries):
+    def refs(entry: dict[str, Any] | None) -> list[SourceRef]:
+        if entry is None:
             return []
-        ids = [s for s in entries[index].get("sources", []) if isinstance(s, str)]
+        ids = [s for s in entry.get("sources", []) if isinstance(s, str)]
         return _source_refs(ids, listed, placed)
 
-    numbered = _numbered_topics(section)
-    if numbered:
+    if not legacy:
+        numbered = topic_entries(report)
+        aligned = [normalize_for_match(title) for _, _, title, _ in numbered] == [
+            normalize_for_match(str(entry.get("title", ""))) for entry in entries
+        ]
         return [
-            Topic(title, markdown.render(_link_citations(body, urls)) if body else None, refs(index), number)
-            for index, (number, title, body) in enumerate(numbered)
+            Topic(
+                title,
+                markdown.render(_link_citations(body, urls)) if body else None,
+                refs(entries[index]) if aligned else [],
+                number,
+            )
+            for index, (_, number, title, body) in enumerate(numbered)
         ]
     blocks = _blocks(section)
     found: list[Topic] = []
-    for index, entry in enumerate(entries):
+    for entry in entries:
         if not isinstance(entry.get("title"), str):
             continue
         title = entry["title"]
@@ -790,7 +813,7 @@ def _topics(
                 body = body.replace(title, "", 1).lstrip("：: ，,").strip()
                 note = markdown.render_inline(_link_citations(body, urls)) if body else None
                 break
-        found.append(Topic(title, note, refs(index)))
+        found.append(Topic(title, note, refs(entry)))
     return found
 
 

@@ -26,9 +26,9 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 
 | 宣告的產出 | 執行器做什麼 |
 | :--- | :--- |
-| `report.md` | 分析報告的檢查：一句話、五節依序、沒有內部編號、題材有編號、Markdown、同一段的 JSON 合 schema、引用的編號在清單上 |
+| `report.md` | 分析報告的檢查：一句話與下一步、五節依序、沒有內部編號、題材有編號、查證與題材跟 `sources.json` 對得上、Markdown、同一段的 JSON 合 schema、引用的編號在清單上 |
 | `brief.md` | brief 的檢查：六節、Markdown、同一段的 JSON 合 schema |
-| `article.md` | 重構文章的檢查：Markdown、結尾參考來源列了原文出處、標題不用骨架字、內文不提原文與原作者、同一段的 JSON 合 schema；重疊率只顯示。沒過帶著結果回這一段修，最多 `auto_fix` 次 |
+| `article.md` | 重構文章的檢查：Markdown、結尾參考來源第一條是原文出處、標題不用骨架字（含目標文類骨架的項目）、內文不提原文與原作者、不回應原文、同一段的 JSON 合 schema；重疊率只顯示。沒過帶著結果回這一段修，最多 `auto_fix` 次 |
 | `sources.json` | 檢查都過了之後，照清單從這一段真的抓過的網頁放來源正文；清單上有沒抓過的網址算這一次不合格 |
 
 所以 skill 改名、或新的 skill 交同一種產出，檢查照樣跑。反過來，**要交分析報告就一定叫 `report.md`、來源清單一定叫 `sources.json`**，換了名字檢查就不會跑；`tests/unit/test_skills.py` 有契約測試盯著 `analyze` 與 `rewrite` 配方。
