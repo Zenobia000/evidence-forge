@@ -25,7 +25,10 @@
 <button class="ch-iconbtn ch-narrow-only" type="button" id="ch-list-toggle" aria-label="打開對話清單" aria-expanded="false">{{ icon("menu") }}</button>
 <h1 class="ch-convo__title" id="ch-title">{{ conversation_title or "新對話" }}</h1>
 </div>
+<span class="ch-convo__side">
+{%- if conversation_id and not loose %}<button class="ch-iconbtn ch-narrow-only" type="button" data-open="decisions" aria-label="打開決策分頁">{{ icon("flag") }}</button>{% endif %}
 <span class="s0-small" id="ch-spent-wrap"{% if not conversation_id %} hidden{% endif %}>{% if loose %}這些工單花了{% else %}這個對話花了{% endif %} <span class="s0-mono" id="ch-spent">—</span></span>
+</span>
 </div>
 
 <div class="ch-stream" id="ch-stream">
@@ -43,6 +46,7 @@
 {% endif %}
 <div id="ch-thread"></div>
 <div id="ch-live" aria-live="polite"></div>
+<div id="ch-confirm"></div>
 <div id="ch-notes"></div>
 </div>
 </div>
@@ -65,7 +69,7 @@
 
 <aside class="ch-rail" id="ch-rail" aria-label="右側面板（已收起）">
 <button class="ch-iconbtn" type="button" id="ch-panel-open" aria-label="打開右側面板" aria-expanded="false" aria-controls="ch-panel">{{ icon("panel") }}</button>
-<span class="ch-rail__label">報告・文章・花費</span>
+<span class="ch-rail__label">報告・決策・文章・花費</span>
 </aside>
 <aside class="ch-panel" id="ch-panel" aria-label="右側面板" hidden></aside>
 

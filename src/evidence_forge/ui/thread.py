@@ -7,6 +7,8 @@
 - `tool`：一行灰字的工具呼叫，可以展開看參數。
 - `error`：開不成工的一行錯誤，原因照工具回的，再補一句能做什麼。
 - `job`：工單。跑著的由畫面照 `ef_job` 事件填進度列；結束的是結果卡。
+- `qset`、`line`：訪談（#108）。現在要答的一關是問題卡、送出過的是摘要卡（`qset`）；按了沿用、重問是置中的一行
+  系統小字（`line`）。它們來自編輯卡的決策紀錄（`ui/interview.py`），照時間插進 Pi 的紀錄裡。
 
 結果卡在開工那一次工具呼叫的結果後面；沒對到的（紀錄被清掉、Pi 以外的入口開的單）接在最後，每張工單都看得到。
 附檔的格式 `〔附檔 檔名〕…〔附檔結束〕` 是畫面送出時自己組的（`static/js/compose.js`），這裡認得它。
@@ -22,7 +24,7 @@ from urllib.parse import urlsplit
 from markupsafe import Markup
 
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, markdown
+from evidence_forge.ui import artifacts, interview, markdown
 from evidence_forge.ui.format import clock
 
 ATTACHMENT = re.compile(r"〔附檔 (?P<name>[^〕\n]+)〕\n(?P<body>.*?)\n〔附檔結束〕", re.DOTALL)
@@ -39,6 +41,10 @@ TOOL_LABEL = {
     "read_article": "讀文章",
     "job_status": "看工單進度",
     "list_personas": "看有哪些角色",
+    "propose_questions": "出這一關的問題",
+    "record_interpreted_answers": "把你打的字記進決策紀錄",
+    "add_material": "收下你給的素材",
+    "read_card": "讀編輯卡",
 }
 ERROR_HELP = {
     "analyze": "可以改貼文字，或上傳檔案。",
@@ -99,6 +105,9 @@ class Block:
     help: str | None = None
     # job
     job: JobCard | None = None
+    # qset：`interview.ActiveSet`（要答的）或 `interview.AnsweredSet`（摘要）；line：`interview.Line`
+    qset: interview.ActiveSet | interview.AnsweredSet | None = None
+    line: interview.Line | None = None
 
 
 def _text_of(content: Any) -> str:
@@ -196,15 +205,44 @@ def _card(data: DataDir, info: artifacts.JobInfo, last: bool) -> JobCard:
     )
 
 
+def _when(message: dict[str, Any]) -> datetime | None:
+    value = message.get("timestamp")
+    if isinstance(value, (int, float)) and value > 0:
+        try:
+            return datetime.fromtimestamp(value / 1000).astimezone()
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def _card_block(item: interview.Item) -> Block:
+    if isinstance(item, interview.Line):
+        return Block("line", line=item)
+    return Block("qset", qset=item)
+
+
 def build(
-    data: DataDir, jobs: list[artifacts.JobInfo], messages: list[dict[str, Any]]
+    data: DataDir,
+    jobs: list[artifacts.JobInfo],
+    messages: list[dict[str, Any]],
+    card_items: list[tuple[datetime, interview.Item]] | None = None,
 ) -> list[Block]:
+    """`card_items`：訪談的項目與它們的時間（`interview.thread_items`），照時間插在比它晚的第一則訊息前面。"""
     cards = {info.job_id: _card(data, info, info is jobs[-1]) for info in jobs}
     placed: set[str] = set()
     blocks: list[Block] = []
+    waiting = sorted(card_items or [], key=lambda pair: pair[0])
+
+    def flush(until: datetime | None) -> None:
+        while waiting and (until is None or waiting[0][0] <= until):
+            blocks.append(_card_block(waiting.pop(0)[1]))
+
     for message in messages:
         if not isinstance(message, dict):
             continue
+        stamp = _when(message)
+        if stamp is not None:
+            flush(stamp)
         role = message.get("role")
         if role == "user":
             if (block := _me(data, message, jobs)) is not None:
@@ -239,6 +277,7 @@ def build(
                 if job_id not in placed:
                     placed.add(job_id)
                     blocks.append(Block("job", job=cards[job_id]))
+    flush(None)
     for info in jobs:
         if info.job_id not in placed:
             blocks.append(Block("job", job=cards[info.job_id]))

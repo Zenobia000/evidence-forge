@@ -135,6 +135,44 @@ def test_決策紀錄只增不改_之前寫的每一行原封不動(data: DataDi
     assert len(after) == len(before) + 2 + 1 + 2
 
 
+def test_同一關連點兩次送出_第二次是冪等的_什麼都不多寫_回原本那次(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    first = _submit(data, cid, card_id, 1, "explainer", "主題 B")
+    before = _decisions(data, cid, card_id)
+
+    again = _submit(data, cid, card_id, 1, "explainer", "主題 B")
+
+    assert again.events == []
+    assert _decisions(data, cid, card_id) == before
+    station = again.card.stations[0]
+    # 沒有變成「改過」，後面的關也沒被標要重確認
+    assert (station.status, len(station.submissions)) == ("decided", 1)
+    assert station.decision == first.card.stations[0].decision
+
+
+def test_已經送出的關用不一樣的答案再送_不悄悄丟掉_409_要改先重問(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _submit(data, cid, card_id, 1, "explainer", "主題 B")
+    before = _decisions(data, cid, card_id)
+
+    with pytest.raises(ToolRejected) as caught:
+        _submit(data, cid, card_id, 1, "trend", "主題 A")
+
+    assert caught.value.status == 409 and "先重問" in caught.value.message
+    assert _decisions(data, cid, card_id) == before
+
+
+def test_重問之後可以再送出_不是重複送出(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _submit(data, cid, card_id, 1, "explainer", "主題 B")
+    cards.reask_station(data, cid, card_id, 1, now=NOW)
+
+    again = _submit(data, cid, card_id, 1, "explainer", "主題 B")
+
+    assert len(again.events) == 2
+    assert again.card.stations[0].status == "changed"
+
+
 def _through(data: DataDir, cid: str, card_id: str, last: int) -> None:
     """第 1 關已經問了；從第 1 關一路問、一路送出到第 `last` 關（每關一張卡，選第一個選項）。"""
     for station in range(1, last + 1):
