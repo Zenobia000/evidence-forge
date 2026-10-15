@@ -9,7 +9,7 @@ ADR-0014：錄音會進公開 repo，**種子、來源、角色資料、標題�
 `tests/fixtures/style/`、`card_writing.py`）。創作者自己的資料只放 `EF_DATA`，不進錄音。
 
 重錄（改了 rewrite 的 SKILL.md、任務說明、編輯卡摘要的寫法、角色 fixture、文體定義，或升了 Pi，請求就會變；
-會花 Anthropic 的錢，也會載入本機模型：先看 Windows 的 commit 餘量至少 23 GB）：
+會花 Anthropic 的錢；配方釘到本機時也會載入本機模型，先看 Windows 的 commit 餘量至少 23 GB）：
 
     D=<空資料夾>; S=<空資料夾>; mkdir -p $D/style $S && cp -r tests/fixtures/authors $D/
     cp tests/fixtures/style/headline-punchline-system.md $D/style/
@@ -22,19 +22,21 @@ ADR-0014：錄音會進公開 repo，**種子、來源、角色資料、標題�
         uv run ef serve --harness $H --once --port <沒人用的埠>
     # 2. 照編輯卡開寫稿工單（不花錢）
     EF_DATA=$D uv run python tests/card_writing.py <分析工單> $H
-    # 3. 正式跑寫稿段（花錢；本機先試，不行升 fast）
+    # 3. 正式跑寫稿段（花錢；只准本機與 fast）
     EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef serve --harness $H --once --parallel 1 \\
         --port <沒人用的埠>
     # 把寫稿那張單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/rewrite-library/。
     # 複製前先看模型請求裡有沒有工單、卡、對話的 id 或本機路徑，有就重錄
 
-2026-10-15 重錄的這一份（#110：照編輯卡寫）：寫稿段本機（Qwen3.5 9B）寫了兩次都沒過檢查（用了骨架字當標題、
-把表格也留了圖位），第 3 次升到 `fast`（Claude Haiku 5.5）一次就過，共花 US$0.0086（本機不算錢）。
+2026-10-16 重錄的這一份（#110 T3：照編輯卡寫，只帶那個題材的來源、不帶 brief）：只用 `fast`（Claude Haiku 5.5），
+一次就過，共花 US$0.0084。錄的時候 Windows 的 commit 餘量只剩 4.7 GB，所以沒有碰本機模型。
+（第一次錄的時候本機 Qwen3.5 9B 兩次都沒過檢查：用了骨架字當標題、把表格也留了圖位。）
 
 錄音只准用本機與 Haiku；重播用錄音當時的配方等級（`conftest.py`）。
 重播時模型回應從錄音回放；開單、放參考資料、程式檢查照樣真的跑。不需要 Ollama，不打任何付費 API。
 """
 
+import json
 import os
 import re
 import shutil
@@ -55,7 +57,7 @@ FIXTURES = Path(__file__).parents[2] / "fixtures"
 ARTICLE = FIXTURES / "articles" / "library-night.md"
 RECORDINGS = FIXTURES / "recordings"
 # 錄音時寫稿工單的預算（`card_writing.py` 當腳本跑時用的）
-RECORDED_BUDGET_USD = 0.05
+RECORDED_BUDGET_USD = 0.03
 
 PI_BIN = default_harness().pi.pi_bin
 
@@ -168,15 +170,18 @@ def test_照編輯卡寫稿_重播跑完_文章照卡的文體主題角色_圖�
 
 
 @pytest.mark.promise("FR-RW-01", "FR-RW-02")
-def test_寫稿工單拿到編輯卡快照_報告與來源_只有這篇用得到的角色資料(jobs: tuple[Path, Path]) -> None:
+def test_寫稿工單拿到編輯卡快照_報告與這個題材的來源_只有這篇用得到的角色資料(jobs: tuple[Path, Path]) -> None:
     analysis, writing = jobs
     inputs = writing / "input"
     assert not (inputs / "content.md").exists()
+    assert not (inputs / "brief.md").exists()
     assert (inputs / "card" / "card.md").is_file()
     assert [p.name for p in (inputs / "card" / "materials").iterdir()]
-    assert sorted(p.name for p in (inputs / "sources").iterdir()) == sorted(
-        p.name for p in (analysis / "input" / "sources").iterdir()
-    )
+    # 只帶報告第 1 個題材列的來源（分析的 sources.json），本機的上下文才有機會塞得下
+    listed = max((analysis / "stages" / "investigate").glob("*/sources.json"), key=lambda p: int(p.parent.name))
+    topic = json.loads(listed.read_text(encoding="utf-8"))["topics"][0]["sources"]
+    assert sorted(p.stem for p in (inputs / "sources").iterdir()) == sorted(topic)
+    assert len(topic) < len(list((analysis / "input" / "sources").iterdir()))
     author = inputs / "author"
     assert sorted(p.name for p in (author / "craft").iterdir()) == ["openings.md", "titles.md"]
     assert (author / "theme.md").is_file() and (author / "lessons.md").is_file()
