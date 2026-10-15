@@ -3,8 +3,10 @@
 閘道的 `chat_tools` 只管鑰匙、範圍與記帳；開單與讀結果在這裡，因為這裡知道配方與資料目錄。
 開單照舊走 `runner.intake.open_job`：同一個對話裡同一份素材、同樣的目標已有工單就拿回那一張（ADR-0021 §3.6）。
 重構照舊走 `runner.intake.open_job_from`（等同 `ef new --from`，#102）：每一版都是新工單，不走去重。
-文類可以給 id（`opinion`）或中文名（`觀點文`，報告的「建議文類」寫的是中文名）；不認得的不開單，
-免得開出一張在執行器放參考資料時才失敗的單。
+文類可以給 id（`opinion`）或中文名（`觀點文`，報告的「建議文類」寫的是中文名）。報告的建議文類是模型寫的
+自由文字（「評論」「深度報導」），對不上就照沒給文類開單（角色的預設文類），結果附一句 `note` 讓對話的 agent
+跟創作者說；不把不認得的文類寫進工單，免得執行器放參考資料時才失敗。
+開不了單的原因會交給對話的模型：裡面資料目錄的絕對路徑換成相對路徑（`authors/<角色>/`）。
 開出來的單是「排隊中」，由同一個 `ef serve` 裡的執行器照配方跑（ADR-0019 §3.3）。
 
 報告與文章都是工單最後交出來的檔，只是看哪個檔：
@@ -55,7 +57,9 @@ class Desk:
         """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
         找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
 
-        `on_opened(對話 id, 工單 id)` 在開了新單（或拿回舊單）之後呼叫：對話主機據此馬上推一次進度。
+        `on_opened(對話 id, 工單 id)` 在閘道把單記進對話的 `jobs.jsonl` 之後呼叫（`recorded`）：
+        對話主機據此馬上推一次進度，單已經跑完就送結束通知。不在開單當下叫：那時主機在 `jobs.jsonl`
+        還找不到這張單，跑得快的單結束通知會丟掉。
         """
         self._data = data
         self._recipes = recipes
@@ -104,9 +108,7 @@ class Desk:
             # 讀不到就不開工，原因交回對話講清楚（FR-IN-01）
             return {"status": "unavailable", "reason": exc.reason}
         except ValueError as exc:
-            return {"status": "rejected", "reason": str(exc)}
-        if self._on_opened is not None:
-            self._on_opened(conversation_id, intake.job.id)
+            return {"status": "rejected", "reason": self._tidy(str(exc))}
         return {
             "job_id": intake.job.id,
             "created": intake.created,
@@ -128,7 +130,8 @@ class Desk:
         """從 `from_job` 接著開一張重構工單。`from_job` 是不是這個對話的，閘道已經查過。
 
         角色、文類、目標沒給的照 `open_job_from`：再改沿用上一版，從分析開是 `me`、角色的預設文類、
-        配方的預設目標。開不了（角色不存在、上一張還沒跑完或交不出報告）回 `rejected` 與原因。
+        配方的預設目標。文類對不上當成沒給，結果附 `note`。
+        開不了（角色不存在、上一張還沒跑完或交不出報告）回 `rejected` 與原因。
         """
         recipe = self._recipes.get(self._rewrite_recipe)
         if recipe is None:
@@ -136,11 +139,11 @@ class Desk:
                 "status": "rejected",
                 "reason": f"沒有重構配方 {self._rewrite_recipe}（有：{'、'.join(sorted(self._recipes))}）",
             }
+        unknown_genre: str | None = None
         if genre is not None:
             known = _genre_id(genre)
             if known is None:
-                listed = "、".join(f"{key}（{name}）" for key, name in GENRE_NAME.items())
-                return {"status": "rejected", "reason": f"沒有文類 {genre}（有：{listed}）"}
+                unknown_genre = genre
             genre = known
         try:
             job = open_job_from(
@@ -156,10 +159,8 @@ class Desk:
                 conversation=conversation_id,
             )
         except ValueError as exc:
-            return {"status": "rejected", "reason": str(exc)}
-        if self._on_opened is not None:
-            self._on_opened(conversation_id, job.id)
-        return {
+            return {"status": "rejected", "reason": self._tidy(str(exc))}
+        opened: dict[str, Any] = {
             "job_id": job.id,
             "created": True,
             "status": job.status,
@@ -168,6 +169,23 @@ class Desk:
             "persona": job.persona,
             "genre": job.target_genre,
         }
+        if unknown_genre is not None:
+            used = (
+                f"{GENRE_NAME.get(job.target_genre, job.target_genre)}（{job.target_genre}）"
+                if job.target_genre
+                else "角色的寫法（沒有預設文類）"
+            )
+            opened["note"] = f"文類「{unknown_genre}」對不上，改用預設的{used}"
+        return opened
+
+    def recorded(self, conversation_id: str, job_id: str) -> None:
+        """閘道已經把這張單記進對話的 `jobs.jsonl`：通知對話主機（見 `on_opened`）。"""
+        if self._on_opened is not None:
+            self._on_opened(conversation_id, job_id)
+
+    def _tidy(self, reason: str) -> str:
+        """原因要交給對話的模型：資料目錄的絕對路徑換成相對路徑。"""
+        return reason.replace(f"{self._data.root}/", "")
 
     def status(self, job_id: str) -> dict[str, Any]:
         job = read_job(self._data.job_dir(job_id) / "job.md").job

@@ -83,7 +83,7 @@ def _finish(data: DataDir, job_id: str, recipe: str = "analyze") -> None:
     write_job(path, JobDocument(job=done))
 
 
-def test_開了單就回_記下是哪個對話開的_通知主機(data: DataDir) -> None:
+def test_開了單就回_記下是哪個對話開的_記進對話之後才通知主機(data: DataDir) -> None:
     opened: list[tuple[str, str]] = []
     desk = _desk(data, opened)
     result = desk.open_analysis(
@@ -94,6 +94,9 @@ def test_開了單就回_記下是哪個對話開的_通知主機(data: DataDir)
     assert result["stages"] == 2
     job = read_job(data.job_dir(result["job_id"]) / "job.md").job
     assert job.conversation == "c1"
+    # 開單當下不通知：閘道記進 jobs.jsonl 之後叫 recorded 才通知（不然跑得快的單會漏掉結束通知）
+    assert opened == []
+    desk.recorded("c1", result["job_id"])
     assert opened == [("c1", result["job_id"])]
 
 
@@ -202,7 +205,7 @@ def me(data: DataDir) -> DataDir:
     return data
 
 
-def test_重構開了就回_記下對話與上一張_通知主機(me: DataDir) -> None:
+def test_重構開了就回_記下對話與上一張_記進對話之後才通知主機(me: DataDir) -> None:
     opened: list[tuple[str, str]] = []
     desk = _desk(me, opened)
     analysis = _analysed(me, desk)
@@ -218,7 +221,9 @@ def test_重構開了就回_記下對話與上一張_通知主機(me: DataDir) -
         "opinion",
         "題材 2：夜班。角度：成本",
     )
-    assert opened[-1] == ("c1", job_id)
+    assert opened == []
+    desk.recorded("c1", job_id)
+    assert opened == [("c1", job_id)]
 
 
 def test_重構的文類可以給中文名_記成文類_id(me: DataDir) -> None:
@@ -229,13 +234,26 @@ def test_重構的文類可以給中文名_記成文類_id(me: DataDir) -> None:
     assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "explainer"
 
 
-def test_重構的文類不認得_不開單_列出有哪些(me: DataDir) -> None:
+@pytest.mark.parametrize("written", ["評論", "深度報導", "觀點文章"])
+def test_報告寫的文類對不上_照樣開單_用預設文類_附一句說明(me: DataDir, written: str) -> None:
+    # 報告的「建議文類」是模型寫的自由文字；對不上就用角色的預設文類，不要讓「寫第 N 個」開不了
     desk = _desk(me)
-    analysis = _analysed(me, desk)
-    result = _rewrite(desk, analysis, genre="打油詩")
+    result = _rewrite(desk, _analysed(me, desk), genre=written)
+    job_id = result["job_id"]
+    assert isinstance(job_id, str)
+    assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "opinion"
+    assert result["genre"] == "opinion"
+    assert result["note"] == f"文類「{written}」對不上，改用預設的觀點文（opinion）"
+
+
+def test_角色不存在_原因不帶資料目錄的完整路徑(me: DataDir) -> None:
+    # 原因會交給對話的模型、再轉述給創作者：主機上的絕對路徑不該出現
+    desk = _desk(me)
+    result = _rewrite(desk, _analysed(me, desk), persona="nobody")
     assert result["status"] == "rejected"
-    assert "打油詩" in str(result["reason"]) and "opinion（觀點文）" in str(result["reason"])
-    assert [p.name for p in me.jobs.iterdir()] == [analysis]
+    reason = str(result["reason"])
+    assert "沒有角色 nobody" in reason and "authors/<角色>/" in reason
+    assert str(me.root) not in reason
 
 
 def test_上一張交不出報告_不開單_原因交回(me: DataDir) -> None:

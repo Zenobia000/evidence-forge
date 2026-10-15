@@ -169,8 +169,10 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         if (data.status === "rejected") {
           return text(`NOT STARTED: ${String(data.reason ?? "unknown reason")}`);
         }
+        // 文類對不上時閘道照預設文類開單，附一句說明：要讓模型轉告創作者
+        const note = data.note ? `\nnote: ${String(data.note)} (tell the creator)` : "";
         return text(
-          `job_id: ${String(data.job_id)}\nstatus: ${String(data.status)}\nrecipe: ${String(data.recipe)} with ${String(data.stages)} stage(s)\npersona: ${String(data.persona ?? "me")}; genre: ${String(data.genre ?? "default")}\nThe job runs in the background; an [ef-job] notice will arrive when it ends.`,
+          `job_id: ${String(data.job_id)}\nstatus: ${String(data.status)}\nrecipe: ${String(data.recipe)} with ${String(data.stages)} stage(s)\npersona: ${String(data.persona ?? "me")}; genre: ${String(data.genre ?? "default")}${note}\nThe job runs in the background; an [ef-job] notice will arrive when it ends.`,
         );
       },
     }),

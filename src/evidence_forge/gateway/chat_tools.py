@@ -23,6 +23,8 @@
   已經滿了而這次不會是拿回在跑的那一張，就在抓網頁之前擋下，不對外抓、不寫投入帳。
   `rewrite` 不走去重，每次都是新單，所以滿了就直接擋。
 - 工作台回的工單，閘道先讀它的 `job.md`：不是這個對話開的就不記、回 500。範圍由閘道自己把關。
+- 記進 `jobs.jsonl` 之後才叫工作台的 `recorded`（它再通知對話主機）：主機靠 `jobs.jsonl` 找工單是哪個對話的，
+  先通知再記的話，開了馬上跑完的單會漏掉結束通知。
 
 真正開單、讀結果的事交給 `Desk`（對話主機注入，知道配方與 harness）；閘道只管鑰匙、範圍與記帳。
 """
@@ -51,6 +53,11 @@ _RUNNING = frozenset({"queued", "running"})
 
 class Desk(Protocol):
     """開分析工單、讀工單狀態與結果的那一層。"""
+
+    @property
+    def recipe_name(self) -> str:
+        """`analyze` 開的配方：「這次是不是拿回在跑的那一張」只看這份配方的單。"""
+        ...
 
     def open_analysis(
         self,
@@ -81,6 +88,11 @@ class Desk(Protocol):
         """從 `from_job` 接著開一張重構工單；回 `{"job_id", "created": True, "status", …}`。
         開不了（角色不存在、上一張交不出報告…）回 `{"status": "rejected", "reason"}`。
         `from_job` 是不是這個對話的，閘道呼叫之前已經查過。"""
+        ...
+
+    def recorded(self, conversation_id: str, job_id: str) -> None:
+        """閘道把開出來（或拿回）的單記進對話的 `jobs.jsonl` 之後呼叫。
+        對話主機靠 `jobs.jsonl` 決定要不要送結束通知，所以通知主機要等到這時候。"""
         ...
 
     def status(self, job_id: str) -> dict[str, Any]: ...
@@ -157,9 +169,14 @@ class ChatTools:
         def open_and_record() -> dict[str, Any]:
             # 已經滿了，而這次也不會是拿回在跑的那一張（換了素材，或要重做）：
             # 抓網頁之前就擋下，不然每次都先對外抓、寫投入帳，最後才拒絕
+            # 只看分析的單：重構單跟分析共用同一份素材項目，但丟同一篇文章不會拿回重構單
             running = self._running_jobs(conversation_id)
             if len(running) >= limit and (
-                again or not any(same_source(data, job, source) for job in running)
+                again
+                or not any(
+                    job.recipe == desk.recipe_name and same_source(data, job, source)
+                    for job in running
+                )
             ):
                 raise self._full(running)
             # 開單與記進 jobs.jsonl 在同一個執行緒裡做完：請求中途被取消（關機、斷線）時，
@@ -182,6 +199,7 @@ class ChatTools:
                         job_id=job_id, ts=self._config.clock()
                     ),
                 )
+                desk.recorded(conversation_id, job_id)
             return opened
 
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())
@@ -226,6 +244,7 @@ class ChatTools:
                         parent=from_job,
                     ),
                 )
+                desk.recorded(conversation_id, job_id)
             return opened
 
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())

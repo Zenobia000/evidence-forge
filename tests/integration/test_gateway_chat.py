@@ -82,6 +82,11 @@ class IntakeDesk:
         self.data = data
         self.opened: list[dict[str, Any]] = []
         self.rewrites: list[dict[str, Any]] = []
+        # 閘道通知「記好了」時：(對話, 工單, 那時這張單在不在對話的 jobs.jsonl 裡)
+        self.recorded_calls: list[tuple[str, str, bool]] = []
+        # 開了單就馬上當成跑完（很快的執行器）
+        self.finish_at_once = False
+        self.recipe_name = RECIPE.name
         # 開單前故意等一下：讓兩個同時送來的請求撞在一起
         self.delay_s = 0.0
         # 不照實回：開完單卻回另一張單的 id（閘道不能相信工作台）
@@ -111,11 +116,17 @@ class IntakeDesk:
             again=again,
             before_create=before_create,
         )
+        if self.finish_at_once:
+            _mark_done(self.data, intake.job.id)
         return {
             "job_id": self.forged_job_id or intake.job.id,
             "created": intake.created,
             "status": intake.job.status,
         }
+
+    def recorded(self, conversation_id: str, job_id: str) -> None:
+        listed = conversations.owns_job(self.data, conversation_id, job_id)
+        self.recorded_calls.append((conversation_id, job_id, listed))
 
     def open_rewrite(
         self,
@@ -142,6 +153,8 @@ class IntakeDesk:
             )
         except ValueError as exc:
             return {"status": "rejected", "reason": str(exc)}
+        if self.finish_at_once:
+            _mark_done(self.data, job.id)
         return {
             "job_id": self.forged_job_id or job.id,
             "created": True,
@@ -160,6 +173,15 @@ class IntakeDesk:
 
     def personas(self) -> dict[str, Any]:
         return {"personas": [{"name": "me", "default_genre": "opinion"}]}
+
+
+def _mark_done(data: DataDir, job_id: str) -> None:
+    path = data.job_dir(job_id) / "job.md"
+    job = read_job(path).job
+    write_job(
+        path,
+        JobDocument(job=job.model_copy(update={"status": "done", "result": JobResult(outcome="complete")})),
+    )
 
 
 @dataclass
@@ -502,6 +524,27 @@ def test_rewrite_欄位不對_400_不開單(env: Env, body: dict[str, object]) -
     response = env.call("rewrite", env.mine, **merged)
     assert response.status_code == 400
     assert env.desk.rewrites == []
+
+
+def test_一開就跑完的單_記進_jobs_jsonl_之後才通知工作台(env: Env) -> None:
+    # 主機靠 jobs.jsonl 找「這張單是哪個對話的、要不要通知」：先通知再記，跑得快的單通知就丟了
+    env.desk.finish_at_once = True
+    analysis = _opened(env.call("analyze", env.mine, text="# 很快的\n\n內容"))
+    env.finish(analysis, files={"report.md": "報告"})
+    rewrite = _opened(env.call("rewrite", env.mine, from_job=analysis))
+    mine = env.mine.conversation_id
+    assert env.desk.recorded_calls == [(mine, analysis, True), (mine, rewrite, True)]
+
+
+def test_有重構在跑時丟同一篇_不會被當成拿回在跑的那張_抓之前就擋下(env: Env) -> None:
+    # 重構單跟分析共用同一份素材項目：「同一份素材在跑」只看分析配方的單
+    analysis = _analysed(env, text="# 第一篇\n\n內容")
+    running = _opened(env.call("rewrite", env.mine, from_job=analysis))
+    response = env.call("analyze", env.mine, text="# 第一篇\n\n內容")
+    assert response.status_code == 409
+    assert running in response.json()["error"]
+    # 工作台沒被叫到：沒有對外抓取，也沒有寫投入帳
+    assert len(env.desk.opened) == 1
 
 
 def test_rewrite_工作台回別的對話的單_不記進來(env: Env) -> None:
