@@ -1,7 +1,10 @@
-"""對話的工作台：替對話開分析工單、讀工單的狀態、報告、文章與角色清單（ADR-0021 §3.4）。
+"""對話的工作台：替對話開分析與重構工單、讀工單的狀態、報告、文章與角色清單（ADR-0021 §3.4）。
 
 閘道的 `chat_tools` 只管鑰匙、範圍與記帳；開單與讀結果在這裡，因為這裡知道配方與資料目錄。
 開單照舊走 `runner.intake.open_job`：同一個對話裡同一份素材、同樣的目標已有工單就拿回那一張（ADR-0021 §3.6）。
+重構照舊走 `runner.intake.open_job_from`（等同 `ef new --from`，#102）：每一版都是新工單，不走去重。
+文類可以給 id（`opinion`）或中文名（`觀點文`，報告的「建議文類」寫的是中文名）；不認得的不開單，
+免得開出一張在執行器放參考資料時才失敗的單。
 開出來的單是「排隊中」，由同一個 `ef serve` 裡的執行器照配方跑（ADR-0019 §3.3）。
 
 報告與文章都是工單最後交出來的檔，只是看哪個檔：
@@ -25,8 +28,10 @@ from evidence_forge.runner.intake import (
     SourceUnreadable,
     WebPage,
     open_job,
+    open_job_from,
 )
 from evidence_forge.runner.stage_inputs import default_genre
+from evidence_forge.ui.format import GENRE_NAME
 
 MAX_FILE_CHARS = 20_000
 REPORT_FILE = "report.md"
@@ -45,8 +50,10 @@ class Desk:
         fetcher: Fetcher | None = None,
         budget_usd: float = 0.5,
         on_opened: Callable[[str, str], None] | None = None,
+        rewrite_recipe: str = "rewrite",
     ) -> None:
-        """`recipe_name` 是 `analyze` 開的配方；找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
+        """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
+        找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
 
         `on_opened(對話 id, 工單 id)` 在開了新單（或拿回舊單）之後呼叫：對話主機據此馬上推一次進度。
         """
@@ -57,6 +64,7 @@ class Desk:
         self._fetcher = fetcher
         self._budget_usd = budget_usd
         self._on_opened = on_opened
+        self._rewrite_recipe = rewrite_recipe
 
     @property
     def recipe_name(self) -> str:
@@ -105,6 +113,60 @@ class Desk:
             "status": intake.job.status,
             "recipe": intake.job.recipe,
             "stages": len(recipe.stages),
+        }
+
+    def open_rewrite(
+        self,
+        *,
+        conversation_id: str,
+        from_job: str,
+        persona: str | None,
+        genre: str | None,
+        goal: str | None,
+        feedback: str | None,
+    ) -> dict[str, Any]:
+        """從 `from_job` 接著開一張重構工單。`from_job` 是不是這個對話的，閘道已經查過。
+
+        角色、文類、目標沒給的照 `open_job_from`：再改沿用上一版，從分析開是 `me`、角色的預設文類、
+        配方的預設目標。開不了（角色不存在、上一張還沒跑完或交不出報告）回 `rejected` 與原因。
+        """
+        recipe = self._recipes.get(self._rewrite_recipe)
+        if recipe is None:
+            return {
+                "status": "rejected",
+                "reason": f"沒有重構配方 {self._rewrite_recipe}（有：{'、'.join(sorted(self._recipes))}）",
+            }
+        if genre is not None:
+            known = _genre_id(genre)
+            if known is None:
+                listed = "、".join(f"{key}（{name}）" for key, name in GENRE_NAME.items())
+                return {"status": "rejected", "reason": f"沒有文類 {genre}（有：{listed}）"}
+            genre = known
+        try:
+            job = open_job_from(
+                self._data,
+                recipe,
+                from_job,
+                goal=goal,
+                now=self._clock(),
+                persona=persona,
+                genre=genre,
+                feedback=feedback,
+                budget_usd=self._budget_usd,
+                conversation=conversation_id,
+            )
+        except ValueError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        if self._on_opened is not None:
+            self._on_opened(conversation_id, job.id)
+        return {
+            "job_id": job.id,
+            "created": True,
+            "status": job.status,
+            "recipe": job.recipe,
+            "stages": len(recipe.stages),
+            "persona": job.persona,
+            "genre": job.target_genre,
         }
 
     def status(self, job_id: str) -> dict[str, Any]:
@@ -204,6 +266,14 @@ class Desk:
                     files[path.relative_to(job_dir).as_posix()] = content
         found["files"] = files
         return found
+
+
+def _genre_id(genre: str) -> str | None:
+    """文類 id 或中文名 → 文類 id；不認得是 None。"""
+    wanted = genre.strip()
+    if wanted in GENRE_NAME:
+        return wanted
+    return next((key for key, name in GENRE_NAME.items() if name == wanted), None)
 
 
 def _latest_attempt(stage_root: Path) -> Path | None:

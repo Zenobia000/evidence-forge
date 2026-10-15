@@ -64,8 +64,9 @@ class ConversationJob(BaseModel):
     """`jobs.jsonl` 的一行：這個對話開了哪張工單。
 
     每一版（補查、再改、換角色）都是一張新工單，用 `version` 與 `parent` 串起來：
-    `parent` 是上一版的工單 id，第一版是 None。這張票只開分析，所以一律寫第 1 版；
-    兩個欄位先定好，之後的重構不用改帳本格式。
+    `parent` 是這張單接著做的那一張：分析是 None；重構是 `rewrite` 的 `from_job`（#102）。
+    `version` 是在版本鏈上第幾版：同一個角色的上一版重構接著做是下一版，從分析開、換了角色是 1
+    （CONTEXT.md〈版本鏈〉；畫面也照 `parent`、配方與角色排鏈，`ui/artifacts.py`）。
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

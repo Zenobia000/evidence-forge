@@ -1,6 +1,6 @@
-"""對話的工作台（`chat/desk.py`）：開分析單、讀報告與文章、列角色。
+"""對話的工作台（`chat/desk.py`）：開分析單、開重構單、讀報告與文章、列角色。
 
-開單用真的投入（`runner.intake.open_job`）；工單「跑完」由測試直接寫 `job.md` 與產出檔。
+開單用真的投入（`runner.intake.open_job`、`open_job_from`）；工單「跑完」由測試直接寫 `job.md` 與產出檔。
 """
 
 from datetime import UTC, datetime
@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from evidence_forge.chat.desk import MAX_FILE_CHARS, Desk
+from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.models import JobResult, Recipe, RecipeStage
 from evidence_forge.paths import DataDir
@@ -36,6 +37,7 @@ REWRITE = Recipe(
         RecipeStage(id="rewrite", skill="rewrite", tier="strong", output=("article.md", "article.json")),
     ),
     on_feedback="rewrite",
+    needs=("report.md",),
     default_goal="寫一篇",
 )
 
@@ -160,3 +162,93 @@ def test_列出角色_不含範本_附預設文類與寫過的文類(data: DataD
             {"name": "me", "default_genre": "opinion", "calibrated_genres": ["opinion"]},
         ]
     }
+
+
+# --- 重構 ---------------------------------------------------------------------
+
+
+def _analysed(data: DataDir, desk: Desk) -> str:
+    """開一張分析、跑完，交得出過了檢查的報告（重構從它接著做）。"""
+    job_id = _open(desk)
+    _finish(data, job_id)
+    attempt = data.job_dir(job_id) / "stages" / "investigate" / "1"
+    attempt.mkdir(parents=True)
+    (attempt / "report.md").write_text("報告", encoding="utf-8")
+    write_checks_report(
+        data.job_dir(job_id),
+        ChecksReport(
+            stage="investigate",
+            attempt=1,
+            files=("stages/investigate/1/report.md",),
+            created_at=NOW,
+            entries=(CheckEntry(check="C5", status="pass", reason="測試"),),
+        ),
+    )
+    return job_id
+
+
+def _rewrite(desk: Desk, from_job: str, **options: str) -> dict[str, object]:
+    fields: dict[str, str | None] = {"persona": None, "genre": None, "goal": None, "feedback": None}
+    fields.update(options)
+    return desk.open_rewrite(conversation_id="c1", from_job=from_job, **fields)
+
+
+@pytest.fixture
+def me(data: DataDir) -> DataDir:
+    (data.authors / "me").mkdir(parents=True)
+    (data.authors / "me" / "voice.md").write_text("---\ndefault_genre: opinion\n---\n聲音", encoding="utf-8")
+    return data
+
+
+def test_重構開了就回_記下對話與上一張_通知主機(me: DataDir) -> None:
+    opened: list[tuple[str, str]] = []
+    desk = _desk(me, opened)
+    analysis = _analysed(me, desk)
+    result = _rewrite(desk, analysis, goal="題材 2：夜班。角度：成本")
+    assert (result["created"], result["status"], result["recipe"], result["stages"]) == (True, "queued", "rewrite", 1)
+    job_id = result["job_id"]
+    assert isinstance(job_id, str)
+    job = read_job(me.job_dir(job_id) / "job.md").job
+    assert (job.conversation, job.parent, job.persona, job.target_genre, job.goal) == (
+        "c1",
+        analysis,
+        "me",
+        "opinion",
+        "題材 2：夜班。角度：成本",
+    )
+    assert opened[-1] == ("c1", job_id)
+
+
+def test_重構的文類可以給中文名_記成文類_id(me: DataDir) -> None:
+    desk = _desk(me)
+    result = _rewrite(desk, _analysed(me, desk), genre="解說文")
+    job_id = result["job_id"]
+    assert isinstance(job_id, str)
+    assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "explainer"
+
+
+def test_重構的文類不認得_不開單_列出有哪些(me: DataDir) -> None:
+    desk = _desk(me)
+    analysis = _analysed(me, desk)
+    result = _rewrite(desk, analysis, genre="打油詩")
+    assert result["status"] == "rejected"
+    assert "打油詩" in str(result["reason"]) and "opinion（觀點文）" in str(result["reason"])
+    assert [p.name for p in me.jobs.iterdir()] == [analysis]
+
+
+def test_上一張交不出報告_不開單_原因交回(me: DataDir) -> None:
+    desk = _desk(me)
+    job_id = _open(desk)
+    _finish(me, job_id)
+    result = _rewrite(desk, job_id)
+    assert result["status"] == "rejected"
+    assert "交不出 report.md" in str(result["reason"])
+    assert [p.name for p in me.jobs.iterdir()] == [job_id]
+
+
+def test_沒有重構配方_不開單_說清楚原因(me: DataDir) -> None:
+    desk = Desk(me, {"analyze": ANALYZE}, "analyze", clock=lambda: NOW)
+    analysis = _analysed(me, desk)
+    result = _rewrite(desk, analysis)
+    assert result["status"] == "rejected"
+    assert "沒有重構配方 rewrite" in str(result["reason"])
