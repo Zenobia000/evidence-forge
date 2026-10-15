@@ -560,6 +560,28 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   tb 2 "cd $repo && git -C $plain commit -m x" "私人內容：cd 之後又 -C：用最後算出來的（沒啟用）" "core.hooksPath"
   tb 0 "cd $plain && cd $repo && git commit -m x" "私人內容：cd 兩次：用最後一個（啟用的）" "" "$bt"
 
+  # 守衛 2b（#133）：工作副本。開工作副本的工具會把共用設定改寫成主 checkout 的 .githooks 絕對路徑，
+  # 那樣跑的是主 checkout 那一份 hook；守衛要認得它，別處的絕對路徑照擋，hook 檔看真的會被跑的那個資料夾。
+  mainr="$bt/main"; wt="$bt/wt"; elsew="$bt/elsewhere"
+  mkdir -p "$mainr/.githooks" "$elsew/.githooks"
+  for hn in pre-commit commit-msg pre-push; do cp -p "$bgroot/.githooks/$hn" "$mainr/.githooks/$hn"; done
+  cp -p "$mainr"/.githooks/* "$elsew/.githooks/"   # 別處的 hook 齊全也不行：位置不對
+  git -C "$mainr" init -q -b main
+  gm() { git -C "$mainr" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
+  gm add .githooks && gm commit -q -m init
+  gm worktree add -q -b side "$wt"
+  mainhooks="$(cd "$mainr" && pwd -P)/.githooks"
+  git -C "$mainr" config core.hooksPath "$mainhooks"
+  tb 0 "git commit -m x" "工作副本：hooksPath 是主 checkout 的絕對路徑，commit 放行" "" "$wt"
+  tb 0 "git push origin HEAD" "工作副本：hooksPath 是主 checkout 的絕對路徑，push 放行" "" "$wt"
+  git -C "$mainr" config core.hooksPath "$elsew/.githooks"
+  tb 2 "git commit -m x" "工作副本：指到別處的絕對路徑，擋；說明列出主 checkout 那個可接受的值" "$mainhooks" "$wt"
+  git -C "$mainr" config core.hooksPath .githooks
+  tb 0 "git commit -m x" "工作副本：相對路徑照舊放行" "" "$wt"
+  git -C "$mainr" config core.hooksPath "$mainhooks"
+  chmod -x "$mainr/.githooks/pre-push"   # 工作副本自己那份還是齊的
+  tb 2 "git push origin HEAD" "工作副本：解析出來的資料夾缺可執行的 pre-push，擋（看的是它，不是自己的 .githooks）" "pre-push" "$wt"
+
   # 守衛 3：把 hook 關掉的寫法
   tb 2 "git -c core.hooksPath=/dev/null commit -m x" "私人內容：-c core.hooksPath= 擋（即使目標有啟用）" "core.hooksPath"
   tb 2 "git -c core.hooksPath=.githooks push" "私人內容：-c core.hooksPath=.githooks 也擋（不管值是什麼）" "core.hooksPath"

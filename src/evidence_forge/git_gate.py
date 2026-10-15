@@ -2,7 +2,8 @@
 
 設計是創作者定的：**主關卡是 git 原生 hook**（`.githooks/pre-commit`、`commit-msg`、`pre-push`，
 `git config core.hooksPath .githooks` 啟用）。Claude 守衛的工作變成兩件事：
-1. 目標 repo 沒有啟用這些 hook（`core.hooksPath` 不是 `.githooks`、或 hook 檔缺了）就擋下
+1. 目標 repo 沒有啟用這些 hook（`core.hooksPath` 解析出來不是這個工作副本或主 checkout 的 `.githooks`、
+   或那個資料夾裡 hook 檔缺了）就擋下
    `git commit`／`git push`／`gh pr create`／`gh pr merge`——沒有 hook 的 repo，守衛一個一個指令掃也掃不乾淨。
 2. 不准用指令把 hook 關掉：`-c core.hooksPath=…`、`GIT_CONFIG_*` 環境變數、碰 `core.hooksPath` 的 `git config`、
    `--no-verify`、`git commit -n`（任何位置）。
@@ -345,19 +346,29 @@ def _hooks_problem(inv: Invocation) -> str | None:
     base = ["-C", str(d), *inv.git_opts]
     try:
         top = Path(_git([*base, "rev-parse", "--show-toplevel"]).strip())
+        common = Path(_git([*base, "rev-parse", "--path-format=absolute", "--git-common-dir"]).strip())
         value = _git([*base, "config", "--get", "core.hooksPath"], ok=(0, 1)).strip()
     except GuardError:
         return "那裡讀不到 git repo，不知道 hook 有沒有啟用。"
     if not value:
         return "那個 repo 沒設 core.hooksPath，私人內容 hook 沒有啟用。"
     configured = Path(value).expanduser()
-    resolved = configured if configured.is_absolute() else top / configured
-    expected = top / ".githooks"
-    if resolved.resolve() != expected.resolve():
-        return "那個 repo 的 core.hooksPath 不是 .githooks，私人內容 hook 沒有啟用。"
-    missing = [name for name in _HOOKS if not os.access(expected / name, os.X_OK)]
+    resolved = (configured if configured.is_absolute() else top / configured).resolve()
+    # 接受兩個位置（#133）：這個工作副本自己的 .githooks，或主 checkout 的 .githooks。
+    # 開工作副本的工具會把共用設定改寫成主 checkout 的絕對路徑；那樣跑的永遠是主 checkout 那一份，
+    # 子代理在自己分支上改 hook 檔也改不到它。主 checkout 從共用的 .git 往上一層算，不寫死；
+    # 共用目錄不叫 .git（bare repo、--separate-git-dir）時上一層不是 checkout，就不認第二個位置。
+    accepted = [(top / ".githooks").resolve()]
+    if common.name == ".git":
+        accepted.append((common.parent / ".githooks").resolve())
+    accepted = list(dict.fromkeys(accepted))
+    if resolved not in accepted:
+        names = " 或 ".join(f"`{p}`" for p in accepted)
+        return f"那個 repo 的 core.hooksPath 解析出來是 `{resolved}`，只接受 {names}，私人內容 hook 沒有啟用。"
+    # hook 檔要檢查的是 git 真的會去跑的那個資料夾，不是這個工作副本自己的 .githooks
+    missing = [name for name in _HOOKS if not os.access(resolved / name, os.X_OK)]
     if missing:
-        return f"那個 repo 的 .githooks 缺了可執行的 {'、'.join(missing)}，私人內容 hook 沒有完整啟用。"
+        return f"那個 repo 的 hook 資料夾 `{resolved}` 缺了可執行的 {'、'.join(missing)}，私人內容 hook 沒有完整啟用。"
     return None
 
 

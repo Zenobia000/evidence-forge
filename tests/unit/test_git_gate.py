@@ -203,6 +203,80 @@ def test_絕對路徑的hooksPath指到同一個_githooks也算啟用(hooked: Pa
     assert _check("git commit", hooked) == []
 
 
+# ── 工作副本（#133）：開工作副本的工具會把共用設定改寫成主 checkout 的絕對路徑 ──────
+
+
+def _hook_dir(at: Path) -> Path:
+    """在 `at/.githooks` 放三個可執行的 hook，回傳那個資料夾。"""
+    hooks = at / ".githooks"
+    hooks.mkdir(parents=True)
+    for name in ("pre-commit", "commit-msg", "pre-push"):
+        hook = hooks / name
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+    return hooks
+
+
+@pytest.fixture
+def main_and_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """主 checkout（.githooks 有進版控）與它開出來的一個工作副本；設定是兩邊共用的那一份。"""
+    main = tmp_path / "main"
+    _hook_dir(main)
+    _git(main, "init", "-q", "-b", "main")
+    _git(main, "add", ".githooks")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
+    return main, wt
+
+
+def test_工作副本_hooksPath是主checkout的絕對路徑_放行(main_and_worktree: tuple[Path, Path]) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", str(main / ".githooks"))
+
+    assert _check("git commit -m x", wt) == []
+    assert _check("git push origin HEAD", wt) == []
+
+
+def test_工作副本_hooksPath是別處的絕對路徑_擋_說明列出兩種可接受的值(
+    main_and_worktree: tuple[Path, Path], tmp_path: Path
+) -> None:
+    main, wt = main_and_worktree
+    elsewhere = _hook_dir(tmp_path / "elsewhere")  # hook 齊全也不行：位置不對
+    _git(main, "config", "core.hooksPath", str(elsewhere))
+
+    own, shared = str((wt / ".githooks").resolve()), str((main / ".githooks").resolve())
+    problems = _check("git commit -m x", wt)
+    assert any("core.hooksPath" in p and own in p and shared in p for p in problems), problems
+
+
+def test_工作副本_相對路徑照舊放行(main_and_worktree: tuple[Path, Path]) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", ".githooks")
+
+    assert _check("git commit -m x", wt) == []
+
+
+def test_工作副本_解析出來的資料夾缺hook就擋_看的是它不是自己的githooks(
+    main_and_worktree: tuple[Path, Path],
+) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", str(main / ".githooks"))
+    (main / ".githooks" / "pre-push").unlink()  # 工作副本自己那份還是齊的
+
+    assert any("pre-push" in p for p in _check("git push origin HEAD", wt))
+
+
+def test_工作副本_自己的githooks缺了_但解析到主checkout那份齊全_放行(
+    main_and_worktree: tuple[Path, Path],
+) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", str(main / ".githooks"))
+    (wt / ".githooks" / "commit-msg").chmod(0o644)  # 不會被跑到的那份，缺不缺不影響
+
+    assert _check("git commit -m x", wt) == []
+
+
 def test_把hook關掉的寫法都擋(hooked: Path) -> None:
     blocked = [
         "git -c core.hooksPath=/dev/null commit -m x",
