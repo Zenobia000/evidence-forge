@@ -14,6 +14,7 @@ ADR_0017 = (
 )
 ADR_0023 = REPO_ROOT / "docs" / "10-truth" / "adr" / "0023-chat-room-tokens.md"
 CHAT_CSS = CSS_DIR / "chat.css"
+PERSONA_CSS = CSS_DIR / "persona.css"
 
 # S0 要用的四組前綴；--source-*、--license-*、--asset-* 是 S3 才加的，不在這裡檢查。
 S0_PREFIXES = ("job", "check", "claim", "genre")
@@ -124,7 +125,20 @@ def test_chat_css_uses_only_defined_variables_and_no_hard_coded_colors(
     assert "@import" not in body
 
 
-@pytest.mark.parametrize("path", [TOKENS_CSS, S0_CSS, CHAT_CSS], ids=lambda p: p.name)
+def test_persona_css_uses_only_defined_variables_and_no_hard_coded_colors(
+    tokens_css: str, s0_css: str
+) -> None:
+    # 角色頁（#116）的樣式：只用 token（ADR-0023），沒有寫死的顏色
+    css = PERSONA_CSS.read_text(encoding="utf-8")
+    assert _used(css), "persona.css 沒用到任何 token？檢查變空轉了"
+    missing = _used(css) - _defined(tokens_css) - _defined(s0_css) - _defined(CHAT_CSS.read_text(encoding="utf-8"))
+    assert not missing, f"persona.css 用到但沒定義的變數：{sorted(missing)}"
+    body = _strip_comments(css)
+    assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", body)
+    assert not re.findall(r"\b(?:rgba?|hsla?)\(", body)
+
+
+@pytest.mark.parametrize("path", [TOKENS_CSS, S0_CSS, CHAT_CSS, PERSONA_CSS], ids=lambda p: p.name)
 def test_css_loads_nothing_from_outside(path: Path) -> None:
     # 不載網路字型、不連 CDN：中文用系統字型，英文字型自己放（ADR-0017 §3.3）。
     body = _strip_comments(path.read_text(encoding="utf-8"))

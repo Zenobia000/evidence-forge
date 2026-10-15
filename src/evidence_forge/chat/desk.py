@@ -266,35 +266,8 @@ class Desk:
         return self._result(job_id, article_stage, "文章")
 
     def personas(self) -> dict[str, Any]:
-        """現有的角色：`authors/` 底下每個資料夾一個（`_`、`.` 開頭的是範本或暫存，不算）。
-
-        每個角色附預設文體、寫過風格的文體（`genres/<文體>.md`）與其中校準過的
-        （front matter 寫 `calibrated: true`）；只列 7 種，舊的 12 種文類與範本檔不算。
-        沒校準的文體寫出來標未校準。匯入角色前的備份放在 `authors/.backup/`，`.` 開頭，不算角色。
-        """
-        root = self._data.authors
-        found: list[dict[str, Any]] = []
-        if root.is_dir():
-            for folder in sorted(root.iterdir()):
-                if not folder.is_dir() or folder.name.startswith(("_", ".")):
-                    continue
-                written = [
-                    slug for slug in sorted(GENRE_NAME) if (folder / "genres" / f"{slug}.md").is_file()
-                ]
-                default = default_genre(self._data, folder.name)
-                persona: dict[str, Any] = {
-                    "name": folder.name,
-                    # 舊角色的預設文類可能還是 12 種的 id：不認得的不列，免得看起來像第 8 種文體
-                    "default_genre": default if default in GENRE_NAME else None,
-                    "written_genres": written,
-                    "calibrated_genres": [
-                        slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
-                    ],
-                }
-                if default is not None and default not in GENRE_NAME:
-                    persona["note"] = f"預設文體 {default} 不是現在的 7 種之一，當成沒有預設文體"
-                found.append(persona)
-        return {"personas": found}
+        """現有的角色（閘道的 `list_personas`）；清單怎麼來的見模組層的 `list_personas`。"""
+        return list_personas(self._data)
 
     def _result(
         self,
@@ -329,6 +302,38 @@ class Desk:
 
 # 報告「建議文體」的寫法：中文名（slug），括號全形半形都收
 _NAME_AND_SLUG = re.compile(r"^(.+?)\s*[（(]\s*([^）)]+?)\s*[）)]$")
+
+
+def list_personas(data: DataDir) -> dict[str, Any]:
+    """現有的角色：`authors/` 底下每個資料夾一個（`_`、`.` 開頭的是範本或暫存，不算）。
+
+    每個角色附預設文體、寫過風格的文體（`genres/<文體>.md`）與其中校準過的
+    （front matter 寫 `calibrated: true`）；只列 7 種，舊的 12 種文類與範本檔不算。
+    沒校準的文體寫出來標未校準。匯入角色前的備份放在 `authors/.backup/`，`.` 開頭，不算角色。
+
+    對話的 `list_personas` 工具與「角色」頁（#116）都走這一份，兩邊看到的角色清單一定一樣。
+    """
+    root = data.authors
+    found: list[dict[str, Any]] = []
+    if root.is_dir():
+        for folder in sorted(root.iterdir()):
+            if not folder.is_dir() or folder.name.startswith(("_", ".")):
+                continue
+            written = [slug for slug in sorted(GENRE_NAME) if (folder / "genres" / f"{slug}.md").is_file()]
+            default = default_genre(data, folder.name)
+            persona: dict[str, Any] = {
+                "name": folder.name,
+                # 舊角色的預設文類可能還是 12 種的 id：不認得的不列，免得看起來像第 8 種文體
+                "default_genre": default if default in GENRE_NAME else None,
+                "written_genres": written,
+                "calibrated_genres": [
+                    slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
+                ],
+            }
+            if default is not None and default not in GENRE_NAME:
+                persona["note"] = f"預設文體 {default} 不是現在的 7 種之一，當成沒有預設文體"
+            found.append(persona)
+    return {"personas": found}
 
 
 def _calibrated(style: Path) -> bool:

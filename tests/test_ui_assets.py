@@ -108,6 +108,15 @@ def test_inner_html_only_receives_server_fragments() -> None:
         assert "innerHTML" not in (STATIC / "js" / name).read_text(encoding="utf-8"), name
 
 
+def test_persona_pages_load_their_own_css_and_module_only() -> None:
+    # 角色頁（#116）的樣式與 script 只在這兩頁載，不加進共用的 base.html（上面那條測試盯著它）
+    for name in ("personas.html", "persona.html"):
+        html = (UI_DIR / "templates" / name).read_text(encoding="utf-8")
+        assert re.findall(r'<link rel="stylesheet" href="([^"]+)"', html) == ["/static/css/persona.css"], name
+        assert re.findall(r'<script[^>]*src="([^"]+)"', html) == ["/static/js/persona.js"], name
+    assert (STATIC / "css" / "persona.css").is_file() and (STATIC / "js" / "persona.js").is_file()
+
+
 def test_the_layout_loads_tokens_before_s0_and_chat_last() -> None:
     html = (UI_DIR / "templates" / "base.html").read_text(encoding="utf-8")
     hrefs = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)

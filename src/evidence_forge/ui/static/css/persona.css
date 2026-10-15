@@ -1,0 +1,27 @@
+/* 角色頁（票 116）：只用 tokens.css 與 s0.css 的 token，不寫死顏色（ADR-0023）。 */
+.pr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.pr-card { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; }
+.pr-card__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.pr-facts { margin: 0; display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.pr-facts dt { font-size: 12px; color: var(--color-text-secondary); }
+.pr-facts dd { margin: 2px 0 0; font-size: 15px; font-weight: 600; }
+.pr-missing { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.pr-problem { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--color-danger); }
+.pr-problem svg { width: 14px; height: 14px; flex: none; margin-top: 3px; }
+.pr-form { display: grid; gap: 20px; margin-bottom: 20px; }
+.pr-rename { min-width: 260px; }
+.pr-missing-box { margin-bottom: 16px; }
+.pr-part { margin-bottom: 16px; padding: 20px 24px; }
+.pr-part__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.pr-fallback { margin: 0 0 12px; }
+.pr-file { border-top: 1px solid var(--color-border-subtle); padding: 10px 0; }
+.pr-file:last-child { border-bottom: 1px solid var(--color-border-subtle); }
+.pr-file > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; cursor: pointer; min-height: 32px; }
+.pr-file > summary:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; }
+.pr-meta { margin: 12px 0 0; padding: 10px 12px; display: grid; gap: 4px; border-radius: var(--radius-md); background: var(--color-bg-surface); font-size: 13px; }
+.pr-meta div { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.pr-meta dt { color: var(--color-text-secondary); min-width: 120px; }
+.pr-meta dd { margin: 0; overflow-wrap: anywhere; }
+.pr-md { margin-top: 12px; }
+.pr-md h1, .pr-md h2, .pr-md h3 { font-size: 16px; font-weight: 600; margin: 16px 0 8px; }
+.pr-lessons { margin: 0 0 12px; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{# 一個角色（票 116）：資料夾的每一部分唯讀顯示；缺的標出來、說明用什麼預設。
+   規格在 persona.PARTS（一份），這裡只負責畫。Markdown 已在伺服器端轉成安全的 HTML（ui/markdown.py）。 #}
+{% block head %}<link rel="stylesheet" href="/static/css/persona.css">{% endblock %}
+{% macro file_view(f) %}
+<details class="pr-file">
+<summary><span class="s0-mono">{{ f.path }}</span>
+{% for k, v in f.meta if k == "calibrated" %}{% if v == "true" %}<span class="s0-badge" data-tone="complete">校準過</span>{% else %}<span class="s0-badge" data-tone="genre">{{ icon("question") }}未校準</span>{% endif %}{% endfor %}
+{% if f.state == "unsafe" %}<span class="s0-badge" data-tone="failed">不讀：指到角色資料夾之外</span>{% elif f.state == "unreadable" %}<span class="s0-badge" data-tone="failed">不是 UTF-8 的文字檔，讀不出來</span>{% endif %}
+</summary>
+{% if f.state == "ok" %}
+{% if f.meta %}<dl class="pr-meta">{% for k, v in f.meta %}<div><dt class="s0-mono">{{ k }}</dt><dd>{{ v }}</dd></div>{% endfor %}</dl>{% endif %}
+<div class="ch-md pr-md">{{ f.html }}</div>
+{% endif %}
+</details>
+{% endmacro %}
+{% block content %}
+<main class="s0-main" style="max-width: 1000px; margin: 0 auto">
+<p class="s0-small" style="margin: 0 0 8px"><a href="/personas">← 所有角色</a></p>
+<div class="s0-pagehead">
+<div>
+<h1 class="s0-h1" data-display-name>{{ d.shown }}</h1>
+<p class="s0-sub">資料夾 <span class="s0-mono">authors/{{ d.name }}/</span>。這一頁只能看，不能改檔案。</p>
+</div>
+<form class="pr-rename" id="persona-rename" data-persona="{{ d.name }}" novalidate>
+<div class="s0-field">
+<label for="f-display">顯示名稱</label>
+<div class="s0-row"><input id="f-display" type="text" name="display_name" value="{{ d.shown if d.has_display_name else '' }}" placeholder="{{ d.name }}" maxlength="40" autocomplete="off" style="max-width: 220px"><button class="lm-btn lm-btn--line" data-variant="quiet" type="submit">改名</button></div>
+<span class="s0-field__hint" role="status" aria-live="polite" data-result>只改畫面上的名字，資料夾名稱不變。</span>
+</div>
+</form>
+</div>
+
+<div class="s0-stats" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+<div class="s0-panel s0-stat"><span class="s0-stat__label">寫過</span><span class="s0-stat__num">{{ d.articles }} 篇</span><span class="s0-stat__note">{{ d.versions }} 個版本；同一篇的 v1、v2… 算一篇，只算真的交出文章的</span></div>
+<div class="s0-panel s0-stat"><span class="s0-stat__label">文體校準</span><span class="s0-stat__num">{{ d.genres|selectattr("calibrated")|list|length }} / 7</span><span class="s0-stat__note">寫過風格的有 {{ d.genres|selectattr("written")|list|length }} 種；沒校準的稿子會標「未校準」</span></div>
+</div>
+
+{% if d.missing %}
+<div class="s0-note pr-missing-box" role="status">
+<p style="margin: 0 0 8px; font-weight: 600">缺了 {{ d.missing|length }} 個部分，先用通用預設</p>
+<ul style="margin: 0; padding-left: 20px">
+{% for m in d.missing %}<li><strong>{{ m.label }}</strong>（<span class="s0-mono">{{ m.path }}</span>）{% if m.required %}<span class="s0-badge" data-tone="failed">必要</span>{% endif %}：{{ m.fallback }}</li>{% endfor %}
+</ul>
+</div>
+{% endif %}
+
+{% for p in d.parts %}
+<section class="s0-panel pr-part" id="part-{{ p.spec.key }}" aria-labelledby="h-{{ p.spec.key }}">
+<div class="pr-part__head">
+<h2 class="s0-h2" id="h-{{ p.spec.key }}" style="margin: 0">{{ p.spec.label }}</h2>
+<span class="s0-mono s0-small">{{ p.spec.path }}</span>
+{% if p.present %}<span class="s0-badge" data-tone="complete">有</span>{% else %}<span class="s0-badge" data-tone="{{ 'failed' if p.spec.required else 'pending' }}">缺</span>{% endif %}
+</div>
+<p class="s0-small" style="margin: 4px 0 12px">{{ p.spec.holds }}</p>
+{% if not p.present %}<p class="s0-small pr-fallback"><strong>用通用預設：</strong>{{ p.spec.fallback }}</p>{% endif %}
+
+{% if p.spec.key == "genres" %}
+<div class="s0-tablewrap"><table class="s0-table" aria-label="7 種文體">
+<thead><tr><th>文體</th><th>slug</th><th>這個角色的風格檔</th></tr></thead>
+<tbody>{% for g in d.genres %}<tr><td>{{ g.name }}</td><td class="s0-mono">{{ g.slug }}</td><td>{% if not g.written %}<span class="s0-badge" data-tone="pending">沒有，標未校準</span>{% elif g.calibrated %}<span class="s0-badge" data-tone="complete">校準過</span>{% else %}<span class="s0-badge" data-tone="genre">{{ icon("question") }}未校準</span>{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% elif p.spec.key == "lessons" and d.lessons %}
+<p class="s0-small" style="margin: 0 0 8px">最近 {{ d.lessons|length }} 筆（共 {{ d.lessons_total }} 筆，新的在上）。寫稿與訪談開工前讀的就是最近 10 筆。</p>
+<ol class="pr-lessons">{% for item in d.lessons %}<li>{{ item }}</li>{% endfor %}</ol>
+{% elif p.spec.key == "brand" %}
+{% if d.brand_problem %}<p class="s0-small pr-problem" role="alert">{{ icon("warn") }}{{ d.brand_problem }}。配圖會停下來，直到改好。</p>{% endif %}
+{% if d.brand_rows %}<div class="s0-tablewrap"><table class="s0-table" aria-label="brand.yaml">
+<thead><tr><th>欄位</th><th>值</th></tr></thead>
+<tbody>{% for k, v in d.brand_rows %}<tr><td class="s0-mono">{{ k }}</td><td class="s0-mono">{{ v }}</td></tr>{% endfor %}</tbody>
+</table></div>
+<p class="s0-small" style="margin: 8px 0 0">表裡只列檔案裡寫了的欄位；沒寫的用中性預設值。</p>{% endif %}
+{% endif %}
+
+{% if p.spec.key == "brand" %}
+{% for f in p.files if f.state != "ok" %}{{ file_view(f) }}{% endfor %}
+{% else %}
+{% for f in p.files %}{{ file_view(f) }}{% endfor %}
+{% endif %}
+</section>
+{% endfor %}
+</main>
+<script type="module" src="/static/js/persona.js"></script>
+{% endblock %}
