@@ -313,6 +313,15 @@ ins.ch-ins { text-decoration: none; background: var(--diff-insert); }
 .ch-event svg { width: 12px; height: 12px; }
 .s0-badge[data-tone="reconfirm"] { background: var(--color-accent-action); border-color: transparent; color: var(--color-on-action); font-weight: 600; }
 
+/* lesson 提議的小卡（#114）：agent 提議、創作者按同意或不要。一樣只用既有的 token。 */
+.ch-lesson { margin-left: 38px; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: var(--radius-md); background: var(--color-bg-page); border: 1.5px dashed var(--color-border-strong); }
+.ch-lesson__kind { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); }
+.ch-lesson__kind svg { width: 14px; height: 14px; }
+.ch-lesson__text { margin: 0; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.ch-lesson__why, .ch-lesson__note { margin: 0; font-size: 13px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.ch-lesson__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ch-lesson[aria-busy="true"] .ch-lesson__actions { opacity: 0.6; }
+
 /* 訪談的補充（#108）：設計稿沒畫、但實作要用的小東西。一樣只用既有的 token。 */
 .ch-src[data-src="pick"] { border-style: dashed; }
 .ch-convo__side { display: inline-flex; align-items: center; gap: 8px; }

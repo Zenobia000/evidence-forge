@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 from chat_world import fake_chat_harness, pid_alive, wait_until
 
-from evidence_forge import conversations
+from evidence_forge import conversations, lesson_proposals
 from evidence_forge.chat.desk import Desk
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound, Subscription
 from evidence_forge.chat.pi_rpc import session_dir
@@ -555,3 +555,173 @@ def test_畫面卡住時事件有上限_同一張工單的進度只留最新一�
         assert len(got) == 10
 
     asyncio.run(run())
+
+
+# --- lesson 提議的決定通知（#114）：進了 Pi 的紀錄才記 notified，沒送到的重開後補送 -----------------
+
+
+def _lesson_persona(world: World) -> None:
+    persona = world.data.authors / "nightowl"
+    persona.mkdir(parents=True)
+    (persona / "voice.md").write_text("夜貓的聲音\n", encoding="utf-8")
+
+
+def _lesson_world(world: World) -> tuple[str, str]:
+    """一個有虛構角色 `nightowl` 的對話，agent 提議了一筆、創作者同意了（沒經過主機）。回（對話 id, 提議編號）。"""
+    _lesson_persona(world)
+    cid = world.conversation()
+    proposal = lesson_proposals.propose(
+        world.data, cid, "nightowl", "第 2 篇｜開頭用了問句 → 開頭直接講結論", "創作者說不要問句", now=NOW
+    ).proposal
+    lesson_proposals.approve(world.data, cid, proposal.id, now=NOW)
+    return cid, proposal.id
+
+
+def _lesson_commands(world: World, cid: str) -> list[str]:
+    return [
+        c["message"] for c in world.commands(cid) if str(c.get("message", "")).startswith("/ef-lesson ")
+    ]
+
+
+def _notified(world: World, cid: str, proposal_id: str) -> bool:
+    return next(p for p in lesson_proposals.read_proposals(world.data, cid) if p.id == proposal_id).notified
+
+
+def test_決定之後主機在通知送到之前當掉_重開補送_進了紀錄才記_notified(world: World) -> None:
+    cid, proposal = _lesson_world(world)
+    assert not _notified(world, cid, proposal)
+
+    world.host()  # 啟動時的補送（sweep）開 Pi、送 /ef-lesson
+
+    wait_until(lambda: _notified(world, cid, proposal), what="通知進了 Pi 的紀錄、記下 notified")
+    assert _lesson_commands(world, cid) == [f"/ef-lesson {proposal} approved nightowl"]
+    assert [m["customType"] for m in world.session(cid) if m.get("role") == "custom"] == ["ef-lesson"]
+    # 之後的主機重開：已經有 notified，不再送
+    second = world.host()
+    second.send(cid, "嗨")
+    wait_until(lambda: world.replies(cid) == ["回覆：嗨"], what="Pi 回答")
+    assert _lesson_commands(world, cid) == [f"/ef-lesson {proposal} approved nightowl"]
+
+
+def test_通知已經在_Pi_紀錄裡_只是沒記到_notified_補記就好_不再送(world: World) -> None:
+    cid, proposal = _lesson_world(world)
+    first = world.host()
+    wait_until(lambda: _notified(world, cid, proposal), what="第一次送到")
+    first.close()
+    # 模擬主機在記 notified 之前被硬殺：把那一行拿掉
+    path = world.data.conversation_dir(cid) / lesson_proposals.PROPOSED_FILE
+    kept = [line for line in path.read_text(encoding="utf-8").splitlines() if '"notified"' not in line]
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    assert not _notified(world, cid, proposal)
+
+    second = world.host()
+    second.send(cid, "嗨")  # 開 Pi 接回：先讀紀錄，通知已經在裡面
+    wait_until(lambda: _notified(world, cid, proposal), what="照紀錄補記 notified")
+
+    assert _lesson_commands(world, cid) == [f"/ef-lesson {proposal} approved nightowl"]
+
+
+def test_不要也一樣通知_ef_lesson_處理時丟錯_過一下再送_還是只有一則(world: World) -> None:
+    _lesson_persona(world)
+    cid = world.conversation()
+    written = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    host = world.host(world.harness(fail_lesson=1), notice_retry_s=0.2)
+
+    host.reject_lesson(cid, written.proposal.id)
+
+    wait_until(lambda: _notified(world, cid, written.proposal.id), what="重送之後送到")
+    assert _lesson_commands(world, cid) == [f"/ef-lesson {written.proposal.id} rejected nightowl"] * 2
+    assert len([m for m in world.session(cid) if m.get("customType") == "ef-lesson"]) == 1
+    # 同一個 Pi 沒有重開：是在它活著的期間重送的
+    assert conversations.read(world.data, cid).launches == 1
+
+
+def test_ef_lesson_一直丟錯_重試用完_推_ef_error_決定留著沒有_notified_等下次接回(world: World) -> None:
+    _lesson_persona(world)
+    cid = world.conversation()
+    written = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    host = world.host(world.harness(fail_lesson=99), notice_retry_s=0.05)
+
+    async def collect() -> str:
+        subscription = host.subscribe(cid, asyncio.get_running_loop())
+        try:
+            # 現況送完之後才按「不要」，才收得到之後的錯誤
+            first = await asyncio.wait_for(subscription.get(), 10)
+            assert first is not None
+            await asyncio.to_thread(host.reject_lesson, cid, written.proposal.id)
+            while True:
+                event = await asyncio.wait_for(subscription.get(), 15)
+                assert event is not None
+                if event.get("type") == "ef_error":
+                    return str(event["message"])
+        finally:
+            host.unsubscribe(cid, subscription)
+
+    message = asyncio.run(collect())
+
+    assert written.proposal.id in message and "下次接回時再送" in message
+    assert not _notified(world, cid, written.proposal.id)
+    # 決定本身已經記下，只是通知沒送到
+    assert [p.status for p in lesson_proposals.read_proposals(world.data, cid)] == ["rejected"]
+
+
+def test_Pi_在_send_回傳之前就回應_回應也算數_不會一直不閒置(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """回應在指令寫出去的同時就到（讀取執行緒另外在跑）：登記要在寫之前，不然回應找不到人、`pending` 永遠不歸零。
+
+    這裡讓 `PiProcess._write` 不真的寫，改成當場餵一則成功的 `response`：登記晚於寫的話，回應就先到了。
+    `/ef-lesson` 不開新的一輪，`pending` 沒有別的歸零機會；`/ef-job-done` 與 `/ef-card` 走同一個 `send`。
+    """
+    from evidence_forge.chat.pi_rpc import PiProcess
+
+    cid, proposal = _lesson_world(world)
+    host = world.host()
+    wait_until(lambda: _notified(world, cid, proposal), what="啟動時的補送")
+    # Pi 已經開著；之後的指令都「立刻回應、不真的寫」
+    live = host._live[cid]
+    answered: list[str] = []
+
+    def answer_first(self: PiProcess, command: dict[str, Any], request_id: str) -> None:
+        answered.append(str(command["message"]).split()[0])
+        host._on_pi_event(cid, self.key, {"type": "response", "id": request_id, "success": True, "command": "prompt"})
+
+    monkeypatch.setattr(PiProcess, "_write", answer_first)
+
+    second = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    lesson_proposals.reject(world.data, cid, second.proposal.id, now=NOW)
+    host._deliver_lessons(cid)
+    host._deliver_card(cid, "/ef-card card-x 1 submit 1")
+    job_id = world.job(cid)
+    world.finish(job_id)
+    with host._conversation_lock(cid):
+        host._notify(cid, live, job_id)
+
+    assert answered == ["/ef-lesson", "/ef-card", "/ef-job-done"]
+    assert live.pending == 0
+    assert live.lesson_notice_ids == {} and live.card_notice_ids == set() and live.notice_ids == {}
+
+
+def test_重試用完放棄的通知_同一個_Pi_不會被下一個決定帶出去_下次開_Pi_才重來(world: World) -> None:
+    _lesson_persona(world)
+    cid = world.conversation()
+    first = lesson_proposals.propose(world.data, cid, "nightowl", "第 3 篇｜結尾寫了口號 → 收在一個動作", "不要口號", now=NOW)
+    # 第一筆：送出去加三次重試都丟錯（共 4 次），然後放棄；第二筆之後的指令都成功
+    host = world.host(world.harness(fail_lesson=4), notice_retry_s=0.05)
+    host.reject_lesson(cid, first.proposal.id)
+    first_command = f"/ef-lesson {first.proposal.id} rejected nightowl"
+    wait_until(lambda: _lesson_commands(world, cid).count(first_command) == 4, what="重試用完")
+    live = host._live[cid]
+    wait_until(lambda: f"{first.proposal.id} rejected" in live.lessons_given_up, what="放棄")
+
+    second = lesson_proposals.propose(world.data, cid, "nightowl", "第 4 篇｜標題太長 → 標題限 20 字", "太長", now=NOW)
+    host.reject_lesson(cid, second.proposal.id)
+
+    wait_until(lambda: _notified(world, cid, second.proposal.id), what="第二筆送到")
+    # 第二筆來的時候，放棄的第一筆沒有被一起帶出去
+    assert _lesson_commands(world, cid).count(first_command) == 4
+    assert not _notified(world, cid, first.proposal.id)
+    # 下次開 Pi（新的一次開）才重來：第一筆補送、送到（假 Pi 的丟錯次數是每個程序各算，新的 Pi 改成不丟錯）
+    world.harness()
+    host.stop_conversation(cid, "shutdown")
+    host.send(cid, "嗨")
+    wait_until(lambda: _notified(world, cid, first.proposal.id), what="新的 Pi 補送")
+    assert conversations.read(world.data, cid).launches == 2

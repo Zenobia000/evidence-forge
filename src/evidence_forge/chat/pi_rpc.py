@@ -283,9 +283,16 @@ class PiProcess:
             and not self._exited.is_set()
         )
 
-    def send(self, command: Record) -> str:
-        """送一個指令，不等回應；回傳它的 `id`。Pi 已經結束就丟 `PiExited`。"""
+    def send(self, command: Record, on_id: Callable[[str], None] | None = None) -> str:
+        """送一個指令，不等回應；回傳它的 `id`。Pi 已經結束就丟 `PiExited`。
+
+        `on_id(id)` 在寫出去**之前**呼叫：呼叫的人要記「這個 id 的回應我在等」，就得在這裡記。
+        Pi 可能在 `send` 回傳之前就回應了（讀取執行緒另外在跑），回傳之後才記，回應就找不到人了。
+        寫不出去（丟 `PiExited`）時 `on_id` 登記過的東西由呼叫的人收掉。
+        """
         request_id = f"ef-{next(self._ids)}"
+        if on_id is not None:
+            on_id(request_id)
         self._write(command, request_id)
         return request_id
 

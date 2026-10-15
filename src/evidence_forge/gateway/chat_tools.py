@@ -22,6 +22,10 @@
   寫完叫工作台的 `card_changed`，對話主機據此推 `ef_card` 給畫面。
   畫面才能叫的 `submit_station`、`keep_decision`、`reask_station` **不在這裡**：對話主機的 API 直接叫 `cards.py`，
   對話的 Pi 叫不到（`app.py` 照 `UI_ONLY_TOOLS` 一律 403）。
+- `propose_lesson(persona, text, why)`：agent 提議一筆 lesson（ADR-0026 §3.3、#114），只記進這個對話自己的
+  `lessons-proposed.jsonl`，**不寫角色資料夾**；規則在 `lesson_proposals.py`。寫完叫工作台的 `lesson_changed`，畫面據此放一張
+  「同意／不要」的小卡。同意（`approve_lesson`）與不要（`reject_lesson`）只由畫面叫，**不在這裡**：`UI_ONLY_TOOLS` 一律 403，
+  同意之後由閘道把那一行附加到 `authors/<角色>/lessons.md`。
 
 範圍：
 - 只碰得到列在這個對話 `jobs.jsonl` 裡的工單，別的對話的一律 403，而且不說那張單存不存在。
@@ -48,7 +52,7 @@ from typing import Any, Protocol
 
 from starlette.concurrency import run_in_threadpool
 
-from evidence_forge import cards, conversations
+from evidence_forge import cards, conversations, lesson_proposals
 from evidence_forge.lessons import latest_lessons
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import read_job
@@ -71,6 +75,7 @@ CHAT_TOOLS = (
             "job_status",
             "list_personas",
             "read_lessons",
+            "propose_lesson",
             "rewrite",
         }
     )
@@ -78,7 +83,17 @@ CHAT_TOOLS = (
 )
 # 只有畫面能叫的入口（ADR-0025 §3.3）：閘道的 /tools/ 拿任何鑰匙來都拒絕，對話主機的 API 直接叫 `cards.py`
 # 「照這張編輯卡寫稿」也是創作者按的（#110）：花錢開寫稿工單，只由畫面經對話主機叫
-UI_ONLY_TOOLS = frozenset({"submit_station", "keep_decision", "reask_station", "write_from_card"})
+# lessons 的同意與不要也是創作者按的（ADR-0026 §3.3、決定 G）：agent 只能 `propose_lesson`，寫角色資料夾的只有閘道
+UI_ONLY_TOOLS = frozenset(
+    {
+        "submit_station",
+        "keep_decision",
+        "reask_station",
+        "write_from_card",
+        "approve_lesson",
+        "reject_lesson",
+    }
+)
 # 還會花錢的狀態：排隊中的單等一下就會跑
 _RUNNING = frozenset({"queued", "running"})
 
@@ -191,6 +206,10 @@ class Desk(Protocol):
         """閘道替對話的 agent 寫了編輯卡的事件之後呼叫：對話主機據此推 `ef_card` 給畫面。"""
         ...
 
+    def lesson_changed(self, conversation_id: str, events: list[dict[str, Any]]) -> None:
+        """閘道替對話的 agent 記了一筆 lesson 提議之後呼叫：對話主機據此推 `ef_lesson` 給畫面。"""
+        ...
+
 
 def _optional(body: dict[str, Any], name: str) -> str | None:
     value = body.get(name)
@@ -227,6 +246,8 @@ class ChatTools:
             return await run_in_threadpool(desk.personas)
         if name == "read_lessons":
             return await run_in_threadpool(self._lessons, body)
+        if name == "propose_lesson":
+            return await run_in_threadpool(self._propose_lesson, desk, key, body)
         if name == "rewrite":
             return await self._rewrite(desk, key, body)
         if name in CARD_TOOLS:
@@ -237,6 +258,31 @@ class ChatTools:
         """一個角色最近十筆 lessons（`lessons.py`）；沒給角色就是創作者自己。"""
         persona = _optional(body, "persona") or AUTHOR
         return {"persona": persona, "lessons": latest_lessons(self._config.data, persona)}
+
+    def _propose_lesson(self, desk: Desk, key: ConversationKey, body: dict[str, Any]) -> dict[str, Any]:
+        """agent 提議一筆 lesson：只記提議，不寫角色資料夾（`lesson_proposals.propose`）。
+
+        範圍從鑰匙來：只記進這個對話自己的 `lessons-proposed.jsonl`，agent 指不到別的對話。
+        """
+        written = lesson_proposals.propose(
+            self._config.data,
+            key.conversation_id,
+            body.get("persona"),
+            body.get("text"),
+            body.get("why"),
+            now=self._config.clock(),
+        )
+        if written.events:
+            desk.lesson_changed(key.conversation_id, written.events)
+        proposal = written.proposal
+        return {
+            "proposal": proposal.id,
+            "persona": proposal.persona,
+            "status": proposal.status,
+            "created": written.created,
+            # 同意的話實際會寫進去的那一行：agent 照實轉告，不要說成已經存了
+            "line": proposal.preview,
+        }
 
     def _card_tool(
         self, desk: Desk, key: ConversationKey, name: str, body: dict[str, Any]

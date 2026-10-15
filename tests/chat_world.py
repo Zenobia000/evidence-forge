@@ -6,12 +6,14 @@
   一輪回答發 `agent_start` → 使用者訊息的 `message_end` → 助理訊息的 `message_end` → `agent_settled`。
   回答要花多久看設定的 `turn_s`（在另一條執行緒跑，stdin 照樣在讀）。
 - `/ef-card <卡> <n> <動作> <關>`：編輯卡的通知，跟 `/ef-job-done` 一樣馬上處理、照紀錄去重、開一輪。
+- `/ef-lesson <提議> <approved|rejected> <角色>`：lesson 提議的通知：照提議與決定去重，放一則 `custom` 訊息，**不開一輪**。
 - `/ef-job-done <工單>`：擴充指令，馬上處理（正在回答也一樣）。紀錄裡已經有這張單的 `ef-job` 通知就什麼都不做；
   沒有就放一則 `custom` 訊息（`message_end` 事件），再開一輪回答（正在回答就排在後面）。
 - `get_messages`：回完整紀錄；`slow_get_messages_s` 讓它晚一點回，後送的指令的回應會先到。
 - stdin 關掉就結束；`ignore_eof` 時不結束（模擬卡住的 Pi，給殺孤兒的測試）。
 - `stuck` 時根本不讀 stdin（模擬事件迴圈卡死的 Pi）。
 - `fail_job_done`／`reject_job_done`：前幾次 `/ef-job-done` 丟錯（`extension_error`、照樣回成功）或被拒。
+- `fail_lesson`：前幾次 `/ef-lesson` 丟錯（`extension_error`、照樣回成功）。
 - `start_delay_s`：接受 prompt 之後過這麼久才 `agent_start`。
 - `spawn_child`：開一個同群組的子程序（`sleep 300`），編號寫在 `--session-dir/child.pid`。
 
@@ -55,7 +57,8 @@ if os.path.exists(session_path):
 busy = False
 queue = []
 # 前幾次 /ef-job-done 故意失敗：丟錯（extension_error、照樣回成功）或被拒（success: false）
-failures = {"error": int(settings.get("fail_job_done", 0)), "reject": int(settings.get("reject_job_done", 0))}
+failures = {"error": int(settings.get("fail_job_done", 0)), "reject": int(settings.get("reject_job_done", 0)),
+            "lesson": int(settings.get("fail_lesson", 0))}
 if settings.get("spawn_child"):
     # Pi 開的子程序：跟 Pi 同一個程序群組、繼承它的環境變數
     import subprocess
@@ -154,6 +157,25 @@ def handle(command):
             keep({"role": "custom", "customType": "ef-card", "content": "[ef-card] " + text,
                   "display": True, "details": details})
             start_or_queue({"kind": "job", "job_id": parts[1]})
+        respond(command, data={"disposition": "handled"})
+        return
+    if text.startswith("/ef-lesson "):
+        if failures["lesson"] > 0:
+            failures["lesson"] -= 1
+            # 跟真的 Pi 一樣：處理函式丟錯時發 extension_error，然後照樣回成功
+            emit({"type": "extension_error", "extensionPath": "command:ef-lesson",
+                  "event": "command", "error": "boom"})
+            respond(command, data={"disposition": "handled"})
+            return
+        parts = text.split()
+        details = {"proposal": parts[1], "decision": parts[2], "persona": parts[3]}
+        already = any(
+            m.get("role") == "custom" and m.get("customType") == "ef-lesson" and m.get("details") == details
+            for m in messages
+        )
+        if not already:
+            keep({"role": "custom", "customType": "ef-lesson", "content": "[ef-lesson] " + text,
+                  "display": True, "details": details})
         respond(command, data={"disposition": "handled"})
         return
     if text.startswith("/ef-job-done "):
