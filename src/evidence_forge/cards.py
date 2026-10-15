@@ -18,9 +18,10 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
 
 **事件五種**（每筆都有 `n`（這張卡的第幾筆）、`type`、`ts`、`source`）：
 - `questions_proposed`：哪一關、問題卡（`id`、`header`、`question`、`kind?`、`options[{label, description, value?}]`）。
-  「其他」一定有，不記；第 3 關的「沒有例子」也是系統給的，不記。第 1 關一定有一張文體卡（`kind: genre`），
-  選項的 `value` 是文體的 slug（`GENRES`）；也可以各有一張主題卡（`kind: theme`，`value` 是 `THEMES`）與
-  角色卡（`kind: persona`，`value` 是現有的角色），編輯卡由此讀得到 `theme`、`persona`（#109）。
+  「其他」一定有，不記；第 3 關的「沒有例子」也是系統給的，不記。第 1 關一定有一張文體卡（`kind: genre`，
+  選項的 `value` 是文體的 slug，`GENRES`）與一張主題卡（`kind: theme`，`value` 是 `THEMES`，#109）；
+  角色卡（`kind: persona`，`value` 是現有的角色）可以不問，不問就是 `me`。編輯卡由此讀得到 `theme`、`persona`。
+  #109 之前提出、沒有主題卡的第 1 關照舊算得出來（`theme` 是 None），只是新提出的一定要有。
   #109 之前的文體卡沒有 `kind`：每個選項都帶 `value` 的那張就是文體卡（舊紀錄照樣讀得懂）。
   第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
 - `answered`：一張問題卡一筆；一關送出時一批寫（同一個 `submission`，一次 write 寫完）。
@@ -962,9 +963,15 @@ def _parse_questions(
             "第 1 關要有一張文體卡（只能一張）：kind 是 genre，每個選項帶文體的 slug"
             "（value，ADR-0026 的 7 種）",
         )
-    for single in ("theme", "persona"):
-        if sum(1 for q in found if q.kind == single) > 1:
-            raise ToolRejected(400, f"第 1 關的{_KIND_NAMES[single]}卡只能一張")
+    # 每篇只有一個主題（ADR-0026 §3.2）：第 1 關「文體＋主題」，主題卡也一定要一張；角色卡可以不問（就是 me）
+    if station == 1 and sum(1 for q in found if q.kind == "theme") != 1:
+        raise ToolRejected(
+            400,
+            "第 1 關要有一張主題卡（只能一張）：kind 是 theme，每個選項帶主題的 slug"
+            f"（value：{'、'.join(sorted(THEMES))}）",
+        )
+    if sum(1 for q in found if q.kind == "persona") > 1:
+        raise ToolRejected(400, "第 1 關的角色卡只能一張")
     return found
 
 
@@ -1134,6 +1141,8 @@ def _picked_for_me(state: StationState) -> list[Answer]:
 
     - 第 1 關的文體卡：選排最前面、不需要作者經驗的文體（`SELF_FREE_GENRES`）；一個都沒有就什麼都不記，
       回 409 請 agent 問創作者。
+    - 第 1 關的主題卡、角色卡：跟其他卡一樣選排第一的（主題不需要作者經驗，ADR 沒有限制；
+      agent 把它認為最合適的排第一，創作者在決策分頁看得到是 AI 選的）。
     - 第 3 關：只記「尚待作者提供」，不算有決定。
     """
     current = [q for q in state.questions if q.current]

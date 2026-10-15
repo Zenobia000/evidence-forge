@@ -103,7 +103,7 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "propose_questions",
       label: "Propose questions",
       description:
-        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card (kind genre) whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend); it may also have one theme card (kind theme, values from worldview, builder-method, startup, tech-selection, adoption, education, tools, open-source) and one persona card (kind persona, values are persona names from list_personas). Labels on those cards can be plain Chinese names; the value is what gets recorded. On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
+        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card (kind genre) whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend) and exactly one theme card (kind theme, values from worldview, builder-method, startup, tech-selection, adoption, education, tools, open-source); it may also have one persona card (kind persona, values are persona names from list_personas). Labels on those cards can be plain Chinese names; the value is what gets recorded. On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
       parameters: Type.Object({
         card: Type.Optional(CardParam),
         station: StationParam,
@@ -163,7 +163,12 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
         card: CardParam,
         station: StationParam,
         pick_for_me: Type.Optional(Type.Boolean({ description: "True when the creator said 「你幫我選」" })),
-        quote: Type.Optional(Type.String({ description: "The creator's words as typed (required unless pick_for_me)" })),
+        quote: Type.Optional(
+          Type.String({
+            description:
+              "The creator's words as typed (required unless pick_for_me). For long dictation kept with add_material, only their confirming sentence followed by 原話見 M<n>, not the whole dictation",
+          }),
+        ),
         answers: Type.Optional(
           Type.Array(
             Type.Object({

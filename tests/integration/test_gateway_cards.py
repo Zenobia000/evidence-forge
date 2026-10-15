@@ -34,7 +34,17 @@ STATION_1 = [
             {"label": "explainer", "description": "把計價方式講清楚", "value": "explainer"},
             {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
         ],
-    }
+    },
+    # 第 1 關也一定有一張主題卡（ADR-0026 §3.2、#109）
+    {
+        "kind": "theme",
+        "header": "主題",
+        "question": "讀者做決定時最在意哪一個？",
+        "options": [
+            {"label": "工具選型", "description": "讀者要挑工具", "value": "tools"},
+            {"label": "落地導入", "description": "讀者要導入", "value": "adoption"},
+        ],
+    },
 ]
 
 
@@ -112,7 +122,7 @@ def test_讀卡_沒給卡就列出這個對話的卡(env: Env) -> None:
 
 def test_打字回答與你幫我選都經閘道記_來源是_agent(env: Env) -> None:
     card_id = _ok(env.call("propose_questions", env.mine, station=1, questions=STATION_1))["card_id"]
-    question = _ok(env.call("read_card", env.mine, card=card_id))["card"]["stations"][0]["questions"][0]["id"]
+    genre, theme = _ok(env.call("read_card", env.mine, card=card_id))["card"]["stations"][0]["questions"]
 
     typed = _ok(
         env.call(
@@ -120,12 +130,19 @@ def test_打字回答與你幫我選都經閘道記_來源是_agent(env: Env) ->
             env.mine,
             card=card_id,
             station=1,
-            answers=[{"question": question, "choice": "trend"}],
-            quote="寫成趨勢吧",
+            answers=[
+                {"question": genre["id"], "choice": "trend"},
+                {"question": theme["id"], "choice": "工具選型"},
+            ],
+            quote="寫成趨勢吧，講工具",
         )
     )
 
-    assert [(e["source"], e["mode"], e["choice"]) for e in typed["events"]] == [("agent", "typed", "trend")]
+    assert [(e["source"], e["mode"], e["choice"]) for e in typed["events"]] == [
+        ("agent", "typed", "trend"),
+        ("agent", "typed", "工具選型"),
+    ]
+    assert (typed["card"]["genre"], typed["card"]["theme"]) == ("trend", "tools")
     assert typed["card"]["stations"][0]["decided"] is True
 
 

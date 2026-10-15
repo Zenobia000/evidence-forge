@@ -317,10 +317,17 @@ def test_畫面送出一關_ef_card_通知觸發一輪_模型讀編輯卡(chat: 
             {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
         ],
     }
-    card_id = cards.propose_questions(chat.data, cid, None, 1, [question], now=NOW).card_id
+    theme = station_questions(1, "idea")[1]
+    card_id = cards.propose_questions(chat.data, cid, None, 1, [question, theme], now=NOW).card_id
 
     chat.host.submit_station(
-        cid, card_id, 1, [{"question": "q1", "choice": "trend", "note": "看兩年"}]
+        cid,
+        card_id,
+        1,
+        [
+            {"question": "q1", "choice": "trend", "note": "看兩年"},
+            {"question": "q2", "choice": "工具與工作流程選型"},
+        ],
     )
 
     _wait_said(chat, cid, "第 2 關的問題卡在畫面上了。", what="ef-card 通知觸發一輪：讀編輯卡、提出下一關")

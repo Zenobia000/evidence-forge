@@ -29,6 +29,19 @@ def _genre(*slugs: str) -> dict[str, Any]:
     }
 
 
+def _theme() -> dict[str, Any]:
+    """第 1 關的主題卡（一定要有一張，ADR-0026 §3.2）：選項名稱「主題 A」「主題 B」，值是主題的 slug。"""
+    return {
+        "kind": "theme",
+        "header": "主題",
+        "question": "讀者做決定時最在意哪一個？",
+        "options": [
+            {"label": "主題 A", "description": "工具", "value": "tools"},
+            {"label": "主題 B", "description": "導入", "value": "adoption"},
+        ],
+    }
+
+
 def _question(header: str, *labels: str) -> dict[str, Any]:
     return {
         "header": header,
@@ -51,13 +64,13 @@ def cid(data: DataDir) -> str:
 
 def test_提出第_1_關的問題卡_開一張新卡_編輯卡上這一關正在問(data: DataDir, cid: str) -> None:
     written = cards.propose_questions(
-        data, cid, None, 1, [_genre("explainer", "trend")], now=NOW
+        data, cid, None, 1, [_genre("explainer", "trend"), _theme()], now=NOW
     )
 
     card = cards.read_card(data, cid, written.card_id)
     first = card.stations[0]
     assert (first.station, first.status, first.decided) == (1, "asking", False)
-    assert [q.header for q in first.questions] == ["文體"]
+    assert [q.header for q in first.questions] == ["文體", "主題"]
     assert [o.label for o in first.questions[0].options] == ["explainer", "trend"]
     assert [s.status for s in card.stations[1:]] == ["not_reached"] * 5
     assert card.writable is False
@@ -75,7 +88,7 @@ def _start(data: DataDir, cid: str) -> str:
         cid,
         None,
         1,
-        [_genre("explainer", "trend"), _question("主題", "主題 A", "主題 B")],
+        [_genre("explainer", "trend"), _theme()],
         now=NOW,
     ).card_id
 
@@ -271,22 +284,26 @@ def test_作者自己回答之後第_3_關才有決定(data: DataDir, cid: str) 
 
 def test_打字回答_agent_整理後記下_附原話(data: DataDir, cid: str) -> None:
     card_id = _start(data, cid)
-    q1, q2 = _current(data, cid, card_id, 1)
+    _through(data, cid, card_id, 1)
+    cards.propose_questions(
+        data, cid, card_id, 2, [_question("觀點", "甲", "乙"), _question("名字", "丙", "丁")], now=NOW
+    )
+    q1, q2 = _current(data, cid, card_id, 2)
 
     written = cards.record_interpreted_answers(
         data,
         cid,
         card_id,
-        1,
-        [{"question": q1.id, "choice": "trend"}, {"question": q2.id, "other_text": "AI 基礎建設"}],
-        quote="寫成趨勢，主題是 AI 基礎建設",
+        2,
+        [{"question": q1.id, "choice": "甲"}, {"question": q2.id, "other_text": "AI 基礎建設"}],
+        quote="觀點選甲，名字叫 AI 基礎建設",
         now=NOW,
     )
 
     assert {(e["source"], e["mode"], e["quote"]) for e in written.events} == {
-        ("agent", "typed", "寫成趨勢，主題是 AI 基礎建設")
+        ("agent", "typed", "觀點選甲，名字叫 AI 基礎建設")
     }
-    assert written.card.stations[0].submissions[0].answers[1].other_text == "AI 基礎建設"
+    assert written.card.stations[1].submissions[0].answers[1].other_text == "AI 基礎建設"
 
 
 def test_一關要一次回答到每一張問題卡(data: DataDir, cid: str) -> None:
@@ -465,7 +482,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
         cid,
         None,
         1,
-        [_genre("explainer", "trend")],
+        [_genre("explainer", "trend"), _theme()],
         now=NOW,
         origin={"kind": "report_topic", "job_id": "20261015-report", "topic": 2, "title": "長上下文的帳"},
     )
@@ -480,7 +497,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
             cid,
             None,
             1,
-            [_genre("explainer", "trend")],
+            [_genre("explainer", "trend"), _theme()],
             now=NOW,
             origin={"kind": "report_topic", "job_id": "20261015-not-mine", "topic": 1},
         )
@@ -490,7 +507,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
 def test_一個對話可以有好幾張卡(data: DataDir, cid: str) -> None:
     first = _start(data, cid)
     second = cards.propose_questions(
-        data, cid, None, 1, [_genre("essay", "trend")], now=NOW + timedelta(seconds=1)
+        data, cid, None, 1, [_genre("essay", "trend"), _theme()], now=NOW + timedelta(seconds=1)
     ).card_id
 
     assert [c.card_id for c in cards.list_cards(data, cid)] == sorted([first, second])
@@ -562,7 +579,7 @@ def test_重問中的關_前面改了也不標要重確認_不能沿用舊答案
 
 def _to_station_3(data: DataDir, cid: str, genre: str = "explainer", **origin: Any) -> str:
     card_id = cards.propose_questions(
-        data, cid, None, 1, [_genre(genre, "trend")], now=NOW, origin=origin or None
+        data, cid, None, 1, [_genre(genre, "trend"), _theme()], now=NOW, origin=origin or None
     ).card_id
     _through(data, cid, card_id, 2)
     cards.propose_questions(data, cid, card_id, 3, [_question("例子", "你的帳單", "你量過的數字")], now=NOW)
@@ -632,13 +649,13 @@ def test_不需要作者經驗的文體_作者自己說沒有例子就算有決�
 
 def test_改成要作者經驗的文體之後_沒有例子不能沿用(data: DataDir, cid: str) -> None:
     card_id = cards.propose_questions(
-        data, cid, None, 1, [_genre("explainer", "product-case")], now=NOW
+        data, cid, None, 1, [_genre("explainer", "product-case"), _theme()], now=NOW
     ).card_id
     _through(data, cid, card_id, 2)
     cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "乙")], now=NOW)
     _answer_3(data, cid, card_id, no_example=True)
     cards.reask_station(data, cid, card_id, 1, now=NOW)
-    _submit(data, cid, card_id, 1, "product-case")
+    _submit(data, cid, card_id, 1, "product-case", "主題 A")
 
     with pytest.raises(ToolRejected) as caught:
         cards.keep_decision(data, cid, card_id, 3, now=NOW)
@@ -647,7 +664,7 @@ def test_改成要作者經驗的文體之後_沒有例子不能沿用(data: Dat
 
 def test_第_1_關一定有文體卡_選項帶文體的_slug(data: DataDir, cid: str) -> None:
     for bad in (
-        [_question("主題", "主題 A", "主題 B")],
+        [_theme()],
         [{**_genre("explainer", "trend"), "options": [
             {"label": "explainer", "description": "x", "value": "explainer"},
             {"label": "觀點文", "description": "x", "value": "opinion"},
@@ -659,7 +676,7 @@ def test_第_1_關一定有文體卡_選項帶文體的_slug(data: DataDir, cid:
     card_id = _start(data, cid)
     _through(data, cid, card_id, 1)
     with pytest.raises(ToolRejected):
-        cards.propose_questions(data, cid, card_id, 2, [_genre("trend", "essay")], now=NOW)
+        cards.propose_questions(data, cid, card_id, 2, [_genre("trend", "essay"), _theme()], now=NOW)
 
 
 def test_選好的文體從編輯卡讀得到_文體卡不能用其他(data: DataDir, cid: str) -> None:
@@ -680,18 +697,19 @@ def test_選好的文體從編輯卡讀得到_文體卡不能用其他(data: Dat
 
 def test_你幫我選第_1_關_跳過要作者經驗的文體(data: DataDir, cid: str) -> None:
     card_id = cards.propose_questions(
-        data, cid, None, 1, [_genre("essay", "benchmark", "trend", "explainer")], now=NOW
+        data, cid, None, 1, [_genre("essay", "benchmark", "trend", "explainer"), _theme()], now=NOW
     ).card_id
 
     written = cards.record_interpreted_answers(data, cid, card_id, 1, pick_for_me=True, now=NOW)
 
-    assert [e["choice"] for e in written.events] == ["trend"]
-    assert written.card.genre == "trend"
+    # 主題卡不限制，選排第一的
+    assert [e["choice"] for e in written.events] == ["trend", "主題 A"]
+    assert (written.card.genre, written.card.theme) == ("trend", "tools")
 
 
 def test_你幫我選第_1_關_沒有不需要作者經驗的文體就什麼都不記(data: DataDir, cid: str) -> None:
     card_id = cards.propose_questions(
-        data, cid, None, 1, [_genre("essay", "product-case")], now=NOW
+        data, cid, None, 1, [_genre("essay", "product-case"), _theme()], now=NOW
     ).card_id
 
     with pytest.raises(ToolRejected) as caught:
@@ -847,6 +865,9 @@ def test_第_1_關選好的文體_主題_角色_編輯卡都讀得到(data: Data
         [_kinded("genre", "文體", "trend"), {**_question("主題", "甲", "乙"), "kind": "theme"}],
         [_kinded("genre", "文體", "trend"), {**_question("主題", "甲", "乙"), "kind": "mood"}],
         [_kinded("theme", "主題", "tools", "adoption")],
+        # 每篇一個主題：第 1 關沒有主題卡也不行（ADR-0026 §3.2）
+        [_kinded("genre", "文體", "trend", "explainer")],
+        [_kinded("genre", "文體", "trend", "explainer"), _question("主題", "甲", "乙")],
     ],
 )
 def test_第_1_關的結構化問題卡_值不在範圍裡就拒絕(
@@ -914,6 +935,6 @@ def test_109_之前沒有_kind_的文體卡_照樣認得出來(data: DataDir, ci
     # 舊的紀錄根本沒有 kind 這一欄：重算編輯卡照樣讀得到文體
     path = data.conversation_dir(cid) / "cards" / card_id / "decisions.jsonl"
     path.write_text(path.read_text(encoding="utf-8").replace(',"kind":"genre"', ""), encoding="utf-8")
-    assert '"kind"' not in path.read_text(encoding="utf-8")
+    assert '"kind":"genre"' not in path.read_text(encoding="utf-8")
     (path.parent / "card.json").unlink()
     assert cards.read_card(data, cid, card_id).genre == "trend"
