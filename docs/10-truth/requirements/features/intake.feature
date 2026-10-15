@@ -1,9 +1,22 @@
 Feature: 素材投入與訂閱源接入
-  # 需求：FR-IN-01、FR-IN-02、FR-CH-01、NFR-SEC-01｜故事：US-21｜決策：ADR-0012、ADR-0019
+  # 需求：FR-IN-01、FR-MT-02、FR-IN-02、FR-CH-01、NFR-SEC-01｜故事：US-21｜決策：ADR-0012、ADR-0019、ADR-0028
+
+  Scenario Outline: 只丟素材，先收進素材清單，不開工單
+    Given 創作者在一個對話裡「<kind>」，沒說要做什麼
+    When 送出
+    Then 素材清單多一個附件，原始內容寫一次不再改（ADR-0028 §3.5）
+    And 沒有開任何工單，inbox 也沒有多素材項目
+    And 對話的 agent 回一句收到了什麼，問要不要分析
+
+    Examples:
+      | kind     |
+      | 貼網址   |
+      | 貼文字   |
+      | 上傳檔案 |
 
   @happy-path @smoke
-  Scenario Outline: 在對話裡丟素材就開始分析
-    Given 創作者在一個對話裡「<kind>」
+  Scenario Outline: 丟素材並說要分析，就開分析工單
+    Given 創作者在一個對話裡「<kind>」並說「分析這篇」
     When 送出
     Then inbox 的 manual 底下多一個素材項目，附出處、時間與內容 hash
     And 對話的 agent 用 analyze 工具開出一張分析工單
