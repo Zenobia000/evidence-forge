@@ -313,9 +313,23 @@ def test_文章分頁_讀_article_md_角色文類字數重疊率都在(world: tu
     html = httpx.get(f"{url}/ui/c/{cid}/panel", params={"tab": "article"}).text
 
     assert "<h2>先算錢</h2>" in html
-    assert "解說文" in html and "me" in html
+    assert "理論教學" in html and "me" in html
     assert "11.5%" in html and "S2 價目表" in html and "只顯示，不擋" in html
     assert "複製 Markdown" in html
+
+
+@pytest.mark.promise("FR-UI-11")
+def test_舊工單的文類_id_照原字顯示_畫面不壞(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+    # 舊的 12 種文類不做對照（ADR-0026 §3.4）：舊工單的 opinion 照原字顯示，分頁照樣打得開
+    url, folder, _ = world
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.article(cid, "w1", parent="a1", text=ARTICLE_V1, genre="opinion")
+
+    response = httpx.get(f"{url}/ui/c/{cid}/panel", params={"tab": "article"})
+
+    assert response.status_code == 200
+    assert "<dt>文體</dt><dd>opinion" in response.text
 
 
 def test_文章分頁_跟上一版對照(world: tuple[str, ChatFolder, ConversationHost]) -> None:

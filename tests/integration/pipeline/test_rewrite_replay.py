@@ -19,16 +19,15 @@ ADR-0014：錄音會進公開 repo，**種子、來源、作家設定、標題�
         uv run ef serve --once
     # 2. 正式跑重構（花錢）；$H 是配方釘在 conftest.py RECORDED_STAGES 那幾行的 harness 複本
     EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef new --harness $H --from <分析工單> \\
-        --persona me --genre opinion --goal "$(cat <GOAL 那一行>)" --budget-usd 0.05
+        --persona me --genre research-review --goal "$(cat <GOAL 那一行>)" --budget-usd 0.05
     EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef serve --harness $H --once --parallel 1 \\
         --port <沒人用的埠>
     # 把重構那張單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/rewrite-library/。
     # 複製前先看模型請求裡有沒有工單 id（agent 讀了 job.md 之類的檔），有就重錄
 
-2026-10-15 重錄的這一份（#100：骨架不當標題、內文不提原文與原作者、照創作者挑的題材寫）：
-重構段直接用 `fast`（Claude Haiku 5.5），一次就過（沒有回去修），花 US$0.0048。目標是對話的 agent 在創作者說
-「寫第 1 個」時會帶的樣子：那個題材的暫定標題與角度。文章結尾第一條是原文（貼上的文字，只有標題），
-再列兩份用到的來源；跟其中兩份來源的 8-gram 重疊率約 9%，有一段 37 個詞的共同片段（只提醒、不擋）。
+2026-10-15 重錄的這一份（#106：目標文體換成 7 種之一的研究評論，`input/target-genre.md` 是新的通用定義，
+沒有轉換說明）：重構段直接用 `fast`（Claude Haiku 5.5），一次就過（沒有回去修），花 US$0.0071。目標是對話的
+agent 在創作者說「寫第 1 個」時會帶的樣子：那個題材的暫定標題與角度；文體照報告的建議文體。
 
 錄音只准用本機與 Haiku（月底額度）；重播用錄音當時的配方等級（`conftest.py`）。
 重播時模型回應從錄音回放；開單、放參考資料、程式檢查照樣真的跑。不需要 Ollama，不打任何付費 API。
@@ -52,10 +51,12 @@ ARTICLE = FIXTURES / "articles" / "library-night.md"
 RECORDINGS = FIXTURES / "recordings"
 # 創作者說「寫第 1 個」時，對話的 agent 帶的目標：那個題材的暫定標題與角度（chat-system-prompt.md、ADR-0024）
 GOAL = (
-    "題材 1：夜間開館的人數曲線：頭三個月的高峰之後，數字要看哪一段。"
-    "角度：開館初期的人數常常最高，真正要看的是新鮮感退去後穩定下來的那一段。"
+    "題材 1：新鮮感之後的那條線：延長開館的人數該怎麼看。"
+    "角度：把延長開館後的人數分成前三個月和之後的穩定期來看，用自己的判斷標準讀數字，而不只看開館初期的平均。"
     "寫給台灣上班族看的短文。"
 )
+# 那個題材的建議文體（analyze-library 錄音的報告）：研究評論（research-review）
+GENRE = "research-review"
 
 PI_BIN = default_harness().pi.pi_bin
 
@@ -123,7 +124,7 @@ def jobs(
         "--persona",
         "me",
         "--genre",
-        "opinion",
+        GENRE,
         "--goal",
         GOAL,
         "--budget-usd",
@@ -146,7 +147,8 @@ def test_自己寫的短文_重播跑完分析再重構_文章合格_結尾列�
     job = read_job(rewrite / "job.md").job
     assert (job.recipe, job.parent) == ("rewrite", analysis.name)
     assert job.result is not None and job.result.outcome == "complete", job.result
-    # 測試用的作家設定沒有觀點文的文類風格：標未校準
+    assert job.target_genre == GENRE
+    # 測試用的作家設定沒有研究評論的文體風格：標未校準
     assert "未校準" in job.result.reason
 
     article = (rewrite / "stages" / "rewrite" / "1" / "article.md").read_text(

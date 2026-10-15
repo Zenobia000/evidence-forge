@@ -1,0 +1,63 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg43USGccyif5mV8LWDgT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2061,"cache_read_input_tokens":8589,"cache_creation":{"ephemeral_5m_input_tokens":2061,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}          }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0 }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01AZ7Xv5LrQyU4aFhuP9aE4h","name":"web_search","input":{},"caller":{"type":"direct"}} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"臺"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"灣 "}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"公共"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"圖書館 延長開"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"放時"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"間 晚間 入"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館人數 統計 報"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"告"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1 }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2061,"cache_read_input_tokens":8589,"output_tokens":489,"output_tokens_details":{"thinking_tokens":386}}            }
+
+event: message_stop
+data: {"type":"message_stop"    }
+

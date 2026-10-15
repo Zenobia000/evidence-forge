@@ -40,7 +40,7 @@
   "additionalProperties": false,
   "$defs": {
     "genre_id": {
-      "enum": ["news", "hot-take", "tutorial", "tips", "explainer", "deep-dive", "notes", "review", "case-study", "opinion", "story", "roundup"]
+      "enum": ["essay", "research-review", "product-case", "benchmark", "postmortem", "explainer", "trend"]
     }
   }
 }

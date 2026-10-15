@@ -107,7 +107,7 @@
 <aside class="ch-aside" aria-label="文章資訊">
 <dl>
 <dt>角色</dt><dd>{{ article.persona }}</dd>
-<dt>文類</dt><dd>{{ article.genre or "沒指定" }}{% if article.uncalibrated %}<br><span class="s0-badge" data-tone="genre" style="margin-top: 4px">{{ icon("question") }}未校準</span><br><span class="s0-small">{{ article.uncalibrated_note }}</span>{% endif %}</dd>
+<dt>文體</dt><dd>{{ article.genre or "沒指定" }}{% if article.uncalibrated %}<br><span class="s0-badge" data-tone="genre" style="margin-top: 4px">{{ icon("question") }}未校準</span><br><span class="s0-small">{{ article.uncalibrated_note }}</span>{% endif %}</dd>
 <dt>字數</dt><dd><span class="s0-mono">{{ "{:,}".format(article.words) }}</span>{% if article.previous_words is not none %}<span class="s0-small">（{{ article.previous_label }} <span class="s0-mono">{{ "{:,}".format(article.previous_words) }}</span>）</span>{% endif %}</dd>
 <dt>跟來源重疊</dt><dd>{% if article.overlap %}<span class="s0-mono">{{ rate(article.overlap.rate) }}%</span><br><span class="s0-small">最高的一份是{{ article.overlap.source }}。只顯示，不擋。</span>{% else %}<span class="s0-small">這一版沒有算重疊率。</span>{% endif %}</dd>
 <dt>版本</dt><dd>{{ chosen.label }}{% if article.finished %}・<span class="s0-mono">{{ article.finished|hm }}</span>{% endif %}</dd>

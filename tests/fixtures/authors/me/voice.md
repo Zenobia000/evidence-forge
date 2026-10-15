@@ -2,7 +2,7 @@
 # 測試用的作家聲音：為測試寫的虛構設定，不是任何真實作家的資料。
 id: me
 name: 測試作家
-default_genre: opinion
+default_genre: explainer
 calibrated: false
 ---
 

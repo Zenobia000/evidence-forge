@@ -161,7 +161,7 @@ def _with_persona(world: World) -> None:
     author = world.data.authors / "me"
     author.mkdir(parents=True, exist_ok=True)
     (author / "voice.md").write_text(
-        "---\nid: me\ndefault_genre: opinion\n---\n同行交流的口吻。\n", encoding="utf-8"
+        "---\nid: me\ndefault_genre: essay\n---\n同行交流的口吻。\n", encoding="utf-8"
     )
 
 
@@ -176,7 +176,7 @@ def test_從分析開重構_拿到報告與來源_沒有原文全文_文章合�
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
     # me 還沒有觀點文的文類風格：結果上標未校準（rewrite.feature）
-    assert "未校準" in job.result.reason and "opinion" in job.result.reason
+    assert "未校準" in job.result.reason and "essay" in job.result.reason
     inputs = world.data.job_dir(job_id) / "input"
     assert (inputs / "report.md").read_text(encoding="utf-8") == REPORT
     assert (inputs / "sources" / "S2.md").is_file()

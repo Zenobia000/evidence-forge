@@ -153,18 +153,22 @@ def test_文章讀產出_article_md_的那一段_重構的單不算報告(data: 
     assert desk.report(job_id)["files"] == {}
 
 
-def test_列出角色_不含範本_附預設文類與寫過的文類(data: DataDir) -> None:
+def test_列出角色_不含範本與備份_附預設文體與寫過的文體(data: DataDir) -> None:
     me = data.authors / "me"
     (me / "genres").mkdir(parents=True)
-    (me / "voice.md").write_text("---\ndefault_genre: opinion\n---\n聲音", encoding="utf-8")
-    (me / "genres" / "opinion.md").write_text("風格", encoding="utf-8")
+    (me / "voice.md").write_text("---\ndefault_genre: essay\n---\n聲音", encoding="utf-8")
+    (me / "genres" / "essay.md").write_text("風格", encoding="utf-8")
+    # 舊的範本檔（`_` 開頭）不是寫過的文體
+    (me / "genres" / "_template.md").write_text("範本", encoding="utf-8")
     (data.authors / "b2b").mkdir()
     (data.authors / "_template").mkdir()
+    # 匯入角色前的備份（scripts/import_persona.py）不是角色
+    (data.authors / ".backup" / "me-20261015-120000").mkdir(parents=True)
 
     assert _desk(data).personas() == {
         "personas": [
             {"name": "b2b", "default_genre": None, "calibrated_genres": []},
-            {"name": "me", "default_genre": "opinion", "calibrated_genres": ["opinion"]},
+            {"name": "me", "default_genre": "essay", "calibrated_genres": ["essay"]},
         ]
     }
 
@@ -207,7 +211,7 @@ def _rewrite(desk: Desk, from_job: str, **options: str) -> dict[str, object]:
 @pytest.fixture
 def me(data: DataDir) -> DataDir:
     (data.authors / "me").mkdir(parents=True)
-    (data.authors / "me" / "voice.md").write_text("---\ndefault_genre: opinion\n---\n聲音", encoding="utf-8")
+    (data.authors / "me" / "voice.md").write_text("---\ndefault_genre: essay\n---\n聲音", encoding="utf-8")
     return data
 
 
@@ -224,7 +228,7 @@ def test_重構開了就回_記下對話與上一張_記進對話之後才通知
         "c1",
         analysis,
         "me",
-        "opinion",
+        "essay",
         "題材 2：夜班。角度：成本",
     )
     assert opened == []
@@ -232,47 +236,58 @@ def test_重構開了就回_記下對話與上一張_記進對話之後才通知
     assert opened == [("c1", job_id)]
 
 
-def test_重構的文類可以給中文名_記成文類_id(me: DataDir) -> None:
+def test_重構的文體可以給中文名_記成文體_slug(me: DataDir) -> None:
     desk = _desk(me)
-    result = _rewrite(desk, _analysed(me, desk), genre="解說文")
+    result = _rewrite(desk, _analysed(me, desk), genre="理論教學")
     job_id = result["job_id"]
     assert isinstance(job_id, str)
     assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "explainer"
 
 
-@pytest.mark.parametrize("written", ["評論", "深度報導", "觀點文章"])
-def test_報告建議的文類對不上_照樣開單_用預設文類_附一句說明(me: DataDir, written: str) -> None:
-    # 報告的「建議文類」是模型寫的自由文字；對不上就用角色的預設文類，不要讓「寫第 N 個」開不了
+# 「觀點文」「opinion」是舊報告的建議文類：新程式不對照舊的 12 種（ADR-0026 §3.4），當成對不上
+@pytest.mark.parametrize("written", ["評論", "深度報導", "觀點文", "opinion", "隨筆（trend）"])
+def test_報告建議的文體對不上_照樣開單_用預設文體_附一句說明(me: DataDir, written: str) -> None:
+    # 報告的「建議文體」是模型寫的自由文字；對不上就用角色的預設文體，不要讓「寫第 N 個」開不了
     desk = _desk(me)
     result = _rewrite(desk, _analysed(me, desk), suggested_genre=written)
     job_id = result["job_id"]
     assert isinstance(job_id, str)
-    assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "opinion"
-    assert result["genre"] == "opinion"
-    assert result["note"] == f"文類「{written}」對不上，改用預設的觀點文（opinion）"
+    assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "essay"
+    assert result["genre"] == "essay"
+    assert result["note"] == f"文體「{written}」對不上，改用預設的隨筆（essay）"
 
 
-def test_報告建議的文類對得上_就用它(me: DataDir) -> None:
+@pytest.mark.parametrize(
+    ("written", "slug"),
+    [
+        ("理論教學", "explainer"),
+        ("trend", "trend"),
+        # 報告照 investigate 的 SKILL.md 寫「中文名（slug）」
+        ("研究評論（research-review）", "research-review"),
+        ("研究評論 (research-review)", "research-review"),
+    ],
+)
+def test_報告建議的文體對得上_就用它(me: DataDir, written: str, slug: str) -> None:
     desk = _desk(me)
-    result = _rewrite(desk, _analysed(me, desk), suggested_genre="解說文")
-    assert result["genre"] == "explainer" and "note" not in result
+    result = _rewrite(desk, _analysed(me, desk), suggested_genre=written)
+    assert result["genre"] == slug and "note" not in result
 
 
 def test_創作者指定的文類不認得_不開單_列出有哪些(me: DataDir) -> None:
     # 創作者明說「寫成打油詩」：不能默默改成別的文類，要問回去
     desk = _desk(me)
     analysis = _analysed(me, desk)
-    result = _rewrite(desk, analysis, genre="打油詩", suggested_genre="觀點文")
+    result = _rewrite(desk, analysis, genre="打油詩", suggested_genre="隨筆")
     assert result["status"] == "rejected"
     reason = str(result["reason"])
-    assert "沒有文類 打油詩" in reason and "opinion（觀點文）" in reason
+    assert "沒有文體 打油詩" in reason and "essay（隨筆）" in reason
     assert [p.name for p in me.jobs.iterdir()] == [analysis]
 
 
 def test_創作者指定的文類勝過報告建議的(me: DataDir) -> None:
     desk = _desk(me)
-    result = _rewrite(desk, _analysed(me, desk), genre="教學文", suggested_genre="觀點文")
-    assert result["genre"] == "tutorial" and "note" not in result
+    result = _rewrite(desk, _analysed(me, desk), genre="實證評測", suggested_genre="隨筆")
+    assert result["genre"] == "benchmark" and "note" not in result
 
 
 def test_角色不存在_原因不帶資料目錄的完整路徑(me: DataDir) -> None:
@@ -307,6 +322,6 @@ def test_工作台認得的文類跟_harness_genres_同一份() -> None:
     # 工作台拿畫面的文類表擋不認得的文類；兩邊飄開，就會擋掉執行器其實接受的文類，或放過一個開了才失敗的
     defined = {
         str(read_frontmatter(path)["id"]): str(read_frontmatter(path)["name"])
-        for path in sorted(default_harness().genres.glob("*.md"))
+        for path in default_harness().genre_files()
     }
     assert defined == GENRE_NAME

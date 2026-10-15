@@ -153,7 +153,7 @@ def test_結果卡_文章帶角色文類字數重疊率_未校準也標(folder: 
     job = [b.job for b in _build(folder, cid, []) if b.job and b.job.kind == "rewrite"][0]
 
     assert job is not None
-    assert (job.persona, job.genre, job.title) == ("me", "解說文", "長上下文不會取代檢索")
+    assert (job.persona, job.genre, job.title) == ("me", "理論教學", "長上下文不會取代檢索")
     assert job.uncalibrated and job.overlap is not None and job.overlap.rate == 6.0
 
 

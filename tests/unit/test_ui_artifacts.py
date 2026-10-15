@@ -336,7 +336,7 @@ def test_文章讀_article_md_角色文類字數都在(folder: ChatFolder) -> No
     view = artifacts.article_view(folder.data, info, None)
 
     assert view.title == "長上下文不會取代檢索"
-    assert (view.persona, view.genre) == ("me", "解說文")
+    assert (view.persona, view.genre) == ("me", "理論教學")
     assert view.words > 40
     assert "<h2>先算錢</h2>" in view.html
     assert view.text == ARTICLE_V1

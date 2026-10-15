@@ -1,0 +1,51 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg43WjW1cmHmKQSGjr8wq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2064,"cache_read_input_tokens":8428,"cache_creation":{"ephemeral_5m_input_tokens":2064,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}              }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSxAkKEAgSGAI4AUIIdGhpbmtpbmcSDMMNRV8adreBStrBahoM8TDYFwESA5alQ+caIjCju9O+SQsmClKJxdLs2g4Z37s2N74K+4KIs7OHeAKOMY58rME9YKqfQWB+U2oDEMcq4QhQNX8EHGd0by11e6Wa9uSiAFVjUOALpcAXSk6I8YWSWJd1+Gt+0Tbd5Sbt2N6yz0nERIJFBRKWEwHDaMnQLhQGxIyjDXQ/tdh0aPxD82V2nsFjoiSPKfAZfnMmXIUzBFYOLLqKG7fXhPb0p1bE+RpSst3E1p2gqZlXbxTrgFYXadfxhbtI1I9gg0mn99lvVL2YCdIKennltKKLNarrGA8Hk/Zt5ZwTsGVcdykECZui5dOODSr55QuSanNdmeE7j3mfZ72fCu42s8WrBXJfll6UbCu5RqOFwUsbvoWAhO6absRe8kNA/KKA1u3P/frFmhUWcV2Nx/cA3/UMSTATZp7i1IOkJmTK86BKnaNGniueDj5LOHHIdLiUnO30BEzOtxzhVEHsaKPZ8/ZFb3sLRYReq/bmgMl2Zody6ARyol8hAfimoD6u0dkGgefh8V5hS0qGHmhoTapq7gMAV+40wThAzKGyv2ZBWrsjdhm6feyW17Nn2wsFA+Nfvcd21Ld3wy7taf7rKusX6ltrTyKwP9JD9gHsy1M4xnDY+tGjJt4NLMtQBYDjDesJgjx/ycovjRIs8oprZrPh9p52EVjrb/8QK/p+G6VuK12LWS6F61Hgs9SAjB3b8VozOK8Npyoye05DACXX8TaBHJYmLUE4G1G3UfEk0DqPMu+qR8qzPCdokE2MP8hw1/v5i+StG0RUlCP7B8ypKRBQAyoxB+OYKAPco1FjjIUF2OPdF5xSqXB0Q2letRn/fTQxtdQX2z2HNN8okvtNunuVi6WgnEguknJ2ZCorwLYX6zeQ5J3iH9W4dAC+KFZDpY2zoz7NKQpSw6wDetco4unxn6cM8bDtHGA694B0fQzhQWeBwHQQCRrkxi6bhnMC2/XjHOJYDb/zOzMjbu1n8IF0I/VRCQx4lpS+8hmtbDI/yJJUUviJywqoclLOTTSOXfDuplgVfD/0KkAa1ejkvmq1ECm7Plr5e1uTA9Vbl+Iot0K7i66dEDc8w21a/2X97yDDyke1WczlS/bV8SsYE4MhoHgdm+BcCevFv+D5qU9zx7+/dMoIQg/BRnWEW3u0xaqzenei3WCMvKP88E/1yN1VpSaqJR2tE3BBJGdFo7yrAQF4OWmo81Zd4RBJJL2P8+nZk6YL2DWR3OTo5RFiU6Wy94hRBpcEWNMPBU0anJHcKhW7/ALX+fofUv10bPN9ta432HJnzaEPowmOaCcFTsVDdmz/pn1+sdSIP9GGRhx63Jwz5qGJzmscPj1AiuhSjGCCJnHhEw4GHX9vLpXK3PrAZxXFPLmkaNsud1ou0prorSAGvr3gSUKusxF6epP+luAQ0PTa7u9KAqHeMy/KXCx3TgysQ+zm30hyUuUwjD2bv04HAPpRXuIagBnunj2VF/pqwtvpm+tH5BBHK/bsM13t5H3C1c8aIEfS+U9vK3jKEXdgXSVldW7OoigGFTUj8iKOP7ystKyounm5x1KHjCjeVR2vdOj81tAE3hgB"}           }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0 }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01SQapbqBB7iA2NG4WR6GYpj","name":"web_search","input":{},"caller":{"type":"direct"}}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"圖書館 延"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"長開館時間 "}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"晚間 入"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館人次 統計 上"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"班族 分館"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}              }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1     }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2064,"cache_read_input_tokens":8428,"output_tokens":270,"output_tokens_details":{"thinking_tokens":193}}               }
+
+event: message_stop
+data: {"type":"message_stop"   }
+

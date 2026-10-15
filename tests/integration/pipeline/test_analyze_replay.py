@@ -26,9 +26,11 @@
     # 讀 job.md（工單 id、預算每次開單都不同），那份錄音重播對不上，要重錄
     # 錄完卸載本機模型：curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","keep_alive":0}'
 
-2026-10-15 重錄的這一份（#100：報告改成一句話、下一步、新的五節、可以寫的題材）：brief 在本機一次就過
-（沒有升級），查證段在 Haiku 一次就過，搜 3 次、列了 4 篇來源，四條關鍵主張都是「查不到」
-（種子是虛構的，模型照實寫查不到，沒有用記憶補），三個可以寫的題材各附抓過的文章。花 US$0.0054。
+2026-10-15 重錄的這一份（#106：文體換成 ADR-0026 的 7 種，題材的建議文體寫成「中文名（slug）」）：
+brief 在本機一次就過（沒有升級），原文判成 `explainer`、五條關鍵主張；查證段在 Haiku 跑了兩次：
+第 1 次報告的查證少標了一條，對不上 sources.json，程式檢查擋下，第 2 次過了。五條關鍵主張都是「查不到」
+（種子是虛構的，模型照實寫查不到，沒有用記憶補），三個可以寫的題材各附抓過的文章，建議文體都在 7 種裡。
+花 US$0.0126（同一天先錄的一份 brief 只列了兩條關鍵主張，花 US$0.0060，沒採用）。
 
 重播時模型回應、搜尋、抓取都從錄音回放；讀寫工單、放來源正文、程式檢查照樣真的跑。
 不需要 Ollama，不打任何付費 API，也不連網。
@@ -146,8 +148,9 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
         ChecksReport.model_validate_json(p.read_text(encoding="utf-8"))
         for p in sorted((job_dir / "checks").glob("checks.v*.json"))
     ]
-    assert [r.stage for r in reports] == ["brief", "investigate"]
-    assert all(r.passed for r in reports)
+    # 錄音裡查證段第 1 次的報告跟 sources.json 對不上，被擋下重試；最後一次才過
+    assert [r.stage for r in reports] == ["brief", "investigate", "investigate"]
+    assert reports[0].passed and not reports[1].passed and reports[2].passed
 
     # 來源正文由執行器照抓過的網頁放：正文就是自寫文章的正文
     listed = json.loads(
@@ -188,6 +191,27 @@ def test_brief_的關鍵主張每一條都有查證結果_可以寫的題材各�
     assert len(found["topics"]) >= 2
     assert all(set(topic["sources"]) <= listed for topic in found["topics"])
     assert brief["topics"]
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_每個題材的建議文體都是_7_種之一_寫成中文名加_slug(job_dir: Path) -> None:
+    # ADR-0026：新程式只認 7 種；工作台照「中文名（slug）」把它帶進「寫第 N 個」
+    seven = {
+        "essay": "隨筆",
+        "research-review": "研究評論",
+        "product-case": "產品個案",
+        "benchmark": "實證評測",
+        "postmortem": "工程復盤",
+        "explainer": "理論教學",
+        "trend": "趨勢解讀",
+    }
+    report = (_last_attempt(job_dir, "investigate") / "report.md").read_text(encoding="utf-8")
+    suggested = re.findall(r"^- 建議文體：(.+?)（([a-z-]+)）$", report, flags=re.MULTILINE)
+    topics = re.findall(r"^### \d+\.", report, flags=re.MULTILINE)
+    assert len(suggested) == len(topics) >= 2
+    assert all(seven.get(slug) == name for name, slug in suggested)
+    brief = json.loads((_last_attempt(job_dir, "brief") / "brief.json").read_text(encoding="utf-8"))
+    assert brief["genre"]["primary"] in seven
 
 
 def _recorded_llm_calls() -> list[LedgerEntry]:

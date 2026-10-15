@@ -1,4 +1,4 @@
-"""執行器開段時把文類定義、作家設定、轉換說明放進工單的 `input/`（ADR-0015 §3.7、ADR-0018）。
+"""執行器開段時把文體定義與角色設定放進工單的 `input/`（ADR-0015 §3.7、ADR-0018、ADR-0026）。
 
 agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾，`harness/` 與 `$EF_DATA/authors/` 都讀不到。
 """
@@ -26,7 +26,7 @@ from evidence_forge.runner.stage_inputs import (
 
 VOICE = """---
 id: me
-default_genre: opinion
+default_genre: essay
 calibrated: true
 ---
 
@@ -78,37 +78,44 @@ HARNESS = default_harness()
 
 
 @pytest.mark.promise("FR-CP-02", "FR-DG-02")
-def test_文類定義_作家聲音_文類風格_轉換說明都複製進_input(tmp_path: Path) -> None:
-    data = _data(tmp_path, styles={"opinion": "---\ncalibrated: true\n---\n觀點文風格"})
+def test_文體定義_角色聲音_文體風格都複製進_input_主題清單不算文體(tmp_path: Path) -> None:
+    data = _data(tmp_path, styles={"essay": "---\ncalibrated: true\n---\n隨筆風格"})
     job_dir = _job_dir(tmp_path)
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     inputs = job_dir / "input"
     genres = (inputs / "genres.md").read_text(encoding="utf-8")
-    for definition in HARNESS.genres.glob("*.md"):
+    for definition in HARNESS.genre_files():
         assert definition.read_text(encoding="utf-8") in genres
+    # 主題清單跟文體放同一個資料夾，但不是文體定義，不接進 genres.md
+    assert HARNESS.themes.read_text(encoding="utf-8") not in genres
     assert (inputs / "target-genre.md").read_bytes() == (
-        HARNESS.genres / "opinion.md"
+        HARNESS.genres / "essay.md"
     ).read_bytes()
     assert (inputs / "author" / "voice.md").read_text(encoding="utf-8") == VOICE
     assert (
         (inputs / "author" / "genre-style.md")
         .read_text(encoding="utf-8")
-        .endswith("觀點文風格")
+        .endswith("隨筆風格")
     )
-    for conversion in HARNESS.conversions.glob("*.md"):
-        assert (inputs / "conversions" / conversion.name).read_bytes() == (
-            conversion.read_bytes()
-        )
+    # 舊的轉換說明是用舊 12 種 id 寫的，新程式不放（ADR-0026 §3.4）
+    assert not (inputs / "conversions").exists()
+
+
+def test_主題清單不能當目標文體(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    job_dir = _job_dir(tmp_path)
+    with pytest.raises(InputError, match="themes"):
+        prepare_inputs(HARNESS, data, job_dir, _job("themes"))
 
 
 @pytest.mark.promise("FR-CP-02")
 def test_作家沒有目標文類的風格檔_就不放_genre_style_md(tmp_path: Path) -> None:
-    data = _data(tmp_path, styles={"explainer": "解說文風格"})
+    data = _data(tmp_path, styles={"explainer": "理論教學風格"})
     job_dir = _job_dir(tmp_path)
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     assert not (job_dir / "input" / "author" / "genre-style.md").exists()
     assert (job_dir / "input" / "target-genre.md").is_file()
@@ -117,11 +124,11 @@ def test_作家沒有目標文類的風格檔_就不放_genre_style_md(tmp_path:
 def test_再開一次段不覆寫_工單記得當時用的版本(tmp_path: Path) -> None:
     data = _data(tmp_path)
     job_dir = _job_dir(tmp_path)
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     # 作家改了聲音；重跑同一張單仍用開段當時那一份（只增不改）
     (data.authors / "me" / "voice.md").write_text("改過", encoding="utf-8")
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     assert (job_dir / "input" / "author" / "voice.md").read_text(
         encoding="utf-8"
@@ -131,13 +138,13 @@ def test_再開一次段不覆寫_工單記得當時用的版本(tmp_path: Path)
 def test_放過一次之後才新增的風格檔_重跑不補進來_請求不變(tmp_path: Path) -> None:
     data = _data(tmp_path)
     job_dir = _job_dir(tmp_path)
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     # 當機重開前作家補寫了風格檔；這張單仍是開段當時的樣子，閘道快取才對得上
-    (data.authors / "me" / "genres" / "opinion.md").write_text(
+    (data.authors / "me" / "genres" / "essay.md").write_text(
         "新風格", encoding="utf-8"
     )
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     assert not (job_dir / "input" / "author" / "genre-style.md").exists()
 
@@ -148,10 +155,10 @@ def test_上次當機留下半截暫存檔_重開放的是完整的檔(tmp_path:
     # 模擬寫 genres.md 寫到一半被砍：只留下半截的暫存檔，正式檔名還沒出現
     (job_dir / "input" / ".genres.md.partial").write_text("半截", encoding="utf-8")
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     expected = "\n\n".join(
-        path.read_text(encoding="utf-8") for path in sorted(HARNESS.genres.glob("*.md"))
+        path.read_text(encoding="utf-8") for path in HARNESS.genre_files()
     )
     assert (job_dir / "input" / "genres.md").read_text(encoding="utf-8") == expected
     assert list(job_dir.rglob("*.partial")) == []
@@ -187,7 +194,7 @@ def test_harness_沒有文類資料夾也不出錯(tmp_path: Path) -> None:
 
 @pytest.mark.promise("FR-CP-03")
 def test_作家的預設文類從_voice_md_的_frontmatter_讀(tmp_path: Path) -> None:
-    assert default_genre(_data(tmp_path)) == "opinion"
+    assert default_genre(_data(tmp_path)) == "essay"
     assert default_genre(DataDir(tmp_path / "empty")) is None
 
 
@@ -252,7 +259,7 @@ def test_從分析工單開的重構_拿到合格的報告_brief_與來源正文
     _analysis(data)
     job_dir = _rewrite_job_dir(data)
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="analysis"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
 
     inputs = job_dir / "input"
     assert (inputs / "report.md").read_text(encoding="utf-8") == "合格的報告"
@@ -270,13 +277,13 @@ def test_再改從上一版重構工單開_拿到上一版文章_報告與來源
     data = _data(tmp_path)
     _analysis(data)
     v1 = _rewrite_job_dir(data, "v1")
-    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    prepare_inputs(HARNESS, data, v1, _job("essay", parent="analysis"))
     _checked(
         v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True
     )
     v2 = _rewrite_job_dir(data, "v2")
 
-    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1", feedback="改短"))
+    prepare_inputs(HARNESS, data, v2, _job("essay", parent="v1", feedback="改短"))
 
     inputs = v2 / "input"
     assert (inputs / "article.md").read_text(encoding="utf-8") == "# 第一版"
@@ -299,7 +306,7 @@ def test_上一張單不存在_丟_InputError(tmp_path: Path) -> None:
     data = _data(tmp_path)
     job_dir = _rewrite_job_dir(data)
     with pytest.raises(InputError, match="ghost"):
-        prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="ghost"))
+        prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="ghost"))
 
 
 @pytest.mark.promise("FR-RW-02")
@@ -308,14 +315,14 @@ def test_用指定角色的聲音與文類風格(tmp_path: Path) -> None:
     other = data.authors / "b2b"
     (other / "genres").mkdir(parents=True)
     (other / "voice.md").write_text("b2b 的聲音", encoding="utf-8")
-    (other / "genres" / "opinion.md").write_text("b2b 的觀點文", encoding="utf-8")
+    (other / "genres" / "essay.md").write_text("b2b 的隨筆", encoding="utf-8")
     job_dir = _rewrite_job_dir(data)
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion", persona="b2b"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay", persona="b2b"))
 
     author = job_dir / "input" / "author"
     assert (author / "voice.md").read_text(encoding="utf-8") == "b2b 的聲音"
-    assert (author / "genre-style.md").read_text(encoding="utf-8") == "b2b 的觀點文"
+    assert (author / "genre-style.md").read_text(encoding="utf-8") == "b2b 的隨筆"
     assert personas(data) == ["b2b", "me"]
 
 
@@ -326,7 +333,7 @@ def test_標題與金句規則從資料目錄放進工單(tmp_path: Path) -> Non
     data.headline_rules.write_text("十四個技巧", encoding="utf-8")
     job_dir = _rewrite_job_dir(data)
 
-    prepare_inputs(HARNESS, data, job_dir, _job("opinion"))
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
 
     assert (job_dir / "input" / "headline-punchline.md").read_text(
         encoding="utf-8"
@@ -335,15 +342,15 @@ def test_標題與金句規則從資料目錄放進工單(tmp_path: Path) -> Non
 
 @pytest.mark.promise("FR-RW-02")
 def test_角色沒有目標文類的風格_標未校準_有而且校準過就不標(tmp_path: Path) -> None:
-    data = _data(tmp_path, styles={"opinion": "---\ncalibrated: true\n---\n風格"})
+    data = _data(tmp_path, styles={"essay": "---\ncalibrated: true\n---\n風格"})
     plain = _rewrite_job_dir(data, "a")
-    prepare_inputs(HARNESS, data, plain, _job("tutorial"))
+    prepare_inputs(HARNESS, data, plain, _job("benchmark"))
     styled = _rewrite_job_dir(data, "b")
-    prepare_inputs(HARNESS, data, styled, _job("opinion"))
+    prepare_inputs(HARNESS, data, styled, _job("essay"))
 
-    note = uncalibrated(plain, _job("tutorial"))
-    assert note is not None and "未校準" in note and "tutorial" in note
-    assert uncalibrated(styled, _job("opinion")) is None
+    note = uncalibrated(plain, _job("benchmark"))
+    assert note is not None and "未校準" in note and "benchmark" in note
+    assert uncalibrated(styled, _job("essay")) is None
 
 
 @pytest.mark.promise("FR-RW-03")
@@ -352,10 +359,10 @@ def test_上一版的文章沒過檢查_不拿更早那一版充數(tmp_path: Pa
     data = _data(tmp_path)
     _analysis(data)
     v1 = _rewrite_job_dir(data, "v1")
-    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    prepare_inputs(HARNESS, data, v1, _job("essay", parent="analysis"))
     _checked(v1, "rewrite", 1, {"article.md": "# 第一版"}, passed=True)
     v2 = _rewrite_job_dir(data, "v2")
-    prepare_inputs(HARNESS, data, v2, _job("opinion", parent="v1", feedback="改短"))
+    prepare_inputs(HARNESS, data, v2, _job("essay", parent="v1", feedback="改短"))
     _checked(v2, "rewrite", 1, {"article.md": "# 第二版"}, passed=False)
 
     assert "input/article.md" not in carried_files(v2)
@@ -366,11 +373,11 @@ def test_換角色重寫不帶意見_不放上一版文章(tmp_path: Path) -> No
     data = _data(tmp_path)
     _analysis(data)
     v1 = _rewrite_job_dir(data, "v1")
-    prepare_inputs(HARNESS, data, v1, _job("opinion", parent="analysis"))
+    prepare_inputs(HARNESS, data, v1, _job("essay", parent="analysis"))
     _checked(v1, "rewrite", 1, {"article.md": "# 第一版"}, passed=True)
     fresh = _rewrite_job_dir(data, "fresh")
 
-    prepare_inputs(HARNESS, data, fresh, _job("opinion", parent="v1"))
+    prepare_inputs(HARNESS, data, fresh, _job("essay", parent="v1"))
 
     assert not (fresh / "input" / "article.md").exists()
     assert (fresh / "input" / "report.md").is_file()
@@ -387,5 +394,5 @@ def test_上一張工單的資料夾是指到_jobs_外面的連結_丟_InputErro
     job_dir = _rewrite_job_dir(data)
 
     with pytest.raises(InputError, match="jobs"):
-        prepare_inputs(HARNESS, data, job_dir, _job("opinion", parent="linked"))
+        prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="linked"))
     assert not (job_dir / "input" / "report.md").exists()

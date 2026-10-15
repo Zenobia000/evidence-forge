@@ -11,8 +11,8 @@ time_spent_min: 20          # 實際花了幾分鐘（讀＋標），用來估�
 article:
   main_point: 一句話：這篇最想說服讀者的是什麼
   audience: 作者寫給誰看
-  genre: roundup            # 主文類，harness/genres/ 的 id：news | hot-take | tutorial | tips | explainer | deep-dive | notes | review | case-study | opinion | story | roundup
-  secondary_genre: opinion  # 選填：次文類（例：電子報前半在論證）
+  genre: trend              # 主文體，harness/genres/ 的 slug：essay | research-review | product-case | benchmark | postmortem | explainer | trend
+  secondary_genre: essay    # 選填：次文體（例：電子報前半在講自己的感受）
 
 claims:
   - id: c1

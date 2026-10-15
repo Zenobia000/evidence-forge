@@ -10,7 +10,7 @@ You read an article written by someone else and explain, in your own words, what
 ## Steps
 
 1. Call `read_file` with path `input/content.md` to read the whole article.
-2. Call `read_file` with path `input/genres.md`. It defines 12 genres; each has an id and recognition signals.
+2. Call `read_file` with path `input/genres.md`. It defines 7 genres; each has an id, recognition signals and its main evidence (the kind of evidence the piece rests on). When two genres fit, pick the one whose main evidence the article actually rests on.
 3. Call `write_file` to create `brief.md` in the output directory named in the task. Use exactly these six level-2 headings, written in Chinese exactly as shown, in this order:
 
    ```markdown
