@@ -19,6 +19,7 @@ import {
   endSubmit,
   failureText,
   isLast,
+  isStaleConfirm,
   keyAction,
   mountStation,
   noteBox,
@@ -27,6 +28,7 @@ import {
   problem,
   pruneStore,
   reaskNotice,
+  resolveWriteConfirm,
   restoreDraft,
   saveDraft,
   select,
@@ -423,4 +425,33 @@ test("畫面上已經不在的卡，草稿清掉；還在的留著", () => {
   saveDraft(store, "b:2", createStation(specs()), labels);
   pruneStore(store, ["b:2"]);
   assert.deepEqual([...store.drafts.keys()], ["b:2"]);
+});
+
+// --- 寫稿前的最後確認卡 --------------------------------------------------------------------
+
+const confirmStation = () => createStation([{ id: "go", kinds: [OPT, OPT], choice: 0 }]);
+
+test("最後確認：選「照這張寫」按確認就開始寫；草稿一併清掉（這條路徑曾因為用到不存在的變數而整個壞掉）", () => {
+  const store = createStore();
+  const key = "confirm:card-1";
+  const station = confirmStation();
+  saveDraft(store, key, station, [["照這張寫", "先不要"]]);
+  const step = confirm(station, 0, [["照這張寫", "先不要"]]);
+  assert.equal(step.outcome.type, "submit"); // 單張的卡，確認就是送出
+  assert.deepEqual(resolveWriteConfirm(store, key, step.station), { go: true });
+  assert.equal(store.drafts.has(key), false);
+});
+
+test("最後確認：選「先不要」不開始寫", () => {
+  const store = createStore();
+  const station = select(confirmStation(), 1);
+  assert.deepEqual(resolveWriteConfirm(store, "confirm:card-1", station), { go: false });
+});
+
+test("確認卡過期：卡的決策紀錄已經比確認卡手上的新", () => {
+  assert.equal(isStaleConfirm("14", 15), true);
+  assert.equal(isStaleConfirm("14", 14), false);
+  assert.equal(isStaleConfirm(14, 13), false);
+  // 畫面還不知道這張卡長到幾筆：不當成過期
+  assert.equal(isStaleConfirm("14", undefined), false);
 });

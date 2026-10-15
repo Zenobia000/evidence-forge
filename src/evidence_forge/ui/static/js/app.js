@@ -154,12 +154,18 @@ let threadTimer = null;
 // 輸入法正在組字（注音、拼音選字）：這時把對話串流整個換掉，會打斷組字中的「其他」、備註，等組完再抓
 let composing = false;
 let threadDeferred = false;
+let stashedThread = null; // 組字中回來的對話串流：先收著，組完再套
 
 document.addEventListener("compositionstart", () => {
   composing = true;
 });
 document.addEventListener("compositionend", () => {
   composing = false;
+  if (stashedThread) {
+    // interview-ui.js 的 compositionend 註冊得比較晚、會晚一步收進草稿：這裡晚一拍再換畫面，組好的字才不會掉
+    const { status, html, stick } = stashedThread;
+    setTimeout(() => !composing && applyThread(status, html, stick), 0);
+  }
   if (threadDeferred) {
     threadDeferred = false;
     refreshThread();
@@ -199,31 +205,41 @@ async function loadThreadOnce() {
   const stick = first || nearBottom();
   try {
     const { status, html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/thread`);
-    if (els.loading) els.loading.remove();
-    els.loading = null;
-    const focusToken = interview.captureFocus();
-    els.thread.innerHTML = html;
-    // 問題卡長出狀態：答到一半的草稿與焦點接回去（interview-ui.js）
-    interview.mountAll(els.thread);
-    interview.restoreFocus(focusToken);
-    const root = $("[data-thread-root]", els.thread);
-    if (status === 200 && root) {
-      pending.length = 0;
-      els.live.replaceChildren();
-      $("#ch-title").textContent = root.dataset.title || "新對話";
-      $("#ch-spent").textContent = root.dataset.spent || "—";
-      $("#ch-spent-wrap").hidden = false;
-      // 載入時串流裡已經是結果卡的工單：之後的現況事件不用為它們重抓
-      state = seedFinished(state, $$(".ch-result[data-job]", els.thread).map((n) => n.dataset.job));
-      renderSuggestions(root);
-      renderAllProgress();
-      reportSeen(root);
+    if (composing) {
+      // 要求送出的時候還沒開始組字，回來時已經在組字了：現在換掉輸入框會打斷輸入法，先收著，組完（compositionend）再套
+      stashedThread = { status, html, stick };
+      return;
     }
+    applyThread(status, html, stick);
   } catch (error) {
     els.thread.replaceChildren(el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` })));
-  } finally {
     if (stick) scrollToEnd();
   }
+}
+
+function applyThread(status, html, stick) {
+  stashedThread = null; // 有更新的就不用舊的
+  if (els.loading) els.loading.remove();
+  els.loading = null;
+  const focusToken = interview.captureFocus();
+  els.thread.innerHTML = html;
+  // 問題卡長出狀態：答到一半的草稿與焦點接回去（interview-ui.js）
+  interview.mountAll(els.thread);
+  interview.restoreFocus(focusToken);
+  const root = $("[data-thread-root]", els.thread);
+  if (status === 200 && root) {
+    pending.length = 0;
+    els.live.replaceChildren();
+    $("#ch-title").textContent = root.dataset.title || "新對話";
+    $("#ch-spent").textContent = root.dataset.spent || "—";
+    $("#ch-spent-wrap").hidden = false;
+    // 載入時串流裡已經是結果卡的工單：之後的現況事件不用為它們重抓
+    state = seedFinished(state, $$(".ch-result[data-job]", els.thread).map((n) => n.dataset.job));
+    renderSuggestions(root);
+    renderAllProgress();
+    reportSeen(root);
+  }
+  if (stick) scrollToEnd();
 }
 
 function renderSuggestions(root) {

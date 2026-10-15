@@ -262,3 +262,18 @@ export function reaskNotice(station, later) {
 export function decisionFailure(station, reason) {
   return `第 ${station} 關沒寫進決策紀錄，${reason}。再按一次就好。`;
 }
+
+// ── 寫稿前的最後確認卡 ────────────────────────────────────────────────────────────
+
+// 按「確認」：選「照這張寫」（第一個選項）才開始寫稿；「先不要」只是把卡收起來。
+// 這一張卡不會再回來，草稿不用留。回傳 { go }：呼叫端據此決定要不要開始寫稿
+export function resolveWriteConfirm(store, key, station) {
+  store.drafts.delete(key);
+  return { go: station.cards[0].choice === 0 };
+}
+
+// 確認卡過期了嗎：確認卡是照決策紀錄第 cardEvents 筆的編輯卡產的，畫面已經知道這張卡長到 knownEvents 筆，
+// 比確認卡新就是過期（重問、沿用、agent 又寫了一筆之後，「照這張寫」講的已經不是現在的卡）
+export function isStaleConfirm(cardEvents, knownEvents) {
+  return Number.isFinite(knownEvents) && Number(cardEvents) < knownEvents;
+}

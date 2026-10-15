@@ -3,7 +3,7 @@
 // 把伺服器產的卡片（ui/templates/_interview.html）讀成狀態、把狀態畫回去、把送出打到 API。
 //
 // 規矩（跟 app.js 一樣）：自己組的東西一律用 textContent；請求都用相對路徑、同源。
-// 問題卡會隨對話串流重抓而重新長出來，所以答到一半的草稿放在這裡的記憶體（drafts），重抓後照 id 接回去，
+// 問題卡會隨對話串流重抓而重新長出來，所以答到一半的草稿放在這裡的記憶體（store），重抓後照 id 接回去，
 // 焦點（打到一半的「其他」、備註）也要接回去。
 
 import {
@@ -20,12 +20,14 @@ import {
   draftKey,
   endSubmit,
   failureText,
+  isStaleConfirm,
   keyAction,
   mountStation,
   noteBox,
   primaryLabel,
   pruneStore,
   reaskNotice,
+  resolveWriteConfirm,
   saveDraft,
   select,
   setBusy,
@@ -335,9 +337,8 @@ export function initInterview(env) {
       return;
     }
     if (qset.hasAttribute("data-confirm")) {
-      const go = station.cards[0].choice === 0;
+      const { go } = resolveWriteConfirm(store, keyOf(qset), station);
       qset.remove();
-      drafts.delete(keyOf(qset));
       if (go) env.startWriting(qset.dataset.card);
       return;
     }
@@ -480,10 +481,14 @@ export function initInterview(env) {
     env.confirmHost.replaceChildren();
   }
 
-  // 某張卡的決策紀錄長到 count 筆：比確認卡手上那份新，就把確認卡收掉
+  // 畫面知道每張卡的決策紀錄長到幾筆（app.js 每收到 ef_card 就告訴這裡）
+  const knownEvents = new Map();
+
+  // 某張卡的決策紀錄長到 count 筆：比確認卡手上那份新，就把確認卡收掉（還在路上的，回來時照這個數字檢查，見 openWriteConfirm）
   function dropStaleConfirm(cardId, count) {
+    knownEvents.set(cardId, count);
     const qset = $(".ch-qset[data-confirm]", env.confirmHost);
-    if (qset && qset.dataset.card === cardId && Number(qset.dataset.events) < count) clearConfirm();
+    if (qset && qset.dataset.card === cardId && isStaleConfirm(qset.dataset.events, count)) clearConfirm();
   }
 
   let confirmRequest = 0;
@@ -491,7 +496,12 @@ export function initInterview(env) {
     const mine = ++confirmRequest;
     const { status, html } = await env.fragment(`/ui/c/${encodeURIComponent(env.conversation())}/write-confirm?card=${encodeURIComponent(cardId)}`);
     if (mine !== confirmRequest) return; // 又按了一次，或卡已經變了：只收最新的
-    env.confirmHost.innerHTML = html; // 伺服器產的片段，內容已經跳脫
+    // 保險：回來的確認卡比畫面已知的卡舊（要求在路上時卡變了，事件先到），不放上去
+    const arrived = document.createElement("template");
+    arrived.innerHTML = html; // 伺服器產的片段，內容已經跳脫
+    const events = $(".ch-qset[data-confirm]", arrived.content)?.dataset.events;
+    if (events !== undefined && isStaleConfirm(events, knownEvents.get(cardId))) return;
+    env.confirmHost.replaceChildren(...arrived.content.childNodes);
     env.revealChat();
     const qset = $(".ch-qset[data-qset]", env.confirmHost);
     if (qset && status === 200) {
