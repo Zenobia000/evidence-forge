@@ -46,6 +46,8 @@ def test_兩個對話丟同一篇文章_各開各的單(data: DataDir) -> None:
     assert mine.created and other.created
     assert mine.job.id != other.job.id
     # 素材項目照舊只有一份：不共用的是分析（工單），不是素材
+    assert mine.job.feed is not None
+    assert other.job.feed is not None
     assert mine.job.feed.item == other.job.feed.item
 
 

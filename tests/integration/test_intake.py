@@ -81,6 +81,7 @@ def _jobs(data: DataDir) -> list[Path]:
 
 
 def _item(data: DataDir, intake: Intake) -> Item:
+    assert intake.job.feed is not None
     return Item.model_validate_json(
         (data.root / intake.job.feed.item / "item.json").read_bytes()
     )
@@ -103,6 +104,7 @@ def test_貼文字_寫素材項目並開一張排隊中的工單(data: DataDir) 
     assert intake.created
     job = read_job(data.job_dir(intake.job.id) / "job.md").job
     assert (job.status, job.goal, job.recipe) == ("queued", "給 PM 看的觀點文", "echo")
+    assert job.feed is not None
     item_dir = data.root / job.feed.item
     assert item_dir.parent == data.inbox / "manual"
     assert (item_dir / "content.md").read_text(encoding="utf-8") == "# 標題\n\n內文"
@@ -127,6 +129,7 @@ def test_上傳_md_txt_pdf_各開一張_原檔留在_raw(
 ) -> None:
     intake = _submit(data, UploadedFile(name, payload))
 
+    assert intake.job.feed is not None
     item_dir = data.root / intake.job.feed.item
     assert (item_dir / "content.md").read_text(encoding="utf-8") == content
     assert (item_dir / "raw" / name).read_bytes() == payload
@@ -163,6 +166,7 @@ def test_貼網址_先抓再開單_帳記在_intake_jsonl_不記進工單帳本(
         "Agents in production",
         "Jane Doe",
     )
+    assert intake.job.feed is not None
     item_dir = data.root / intake.job.feed.item
     assert (item_dir / "content.md").read_text(encoding="utf-8") == (
         "# Agents\n\n最難的是可觀測性。"
@@ -240,6 +244,8 @@ def test_同一個內容只建一份素材項目_目標不同就在同一份素�
 
     assert second.created
     assert first.job.id != second.job.id
+    assert first.job.feed is not None
+    assert second.job.feed is not None
     assert first.job.feed.item == second.job.feed.item
     assert len(_items(data)) == 1
 

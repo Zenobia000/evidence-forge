@@ -121,6 +121,7 @@ def _analysis(world: World) -> str:
         now=NOW,
     ).job
     # 當成從網址投入的：素材項目帶網址與作者
+    assert job.feed is not None
     item_json = world.data.root / job.feed.item / "item.json"
     item = Item.model_validate_json(item_json.read_bytes())
     item_json.write_text(
