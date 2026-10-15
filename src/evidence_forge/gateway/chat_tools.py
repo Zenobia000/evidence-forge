@@ -4,8 +4,12 @@
 
 - `analyze`：開一張分析工單，**開了就回**（工單 id 與狀態），不等它跑完。
   同一份素材在這個對話裡已有排隊中、執行中或完成的單就拿回那一張；帶 `again: true`（重做）就不拿。
-- `read_report`：讀這個對話開過的某張工單的結果。
+- `read_report`：讀這個對話開過的某張工單的報告。
+- `read_article`：讀這個對話開過的某張重構工單的文章（#85）。
 - `job_status`：一張工單現在跑到哪。
+- `list_personas`：現有的角色與它們寫過的文類（#85；創作者說「用 me 寫」時對話的 agent 才聽得懂）。
+- `rewrite`：重構。介面先留好，#79（PR #92）合併、工作台接上 `--from` 之前一律回 501，
+  ef-tools 也只在 `EF_CHAT_REWRITE=1` 時才註冊它，模型平常看不到。
 
 範圍：
 - 只碰得到列在這個對話 `jobs.jsonl` 裡的工單，別的對話的一律 403，而且不說那張單存不存在。
@@ -34,7 +38,9 @@ from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Job
 from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
 
-CHAT_TOOLS = frozenset({"analyze", "read_report", "job_status"})
+CHAT_TOOLS = frozenset(
+    {"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"}
+)
 # 還會花錢的狀態：排隊中的單等一下就會跑
 _RUNNING = frozenset({"queued", "running"})
 
@@ -61,6 +67,10 @@ class Desk(Protocol):
     def status(self, job_id: str) -> dict[str, Any]: ...
 
     def report(self, job_id: str) -> dict[str, Any]: ...
+
+    def article(self, job_id: str) -> dict[str, Any]: ...
+
+    def personas(self) -> dict[str, Any]: ...
 
 
 def _optional(body: dict[str, Any], name: str) -> str | None:
@@ -90,8 +100,15 @@ class ChatTools:
             return await self._analyze(desk, key, body)
         if name == "read_report":
             return await run_in_threadpool(desk.report, self._owned_job(key, body))
+        if name == "read_article":
+            return await run_in_threadpool(desk.article, self._owned_job(key, body))
         if name == "job_status":
             return await run_in_threadpool(desk.status, self._owned_job(key, body))
+        if name == "list_personas":
+            return await run_in_threadpool(desk.personas)
+        if name == "rewrite":
+            # 介面先留好（#85）：開重構工單要 `--from` 與重構配方，等 #79 合併後由工作台接上
+            raise ToolRejected(501, "重構還沒接上（等 #79 合併）；請創作者先讀報告")
         raise ToolRejected(404, f"沒有這個工具：{name}")
 
     async def _analyze(

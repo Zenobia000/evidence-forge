@@ -16,6 +16,7 @@
 重開之後執行器會從所在段重跑，到時候閘道會再擋一次、再記一次。
 """
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from datetime import datetime
 from evidence_forge.gateway.budget import BudgetLimit
 from evidence_forge.convkey import Principal
 from evidence_forge.models import Waiting, WaitingKind
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -42,8 +45,28 @@ class JobBoard:
         self._budget_stops: dict[Principal, BudgetLimit] = {}
         # 段與次 → 後端 → 故障（照碰到的先後）
         self._outages: dict[Principal, dict[str, Outage]] = {}
+        # 等待狀態變了要通知誰（對話主機推進度用，#85）
+        self._listeners: list[Callable[[str], None]] = []
         # 段與次 → 閘道擋下的原因（本機上下文放不下）
         self._too_long: dict[Principal, str] = {}
+
+    def listen(self, listener: Callable[[str], None]) -> None:
+        """等待狀態一變（開始等、換一種等、等完）就呼叫 `listener(擁有者 id)`。
+
+        在閘道的事件迴圈或執行緒上呼叫，不能卡住：只該把 id 丟進佇列。
+        `done` 在帳本寫完之後才呼叫，所以聽到「等完」時這次呼叫的花費已經進帳本。
+        """
+        with self._lock:
+            self._listeners.append(listener)
+
+    def _notify(self, job_id: str) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(job_id)
+            except Exception:
+                _log.warning("告示板的變動通知失敗", exc_info=True)
 
     # --- 等待狀態 -------------------------------------------------------------
 
@@ -51,12 +74,17 @@ class JobBoard:
         """這張單從現在起在等 `kind`；已經在等同一種就保留原本的開始時間。"""
         with self._lock:
             current = self._waiting.get(job_id)
-            if current is None or current.kind != kind:
+            changed = current is None or current.kind != kind
+            if changed:
                 self._waiting[job_id] = Waiting(kind=kind, since=self._clock())
+        if changed:
+            self._notify(job_id)
 
     def done(self, job_id: str) -> None:
         with self._lock:
-            self._waiting.pop(job_id, None)
+            was_waiting = self._waiting.pop(job_id, None) is not None
+        if was_waiting:
+            self._notify(job_id)
 
     def waiting(self, job_id: str) -> Waiting | None:
         with self._lock:

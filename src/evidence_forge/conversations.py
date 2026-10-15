@@ -2,7 +2,7 @@
 
 ```
 $EF_DATA/conversations/<對話 id>/
-  conversation.json   對話的設定：標題、建立時間、預算、開過幾次 Pi（只有聊天主機寫）
+  conversation.json   對話的設定：標題、建立時間、預算、開過幾次 Pi、通知過哪些工單（只有對話主機寫）
   jobs.jsonl          這個對話開過的工單，一行一張（只有閘道寫，只增不改）
   ledger.jsonl        對話本身的模型呼叫（只有閘道寫，只增不改）
   pi-session/         Pi 的對話紀錄（只有 Pi 寫；`--session-dir`，session id 就是對話 id）
@@ -23,6 +23,7 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
+    Field,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveInt,
@@ -33,6 +34,8 @@ from evidence_forge.gateway.ledger import append_line
 from evidence_forge.paths import DataDir
 
 DEFAULT_BUDGET_USD = 1.0
+# 還沒丟素材的對話叫這個；第一張工單開出來時，主機換成那份素材的標題（IA §3）
+DEFAULT_TITLE = "新對話"
 
 
 class Conversation(BaseModel):
@@ -47,6 +50,9 @@ class Conversation(BaseModel):
     budget_usd: NonNegativeFloat = DEFAULT_BUDGET_USD
     # 開過幾次 Pi：每開一次加一，對話鑰匙是 conv:<id>:<這個數>
     launches: NonNegativeInt = 0
+    # 結束通知已經確定進了 Pi 紀錄的工單（主機看到 `ef-job` 訊息的 `message_end` 才記，#85）。
+    # 主機重開時只補送不在這裡的；ef-tools 自己也照紀錄去重，這裡漏記頂多多送一次、不會多一則通知
+    notified_jobs: list[str] = Field(default_factory=list)
 
 
 class ConversationJob(BaseModel):
@@ -75,7 +81,7 @@ def new_id(now: datetime) -> str:
     return f"c-{now.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
 
 
-def create(data: DataDir, now: datetime, title: str = "新對話") -> Conversation:
+def create(data: DataDir, now: datetime, title: str = DEFAULT_TITLE) -> Conversation:
     conversation = Conversation(id=new_id(now), title=title, created_at=now)
     _folder(data, conversation.id).mkdir(parents=True, exist_ok=False)
     save(data, conversation)
@@ -95,6 +101,19 @@ def save(data: DataDir, conversation: Conversation) -> None:
 def read(data: DataDir, conversation_id: str) -> Conversation:
     path = _folder(data, conversation_id) / "conversation.json"
     return Conversation.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def list_all(data: DataDir) -> list[Conversation]:
+    """所有讀得到的對話，照 id（建立時間）排；讀不懂的跳過。"""
+    if not data.conversations.is_dir():
+        return []
+    found: list[Conversation] = []
+    for folder in sorted(data.conversations.iterdir()):
+        try:
+            found.append(read(data, folder.name))
+        except (OSError, ValueError):
+            continue
+    return found
 
 
 def budget_usd(data: DataDir, conversation_id: str) -> float:

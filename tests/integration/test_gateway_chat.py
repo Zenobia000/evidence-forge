@@ -113,6 +113,12 @@ class IntakeDesk:
     def report(self, job_id: str) -> dict[str, Any]:
         return {**self.status(job_id), "files": {"report.md": f"{job_id} 的報告"}}
 
+    def article(self, job_id: str) -> dict[str, Any]:
+        return {**self.status(job_id), "files": {"article.md": f"{job_id} 的文章"}}
+
+    def personas(self) -> dict[str, Any]:
+        return {"personas": [{"name": "me", "default_genre": "opinion"}]}
+
 
 @dataclass
 class Backend:
@@ -321,8 +327,26 @@ def test_讀得到自己開的報告(env: Env) -> None:
     assert response.json()["files"] == {"report.md": f"{job_id} 的報告"}
 
 
+def test_讀得到自己開的文章_列得出角色(env: Env) -> None:
+    job_id = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
+    response = env.call("read_article", env.mine, job_id=job_id)
+    assert response.status_code == 200
+    assert response.json()["files"] == {"article.md": f"{job_id} 的文章"}
+    personas = env.call("list_personas", env.mine)
+    assert personas.status_code == 200
+    assert personas.json()["personas"][0]["name"] == "me"
+
+
+def test_重構先留介面_接上之前回_501_不開單(env: Env) -> None:
+    job_id = _opened(env.call("analyze", env.mine, text="# 一篇\n\n內容"))
+    response = env.call("rewrite", env.mine, from_job=job_id, persona="me")
+    assert response.status_code == 501
+    assert "重構還沒接上" in response.json()["error"]
+    assert len(env.desk.opened) == 1
+
+
 @pytest.mark.promise("NFR-SEC-02")
-@pytest.mark.parametrize("tool", ["read_report", "job_status"])
+@pytest.mark.parametrize("tool", ["read_report", "read_article", "job_status"])
 def test_讀別的對話的工單被拒(env: Env, tool: str) -> None:
     theirs = _opened(env.call("analyze", env.other, text="# 別人的\n\n內容"))
     response = env.call(tool, env.mine, job_id=theirs)
@@ -356,7 +380,10 @@ def test_對話不能用段的工具(env: Env, tool: str, body: dict[str, object
     [
         ("analyze", {"text": "# 一篇\n\n內容"}),
         ("read_report", {"job_id": "x"}),
+        ("read_article", {"job_id": "x"}),
         ("job_status", {"job_id": "x"}),
+        ("list_personas", {}),
+        ("rewrite", {"from_job": "x"}),
     ],
 )
 def test_段的鑰匙不能用對話的工具(env: Env, tool: str, body: dict[str, object]) -> None:
