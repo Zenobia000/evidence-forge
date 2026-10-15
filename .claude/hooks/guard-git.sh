@@ -197,8 +197,11 @@ if ! command -v jq >/dev/null 2>&1; then
   deny "Blocked: guard-git.sh 需要 jq 才讀得到指令，這台機器找不到 jq。沒有它守衛會靜靜全部放行，所以先擋。請人裝好 jq（例：apt install jq、brew install jq、winget install jqlang.jq）再試。"
 fi
 
-cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+input=$(cat)
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
+hookcwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$cmd" ] && exit 0
+cmd_raw=$cmd   # 去掉 heredoc 之前的原樣；私人內容關卡掃訊息文字要看 heredoc 裡寫了什麼
 
 # 把「引號分隔字」heredoc 的內容拿掉，再拿去比對規則。
 #
@@ -533,6 +536,49 @@ fi
 
 if printf '%s\n' "$cmd" | grep -qE "${P}gh[[:space:]]+api[^;|&]*/merge([[:space:]]|'|\"|;|\)|$)"; then
   deny "Blocked: merging a PR through the REST API. Going around 'gh pr merge' does not change what it is — the merge button belongs to the user. Report the PR URL and stop."
+fi
+
+# （放在最後：上面所有舊規則先各自擋，擋下時說的是它們自己的理由；
+# 通過了才輪到這一關，看目標 repo 有沒有啟用私人內容 hook。）
+# 私人內容關卡（#126）：目標 repo 沒啟用 git 原生的私人內容 hook，就不准 commit／push。
+#
+# 為什麼：這個 repo 是公開的，推出去的東西只有 GitHub 客服收得回來（2026-10-15 創作者的真名就這樣進了
+# 公開歷史，帳本 L-028）。創作者定的設計是**主關卡放在 git 原生 hook**（.githooks/pre-commit、commit-msg、
+# pre-push；`git config core.hooksPath .githooks` 啟用），因為它在 commit 與 push 當下才看內容，
+# 不管指令是誰下的、怎麼拼的。這裡的工作是確保它真的在：
+#   - `git commit`／`git push`／`gh pr create`／`gh pr merge` 的**目標 repo**（看得懂 `git -C <dir>`、
+#     `cd <dir> &&`、`--git-dir`／`--work-tree`、`bash -c`、`$( )`；起點是 hook 輸入的 `.cwd`）
+#     沒有把 core.hooksPath 設成 .githooks、或 hook 檔缺了，就擋；
+#   - 用 `-c core.hooksPath=…`、GIT_CONFIG_*、改 core.hooksPath 的 `git config`、push／commit 的 --no-verify
+#     把 hook 關掉，也擋；
+#   - 指令裡的文字（commit message、PR 標題與內文）與 `-F`／`--body-file` 指到的檔掃指紋。
+# 目標資料夾算不出來、解析指令本身失敗、掃描壞了，一律擋（fail-closed）：這一關擋的是推出去就收不回來的
+# 東西，放行的代價遠高於擋錯一次，跟上面缺 jq 同一個取捨。細節與不處理的寫法見 src/evidence_forge/git_gate.py。
+# 缺 python3 只在指令看起來是 commit／push／PR 時才擋——`git status` 不該因為沒有 python3 就掛掉。
+BRAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/brand_guard.py"
+
+if printf '%s\n' "$cmd" | grep -qE '(^|[^[:alnum:]_.-])(git|gh)[[:space:]]'; then
+  bg_need=0
+  printf '%s\n' "$cmd" | grep -qE '(commit|push|config|alias|pr[[:space:]]+(create|merge))' && bg_need=1
+  bg_py=$(command -v python3 || command -v python || true)
+  if [ -z "$bg_py" ] || [ ! -f "$BRAND_GUARD" ]; then
+    if [ "$bg_need" -eq 1 ]; then
+      deny "Blocked: 私人內容關卡跑不了——找不到 python3，或找不到 $BRAND_GUARD。沒有它這一關會靜靜放行，所以先擋。請人裝好 python3、確認腳本在，再試。"
+    fi
+  else
+    bg_raw=$(mktemp 2>/dev/null || true)
+    [ -n "$bg_raw" ] && printf '%s' "$cmd_raw" > "$bg_raw"
+    bg_out=$(printf '%s' "$cmd" | "$bg_py" "$BRAND_GUARD" guard --cwd "$hookcwd" ${bg_raw:+--raw-file "$bg_raw"} 2>&1)
+    bg_rc=$?
+    [ -n "$bg_raw" ] && rm -f "$bg_raw"
+    case "$bg_rc" in
+      0) ;;
+      1) deny "Blocked: 私人內容關卡（這個 repo 是公開的，推出去就收不回來）：
+$bg_out" ;;
+      *) deny "Blocked: 私人內容關卡自己壞了（exit $bg_rc），看不清楚就不放行：
+$bg_out" ;;
+    esac
+  fi
 fi
 
 exit 0
