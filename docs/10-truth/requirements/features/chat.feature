@@ -1,10 +1,17 @@
 Feature: 聊天室：對話、追問、進度與恢復
-  # 需求：FR-CH-01、FR-CH-02、FR-CH-03、FR-UI-11、NFR-OBS-02、NFR-SEC-02｜故事：US-21、US-23、US-26、US-10｜決策：ADR-0019
+  # 需求：FR-CH-01、FR-MT-02、FR-CH-02、FR-CH-03、FR-UI-11、NFR-OBS-02、NFR-SEC-02｜故事：US-21、US-23、US-26、US-10｜決策：ADR-0019、ADR-0028
+
+  Scenario: 只丟網址，先收進素材清單，不開工單
+    Given 創作者開了一個新對話
+    When 只貼上一篇文章的網址，沒說要做什麼
+    Then 這個網址成為素材清單上的一個附件（ADR-0028 §3.5）
+    And 沒有開任何工單，也沒有花模型的錢
+    And 對話的 agent 回一句收到了什麼，問要不要分析
 
   @happy-path @smoke
-  Scenario: 從丟網址到拿到報告
+  Scenario: 丟網址並說要分析，就開分析拿到報告
     Given 創作者開了一個新對話
-    When 貼上一篇文章的網址
+    When 貼上一篇文章的網址並說「分析這篇」
     Then 對話的 agent 開一次分析
     And 對話裡看得到「第 1／2 段 brief」與這段跑了多久
     And 分析結束後，報告出現在對話裡，右側面板可以打開完整報告

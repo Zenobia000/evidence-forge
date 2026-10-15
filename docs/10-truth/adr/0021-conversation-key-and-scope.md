@@ -5,6 +5,7 @@
 > **補充 ADR-0011 §3.6**（工單身分）與 **ADR-0019 §4**（對話要另外定義鑰匙與範圍）。
 > 草稿由 #80 的 spike 起草（分支 `spike/p2-pi-rpc-chat`，結論在 #80 的留言），#84 實作閘道這一半。
 > **後續修正：ADR-0025、ADR-0026、ADR-0027**——§3.4 的「對話沒有任何寫檔工具」改成：**對話沒有通用的讀寫檔工具；只有幾個有名字的閘道工具，各自只寫這個對話自己資料夾裡的一種東西**，報告與文章仍只能由工單產生。多的工具：編輯卡的 `propose_questions`、`record_interpreted_answers`（agent 解讀創作者打字的回答，事件標 `source: agent`）、`add_material`、`read_card`；另有只由畫面叫、對話的 Pi 叫不到的入口 `submit_station`、`keep_decision`、`reask_station`，閘道直接記（`source: ui`）後用 `[ef-card]` 通知對話（ADR-0025 §3.3）；開配圖工單的 `figures`（ADR-0027 §3.5）；lessons 的 `propose_lesson`，以及只由畫面叫的 `approve_lesson`（由閘道寫角色的 `lessons.md`，對話自己從不寫角色資料夾，ADR-0026 §3.3）。
+> **後續修正：ADR-0028**——§3.4 對話再多兩個只讀的工具 `list_attachments`、`read_attachment`（只讀這個對話自己的素材清單），`analyze` 可以拿清單上的一個附件當輸入；把附件寫進素材清單的 `save_attachment` 只由畫面經閘道叫，對話的 Pi 叫不到。口述轉文字的花費記在對話的帳本、從對話的預算預留（§3.3 的對話帳本照舊）。
 
 ## 1. 背景與問題
 
