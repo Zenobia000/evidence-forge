@@ -6,6 +6,8 @@
   觸發一輪回答，模型叫 `read_report` 再整理。
 - ef-tools 照對話紀錄去重：接回之後再送一次同一張單，還是一則通知。
 - Pi 正在回答時送訊息（`followUp`）排在後面，兩句都答。
+- 創作者在畫面上送出一關（`submit_station`，#107）：主機送 `/ef-card`，ef-tools 放一則 `ef-card` 通知、
+  觸發一輪，模型叫 `read_card` 讀到創作者點的回答；畫面才能叫的入口不在模型的工具清單裡。
 - 分析跑完之後說「寫第 1 個」：模型叫 `rewrite`，經閘道開一張接在那張分析後面的重構單；
   它跑完時的通知叫模型讀文章（#102）。
 
@@ -26,7 +28,7 @@ import pytest
 from chat_world import wait_until
 from fake_anthropic import FakeAnthropic
 
-from evidence_forge import conversations
+from evidence_forge import cards, conversations
 from evidence_forge.chat.desk import Desk
 from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.chat.host import ConversationHost
@@ -59,7 +61,18 @@ REWRITE = Recipe(
     default_goal="寫一篇",
 )
 RECIPES = {"analyze": RECIPE, "rewrite": REWRITE}
-CHAT_TOOLS = {"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"}
+CHAT_TOOLS = {
+    "analyze",
+    "read_report",
+    "read_article",
+    "job_status",
+    "list_personas",
+    "rewrite",
+    "propose_questions",
+    "record_interpreted_answers",
+    "add_material",
+    "read_card",
+}
 
 pytestmark = [
     pytest.mark.pipeline,
@@ -262,3 +275,35 @@ def test_分析跑完說寫第_1_個_開出重構單_跑完通知讀文章(chat:
     # 畫面的結果卡照這份進度畫：重構那張跑完了
     progress = {p["job_id"]: p for p in chat.host.jobs(cid)}
     assert progress[rewrite]["finished"] and progress[rewrite]["outcome"] == "complete"
+
+
+@pytest.mark.promise("FR-IW-03", "FR-UI-13")
+def test_畫面送出一關_ef_card_通知觸發一輪_模型讀編輯卡(chat: Chat) -> None:
+    cid = conversations.create(chat.data, NOW).id
+    question = {
+        "header": "文體",
+        "question": "這篇的主證據是什麼？",
+        "options": [
+            {"label": "explainer", "description": "把計價方式講清楚"},
+            {"label": "trend", "description": "兩年內這筆帳會怎麼變"},
+        ],
+    }
+    card_id = cards.propose_questions(chat.data, cid, None, 1, [question], now=NOW).card_id
+
+    chat.host.submit_station(
+        cid, card_id, 1, [{"question": "q1", "choice": "trend", "note": "看兩年"}]
+    )
+
+    wait_until(
+        lambda: any(t.startswith("編輯卡：") for t in chat.texts(cid)),
+        timeout_s=60,
+        what="ef-card 通知觸發一輪：讀編輯卡",
+    )
+    read = next(t for t in chat.texts(cid) if t.startswith("編輯卡："))
+    assert "-> trend (note: 看兩年)" in read
+    notices = [m for m in chat.messages(cid) if m.get("customType") == "ef-card"]
+    assert [(m["details"]["card_id"], m["details"]["action"]) for m in notices] == [(card_id, "submit")]
+    # 模型看得到編輯卡的四個工具，看不到畫面才能叫的三個
+    tools = {t["name"] for t in chat.model.requests[0]["tools"]}
+    assert tools == CHAT_TOOLS
+    assert not tools & {"submit_station", "keep_decision", "reask_station"}

@@ -11,7 +11,16 @@
 | `GET /api/conversations/<id>/messages` | 完整紀錄（Pi 的 `get_messages`）與工單進度：`{"messages", "jobs"}`。Pi 沒開就接回 |
 | `POST /api/conversations/<id>/messages` | 送一句話：`{"text": "…"}` → 202 `{"disposition": "started"｜"queued"}`。Pi 正在回答也可以送，排在後面 |
 | `POST /api/conversations/<id>/seen` | 回報創作者看過這張工單的結果：`{"job_id": "…"}` → 204；清單據此不再標「有新結果」 |
-| `GET /api/conversations/<id>/events` | SSE：先一則 `ef_pi` 與每張工單的 `ef_job`（現況），之後是變化。格式見 `chat/host.py` |
+| `GET /api/conversations/<id>/events` | SSE：先一則 `ef_pi`、每張工單的 `ef_job`、每張編輯卡的 `ef_card`（現況），之後是變化。格式見 `chat/host.py` |
+| `GET /api/conversations/<id>/cards` | 這個對話的編輯卡：`{"cards": [編輯卡…]}`（`cards.CardState`） |
+| `GET /api/conversations/<id>/cards/<卡>` | 一張卡：`{"card": 編輯卡, "events": [決策紀錄的每一筆]}` |
+| `POST /api/conversations/<id>/cards/<卡>/stations/<關>/submit` | 「確認並送出這一關」：`{"answers": [{"question", "choice"｜"other_text", "note"?}]}` → `{"card", "events"}` |
+| `POST /api/conversations/<id>/cards/<卡>/stations/<關>/keep` | 「沿用」（要重確認的關）：`{}` → `{"card", "events"}` |
+| `POST /api/conversations/<id>/cards/<卡>/stations/<關>/reask` | 「重問這一關」：`{}` → `{"card", "events"}` |
+
+編輯卡的三個 POST 是**只有畫面能叫的入口**（ADR-0025 §3.3）：主機直接寫進決策紀錄（`source: ui`），再用 `/ef-card` 通知對話的 Pi；
+閘道的 `/tools/` 沒有它們，對話的 agent 叫不到。卡不是這個對話的、或沒有這張卡一律 404，不說存不存在；
+不合規則（沒有要重確認卻按沿用、選項不在卡上、沒回答到每一張）是 409 或 400，什麼都不寫。
 
 摘要的欄位：`id`、`title`、`created_at`、`last_activity`、`pi_running`、`busy`、`job_count`（幾張）、
 `latest_job`（最後一張的 `ef_job`，畫面據此標「分析中／有新結果／失敗」）、`spent_usd`（對話本身加它開的工單）、`budget_usd`、
@@ -41,6 +50,7 @@ from evidence_forge.chat.host import (
 )
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.gateway.active import StaleKey
+from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.ui import pages
@@ -64,6 +74,9 @@ async def _call(work: Callable[[], Any]) -> Any:
         return await asyncio.to_thread(work)
     except ConversationNotFound:
         return _error(404, "沒有這個對話")
+    except ToolRejected as exc:
+        # 編輯卡的規則（`cards.py`）：狀態碼照它說的
+        return _error(exc.status, exc.message)
     except PromptRejected as exc:
         return _error(409, str(exc))
     except (PiExited, TimeoutError, StaleKey, OSError, RuntimeError) as exc:
@@ -143,6 +156,35 @@ def create_app(
             return _error(400, "要有字串欄位 job_id")
         result = await _call(lambda: host.mark_seen(conversation_id, job_id))
         return result if isinstance(result, Response) else Response(status_code=204)
+
+    @app.get("/api/conversations/{conversation_id}/cards")
+    async def list_cards(conversation_id: str) -> Any:
+        return await _call(lambda: {"cards": host.list_cards(conversation_id)})
+
+    @app.get("/api/conversations/{conversation_id}/cards/{card_id}")
+    async def card(conversation_id: str, card_id: str) -> Any:
+        return await _call(lambda: host.card(conversation_id, card_id))
+
+    @app.post("/api/conversations/{conversation_id}/cards/{card_id}/stations/{station}/{action}")
+    async def card_action(
+        conversation_id: str, card_id: str, station: str, action: str, request: Request
+    ) -> Any:
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error(400, "請求內容要是 JSON")
+        if not isinstance(body, dict):
+            return _error(400, "請求內容要是 JSON 物件")
+        # 關卡號碼不是數字就原樣交給 `cards.py`，由它回 400
+        number: object = int(station) if station.isdigit() else station
+        if action == "submit":
+            answers = body.get("answers")
+            return await _call(lambda: host.submit_station(conversation_id, card_id, number, answers))
+        if action == "keep":
+            return await _call(lambda: host.keep_decision(conversation_id, card_id, number))
+        if action == "reask":
+            return await _call(lambda: host.reask_station(conversation_id, card_id, number))
+        return _error(404, f"沒有這個動作：{action}")
 
     @app.get("/api/conversations/{conversation_id}/events")
     async def events(conversation_id: str) -> Any:

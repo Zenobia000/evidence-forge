@@ -209,7 +209,15 @@ def _serve(args: argparse.Namespace) -> int:
             idle_s=args.chat_idle_minutes * 60,
             tier=args.chat_tier,
         )
-        desk = Desk(data, recipes, args.chat_recipe, clock=taipei_now, on_opened=host.job_opened)
+        desk = Desk(
+            data,
+            recipes,
+            args.chat_recipe,
+            clock=taipei_now,
+            on_opened=host.job_opened,
+            # 閘道替 agent 寫了編輯卡：推給畫面（ADR-0025 §3.3）
+            on_card=host.card_changed,
+        )
         # 告示板一變（開始等、等完）就推進度；等完時花費已經進帳本
         board.listen(host.job_changed)
     gateway = _start_server(create_app(config, stages, board, desk=desk), args.port)

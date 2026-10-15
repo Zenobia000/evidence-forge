@@ -5,6 +5,7 @@
 - `prompt`：正在回答時沒帶 `streamingBehavior` 就拒絕（success: false）；帶了就排隊，回答完接著跑。
   一輪回答發 `agent_start` → 使用者訊息的 `message_end` → 助理訊息的 `message_end` → `agent_settled`。
   回答要花多久看設定的 `turn_s`（在另一條執行緒跑，stdin 照樣在讀）。
+- `/ef-card <卡> <n> <動作> <關>`：編輯卡的通知，跟 `/ef-job-done` 一樣馬上處理、照紀錄去重、開一輪。
 - `/ef-job-done <工單>`：擴充指令，馬上處理（正在回答也一樣）。紀錄裡已經有這張單的 `ef-job` 通知就什麼都不做；
   沒有就放一則 `custom` 訊息（`message_end` 事件），再開一輪回答（正在回答就排在後面）。
 - `get_messages`：回完整紀錄；`slow_get_messages_s` 讓它晚一點回，後送的指令的回應會先到。
@@ -141,6 +142,20 @@ def handle(command):
         respond(command, success=False, error="unknown command")
         return
     text = command.get("message", "")
+    if text.startswith("/ef-card "):
+        # 編輯卡的通知（ef-tools 的指令）：照卡與事件編號去重，放一則 custom 訊息、開一輪
+        parts = text.split()
+        details = {"card_id": parts[1], "n": parts[2]}
+        already = any(
+            m.get("role") == "custom" and m.get("customType") == "ef-card" and m.get("details") == details
+            for m in messages
+        )
+        if not already:
+            keep({"role": "custom", "customType": "ef-card", "content": "[ef-card] " + text,
+                  "display": True, "details": details})
+            start_or_queue({"kind": "job", "job_id": parts[1]})
+        respond(command, data={"disposition": "handled"})
+        return
     if text.startswith("/ef-job-done "):
         job_id = text.split(" ", 1)[1].strip()
         if failures["reject"] > 0:

@@ -9,6 +9,7 @@
   - 最後一則是工具結果：`analyze` 的 → 「開始分析了。」；`rewrite` 的 → 「開始寫了。」；
     `read_report` 的 → 「報告重點：」加報告結尾；`read_article` 的 → 「文章重點：」加文章結尾；其他 → 「好。」
   - 最後一則訊息有 `[ef-job]` → 照通知說的叫 `read_report` 或 `read_article`（工單 id 從通知裡拿）。
+  - 最後一則訊息有 `[ef-card]` → 叫 `read_card`（卡 id 從通知裡拿）；讀完回「編輯卡：」加編輯卡的結尾。
   - 有網址 → 叫 `analyze(url)`；以「分析：」開頭 → 叫 `analyze(text)`。
   - 「寫第 N 個」而且有 `rewrite` → 叫 `rewrite(from_job=最近一張分析的工單, goal="題材 N")`
     （分析的工單從「叫你讀報告」的 `[ef-job]` 通知拿）。
@@ -31,6 +32,7 @@ from fastapi.responses import Response
 
 _OUTPUT_DIR = re.compile(r"stages/[A-Za-z0-9._-]+/\d+/")
 _JOB_ID = re.compile(r"job_id: (\S+)")
+_CARD_ID = re.compile(r"card: (\S+)")
 _URL = re.compile(r"https?://\S+")
 _WRITE_TOPIC = re.compile(r"寫第\s*(\d+)\s*個")
 
@@ -91,11 +93,16 @@ def decide(body: dict[str, Any]) -> tuple[str, Any]:
             return "text", "報告重點：" + last_text.strip()[-60:]
         if answered == "read_article":
             return "text", "文章重點：" + last_text.strip()[-60:]
+        if answered == "read_card":
+            return "text", "編輯卡：" + last_text.strip()[-200:]
         if answered is not None:
             return "text", "好。"
         for message in reversed(messages):
             if message.get("role") != "user":
                 break
+            card = _CARD_ID.search(_text(message))
+            if "[ef-card]" in _text(message) and card:
+                return "tool", ("read_card", {"card": card.group(1)})
             found = _JOB_ID.search(_text(message))
             if "[ef-job]" in _text(message) and found:
                 tool = "read_article" if "read_article" in _text(message) else "read_report"
