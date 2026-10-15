@@ -81,6 +81,8 @@ def count(text: str) -> int:
 
 
 CAPTION = re.compile(r"^\*[^*].*\*$")
+# 圍欄式程式碼區塊的開頭與結尾（``` 或 ~~~，前面最多三個空白）
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def _line_kind(line: str) -> str:
@@ -101,6 +103,10 @@ def blocks(md: str) -> list[Block]:
 
     圖片行自己就是一個區塊，前後不必空行；緊接在它後面（中間可隔空行）的 `*圖說*` 那一行算它的圖說。
     標題也是一行一塊。連續的文字行、連續的表格行各自併成一塊，空行隔開文字。
+
+    圍欄式程式碼區塊（``` 或 ~~~）裡面不看結構：`![假圖](x)`、`# 註解`、`## 參考資料` 都不是圖或標題。
+    整塊當作一個文字區塊，字數照算（原腳本也把它當文字算）；圍欄那兩行本身不算。
+    沒有收尾的圍欄一路到文章結尾。
     """
     body = re.sub(r"^---\n[\s\S]*?\n---\n", "", md, count=1)
     offset = md[: len(md) - len(body)].count("\n")
@@ -116,9 +122,33 @@ def blocks(md: str) -> list[Block]:
             out.append(Block(pending_kind, "\n".join(pending), pending_line))
         pending, pending_kind = [], ""
 
+    fence = ""  # 目前所在圍欄的開頭記號（例如 ```），空字串表示不在圍欄裡
+    fence_lines: list[str] = []
+    fence_line = 0
+
+    def end_fence() -> None:
+        nonlocal fence, fence_lines
+        if fence_lines:
+            out.append(Block("text", "\n".join(fence_lines), fence_line))
+        fence, fence_lines = "", []
+
     i = 0
     while i < len(lines):
         line, number = lines[i], offset + i + 1
+        if fence:
+            closing = re.match(rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}\s*$", line)
+            if closing:
+                end_fence()
+            else:
+                fence_lines.append(line.strip())
+            i += 1
+            continue
+        opening = FENCE_OPEN.match(line)
+        if opening:
+            flush()
+            fence, fence_line = opening.group(1), number + 1
+            i += 1
+            continue
         kind = _line_kind(line)
         if kind == "blank":
             flush()
@@ -143,6 +173,7 @@ def blocks(md: str) -> list[Block]:
                 pending_kind, pending_line = kind, number
             pending.append(line.strip())
         i += 1
+    end_fence()
     flush()
     return out
 

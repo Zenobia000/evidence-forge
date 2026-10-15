@@ -11,7 +11,15 @@ from typing import Annotated, Literal, Self
 
 import yaml
 from matplotlib.ft2font import FT2Font
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from evidence_forge.jobkey import check_name
 from evidence_forge.paths import DataDir
@@ -65,6 +73,9 @@ class FontSpec(_Strict):
     dirs: tuple[Path, ...] = ()
     # 建立樣式時檢查字型有常用繁體中文字的字形；只用拉丁字母的字型才關掉
     require_cjk: bool = True
+    # 角色資料夾（不解析符號連結的那個路徑）。不是 brand.yaml 的欄位，是載入時設的：
+    # 位在它底下的字型候選，真實位置也必須還在它底下，否則視為不存在。
+    _persona_base: Path | None = PrivateAttr(default=None)
 
 
 class MediumSpec(_Strict):
@@ -169,28 +180,37 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def persona_dir(data: DataDir, persona: str) -> Path:
-    """`$EF_DATA/authors/<角色>/`。角色名會拼進路徑，先擋掉 `..` 之類；
+    """`$EF_DATA/authors/<角色>/`。角色名會拼進路徑，先擋掉 `..` 之類。
 
-    角色資料夾若是符號連結而且指到 `authors/` 外面，一律拒絕（否則讀取會跑出資料目錄）。
+    這個資料夾必須就是它自己：若是符號連結（指到外面，或指到另一個角色的資料夾）一律拒絕，
+    否則一個角色能讀到別人的檔案。`authors/` 本身是連結沒關係（整個資料目錄搬家的情形）。
     """
     check_name("角色", persona)
     path = data.authors / persona
-    if not _inside(path, data.authors):
-        raise BrandError(f"角色資料夾 {path} 指到 {path.resolve()}，在 {data.authors} 之外")
+    if path.resolve() != data.authors.resolve() / persona:
+        raise BrandError(
+            f"角色資料夾 {path} 實際指到 {path.resolve()}，不是 {data.authors} 底下的 {persona}（不接受符號連結）"
+        )
     return path
 
 
 def brand_file(data: DataDir, persona: str) -> Path:
-    """`$EF_DATA/authors/<角色>/brand.yaml` 的位置；它本身若是指到外面的符號連結也拒絕。"""
-    path = persona_dir(data, persona) / "brand.yaml"
-    if not _inside(path, data.authors):
-        raise BrandError(f"{path} 指到 {path.resolve()}，在 {data.authors} 之外")
+    """`$EF_DATA/authors/<角色>/brand.yaml` 的位置；它本身若是指到角色資料夾之外的符號連結也拒絕。"""
+    folder = persona_dir(data, persona)
+    path = folder / "brand.yaml"
+    if not _inside(path, folder):
+        raise BrandError(f"{path} 指到 {path.resolve()}，在角色資料夾 {folder} 之外")
     return path
 
 
 def _with_persona_fonts(brand: Brand, base: Path, declared: tuple[Path, ...] = ()) -> Brand:
-    """字型搜尋路徑：自己宣告的在前，其次是角色資料夾的 `fonts/` 與角色資料夾本身。"""
+    """字型搜尋路徑：自己宣告的在前，其次是角色資料夾的 `fonts/` 與角色資料夾本身。
+
+    位在角色資料夾底下的候選都受限：真實位置跑出角色資料夾（`fonts/` 是連到別處的連結、
+    字型檔是連結、`dirs` 寫了 `../別人/fonts`）就略過。
+    """
     font = brand.font.model_copy(update={"dirs": (*declared, base / "fonts", base)})
+    font._persona_base = base
     return brand.model_copy(update={"font": font})
 
 
@@ -239,18 +259,23 @@ def resolve_font(spec: FontSpec, weight: Literal["regular", "bold"]) -> Path:
     name = spec.regular if weight == "regular" else spec.bold
     given = Path(name).expanduser()
     names = [name] if given.suffix.lower() in _FONT_EXTENSIONS else [name + e for e in _FONT_EXTENSIONS]
-    searched: list[Path] = []
+    searched: list[str] = []
+    # brand.yaml 明確寫的絕對路徑（regular／bold／dirs）照用，不受角色資料夾限制：那是創作者自己指的
     if given.is_absolute():
         for candidate in names:
-            searched.append(Path(candidate))
+            searched.append(candidate)
             if Path(candidate).is_file():
                 return Path(candidate)
     home_fonts = Path(os.path.expanduser("~")) / ".fonts"
+    base = spec._persona_base
     for directory in (*spec.dirs, home_fonts):
         for candidate in names:
             path = directory / candidate
-            searched.append(path)
-            if path.is_file():
+            if not path.is_file():
+                searched.append(str(path))
+            elif base is not None and path.is_relative_to(base) and not _inside(path, base):
+                searched.append(f"{path}（符號連結指到角色資料夾之外，略過）")
+            else:
                 return path
     tried = "\n".join(f"  - {p}" for p in searched)
     raise FontNotFoundError(

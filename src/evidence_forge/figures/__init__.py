@@ -49,7 +49,10 @@ brand.yaml
 找不到會丟 `FontNotFoundError`，訊息寫明缺哪個字型、找過哪些地方、該放到哪裡。
 沒有 brand.yaml 時一樣會找角色資料夾的 `fonts/`。找到的檔案還要打得開、有繁中字形，
 否則丟 `FontUnusableError`（缺字的字型不會報錯，只會畫出豆腐方塊，所以要在這裡擋）。
-角色資料夾與 brand.yaml 如果是符號連結而且指到 `authors/` 外面，一律拒絕（`BrandError`）。
+讀取的範圍就是角色自己的資料夾：角色資料夾本身若是符號連結、brand.yaml 連到資料夾之外，
+一律拒絕（`BrandError`）；角色資料夾底下的 `fonts/`、字型檔、相對的 `font.dirs` 若連到資料夾之外
+（例如別的角色的字型）就略過，當作沒有。brand.yaml 裡明確寫的絕對路徑（`regular`／`bold`／`dirs`）
+和 `~/.fonts` 不受這個限制，因為那是創作者自己指定的位置。
 `palette`、`font`、`cover` 內各欄位獨立：只寫 `palette.accent` 就只換重點色，其餘照預設。
 `cover` 內的 `forms`、`media`、`styles`、`presets` 是整張字典一起換，不逐項合併。
 

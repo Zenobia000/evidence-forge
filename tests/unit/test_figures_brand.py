@@ -184,7 +184,7 @@ def test_角色資料夾是指到外面的符號連結就拒絕(tmp_path: Path) 
     data.authors.mkdir(parents=True)
     (data.authors / "me").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(BrandError, match="之外"):
+    with pytest.raises(BrandError, match="不接受符號連結"):
         load_brand(data, "me")
 
 
@@ -199,13 +199,35 @@ def test_brand_yaml_自己是指到外面的符號連結也拒絕(tmp_path: Path
         load_brand(data, "me")
 
 
-def test_authors_內部的符號連結照常可用(tmp_path: Path) -> None:
+def test_角色資料夾是連到別的角色的符號連結也拒絕(tmp_path: Path) -> None:
     data = DataDir(tmp_path / "data")
-    (data.authors / "real").mkdir(parents=True)
-    (data.authors / "real" / "brand.yaml").write_text('name: "Inside"\n', encoding="utf-8")
-    (data.authors / "alias").symlink_to(data.authors / "real", target_is_directory=True)
+    (data.authors / "bob").mkdir(parents=True)
+    (data.authors / "bob" / "brand.yaml").write_text('name: "Bob"\n', encoding="utf-8")
+    (data.authors / "alice").symlink_to(data.authors / "bob", target_is_directory=True)
 
-    assert load_brand(data, "alias").name == "Inside"
+    with pytest.raises(BrandError, match="不接受符號連結"):
+        load_brand(data, "alice")
+
+
+def test_brand_yaml_連到別的角色的檔案也拒絕(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    (data.authors / "bob").mkdir(parents=True)
+    (data.authors / "bob" / "brand.yaml").write_text('name: "Bob"\n', encoding="utf-8")
+    (data.authors / "alice").mkdir()
+    (data.authors / "alice" / "brand.yaml").symlink_to(data.authors / "bob" / "brand.yaml")
+
+    with pytest.raises(BrandError, match="角色資料夾"):
+        load_brand(data, "alice")
+
+
+def test_角色自己資料夾裡的符號連結照常可用(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    alice = data.authors / "alice"
+    (alice / "shared").mkdir(parents=True)
+    (alice / "shared" / "brand.yaml").write_text('name: "Alice"\n', encoding="utf-8")
+    (alice / "brand.yaml").symlink_to(alice / "shared" / "brand.yaml")
+
+    assert load_brand(data, "alice").name == "Alice"
 
 
 def test_authors_本身是符號連結也行(tmp_path: Path) -> None:
@@ -267,3 +289,84 @@ def test_只用拉丁字母的字型可以明講不檢查中文字形() -> None:
 
     check_font(_DEJAVU, spec)  # 不丟例外
     ChartStyle.from_brand(Brand(font=spec))
+
+
+# ---- 字型搜尋也限制在角色自己的資料夾 ----
+
+
+def _two_personas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DataDir:
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    data = DataDir(tmp_path / "data")
+    (data.authors / "bob" / "fonts").mkdir(parents=True)
+    (data.authors / "bob" / "fonts" / "NotoSansTC-Regular.otf").write_bytes(b"x")
+    (data.authors / "alice").mkdir()
+    return data
+
+
+def test_fonts_資料夾連到別的角色就不採用(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    (data.authors / "alice" / "fonts").symlink_to(data.authors / "bob" / "fonts", target_is_directory=True)
+
+    brand = load_brand(data, "alice")  # 沒有 brand.yaml 也一樣
+
+    with pytest.raises(FontNotFoundError, match="符號連結指到角色資料夾之外"):
+        resolve_font(brand.font, "regular")
+
+
+def test_字型檔是連到別的角色的符號連結就不採用(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    (data.authors / "alice" / "fonts").mkdir()
+    (data.authors / "alice" / "fonts" / "NotoSansTC-Regular.otf").symlink_to(
+        data.authors / "bob" / "fonts" / "NotoSansTC-Regular.otf"
+    )
+
+    with pytest.raises(FontNotFoundError, match="略過"):
+        resolve_font(load_brand(data, "alice").font, "regular")
+
+
+def test_相對的_dirs_寫成跳到別人資料夾也不採用(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    (data.authors / "alice" / "brand.yaml").write_text('font:\n  dirs: ["../bob/fonts"]\n', encoding="utf-8")
+
+    with pytest.raises(FontNotFoundError, match="略過"):
+        resolve_font(load_brand(data, "alice").font, "regular")
+
+
+def test_font_名字帶_上一層_也跳不出去(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    (data.authors / "alice" / "brand.yaml").write_text(
+        'font:\n  regular: "../bob/fonts/NotoSansTC-Regular"\n', encoding="utf-8"
+    )
+
+    with pytest.raises(FontNotFoundError):
+        resolve_font(load_brand(data, "alice").font, "regular")
+
+
+def test_角色資料夾內部的字型連結照常可用(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    alice = data.authors / "alice"
+    (alice / "store").mkdir()
+    (alice / "store" / "NotoSansTC-Regular.otf").write_bytes(b"x")
+    (alice / "fonts").mkdir()
+    (alice / "fonts" / "NotoSansTC-Regular.otf").symlink_to(alice / "store" / "NotoSansTC-Regular.otf")
+
+    found = resolve_font(load_brand(data, "alice").font, "regular")
+
+    assert found == alice / "fonts" / "NotoSansTC-Regular.otf"
+
+
+def test_brand_yaml_明確寫的絕對路徑不受限制(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _two_personas(tmp_path, monkeypatch)
+    shared = tmp_path / "shared-fonts"
+    shared.mkdir()
+    (shared / "Mine-Regular.otf").write_bytes(b"x")
+    (shared / "Other.otf").write_bytes(b"x")
+    (data.authors / "alice" / "brand.yaml").write_text(
+        f'font:\n  regular: "{shared / "Mine-Regular.otf"}"\n  bold: "Other"\n  dirs: ["{shared}"]\n',
+        encoding="utf-8",
+    )
+
+    font = load_brand(data, "alice").font
+
+    assert resolve_font(font, "regular") == shared / "Mine-Regular.otf"
+    assert resolve_font(font, "bold") == shared / "Other.otf"  # 絕對路徑的 dirs 也一樣

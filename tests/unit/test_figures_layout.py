@@ -238,3 +238,59 @@ def test_標題後面緊接文字行不被吃掉() -> None:
 
     assert report.ok
     assert report.stats.chars == 600
+
+
+# ---- 程式碼區塊裡的東西不是圖、不是標題 ----
+
+
+def test_程式碼區塊裡的圖片語法不算一張圖() -> None:
+    code = "```md\n![fake](x.webp)\n*假的圖說*\n```"
+    md = article(text(300), code, text(300))
+
+    report = check_text(md)
+
+    assert report.stats.figures == 0
+    assert report.ok
+
+
+def test_波浪線圍欄和更長的圍欄也一樣() -> None:
+    tilde = "~~~\n![fake](x.webp)\n~~~"
+    longer = "````\n```\n![fake](y.webp)\n```\n````"  # 外層四個反引號，裡面的三個不算收尾
+    md = article(text(300), tilde, text(300), longer, text(300))
+
+    assert check_text(md).stats.figures == 0
+
+
+def test_圍欄裡的空行與井字號不會切開區塊也不當標題() -> None:
+    code = "```python\n# 這是註解\n\n![fake](x.webp)\n\n## 參考資料\nprint('x')\n```"
+    md = article(text(300), code, text(300), figure("real"), text(300))
+
+    report = check_text(md)
+
+    assert report.stats.figures == 1  # 只有後面那張真的圖
+    assert report.ok
+    # 圍欄後面的文章沒有被「## 參考資料」截斷：圍欄外的 300 + 300 + 300 都算到
+    assert report.stats.chars >= 900
+
+
+def test_圍欄內的文字照算字數_和原腳本一致() -> None:
+    code = "```\n" + text(200) + "\n```"
+    md = article(text(300), code, text(300))
+
+    assert check_text(md).stats.chars == 800
+
+
+def test_沒有收尾的圍欄一路算到文章結尾() -> None:
+    md = article(text(300), "```\n![fake](x.webp)", text(10))
+
+    report = check_text(md)
+
+    assert report.stats.figures == 0
+
+
+def test_圍欄後面的真圖行號照常() -> None:
+    md = "```\ncode\n```\n\n![](real.webp)\n*圖說*\n\n" + text(300) + "\n"  # 沒有替代文字的圖在第 5 行
+
+    (problem,) = check_text(md).problems
+
+    assert (problem.rule, problem.line) == ("L6", 5)
