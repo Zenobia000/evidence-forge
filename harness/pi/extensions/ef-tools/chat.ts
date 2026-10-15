@@ -4,9 +4,10 @@
 // - read_report／read_article：讀這個對話開過的工單的報告／文章。
 // - job_status：一張工單現在跑到哪。
 // - list_personas：現有的角色與它們寫過的文體；創作者說「用 me 寫」時才聽得懂。
-// - rewrite：從這個對話的一張分析（或上一版重構）開一張重構工單，開了就回，跟 analyze 一樣（#102）。
-//   創作者說「寫第 N 個」時，goal 帶那個題材的標題與角度、suggested_genre 帶報告的建議文體；
-//   genre 只放創作者明說的文體（對不上就不開單）；再改時 feedback 帶創作者的話。
+// - read_lessons：一個角色 lessons.md 最近十筆（ADR-0026 §3.3），訪談開工前讀；只讀，對話從不寫角色資料夾。
+// - rewrite：從這個對話的上一版重構開一張新的重構工單（改已經有的文章，feedback 帶創作者的話），
+//   開了就回，跟 analyze 一樣（#102）。#109 起「寫第 N 個」開的是訪談（編輯卡），從分析開一律被閘道拒絕
+//   （新文章從訪談開始）；照編輯卡寫稿是 #110。
 // - 編輯卡的 propose_questions、record_interpreted_answers、add_material、read_card 與 /ef-card 指令在 cards.ts
 //   （ADR-0025 §3.3），這裡一起註冊。
 // - /ef-job-done <工單 id>：對話主機在工單結束時送進來的指令（不是模型能叫的工具）。
@@ -146,13 +147,31 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
 
   pi.registerTool(
     defineTool({
+      name: "read_lessons",
+      label: "Read lessons",
+      description:
+        "Read the latest ten lessons of a persona: rules the creator set after rejecting or correcting earlier work, oldest first. Read them before starting an interview and follow them while you propose options. Leave persona out for the creator's own voice (me).",
+      parameters: Type.Object({
+        persona: Type.Optional(Type.String({ description: "Persona name from list_personas; leave out for me" })),
+      }),
+      async execute(_id, params) {
+        const data = await callGateway("read_lessons", params.persona !== undefined ? { persona: params.persona } : {});
+        const lessons = Array.isArray(data.lessons) ? (data.lessons as string[]) : [];
+        if (lessons.length === 0) return text(`persona: ${String(data.persona)}\n(no lessons yet)`);
+        return text(`persona: ${String(data.persona)}\nlatest lessons (oldest first):\n${lessons.map((l) => `- ${l}`).join("\n")}`);
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
       name: "rewrite",
       label: "Rewrite",
       description:
-        "Start a rewrite job: write a new article from an analysis report of this conversation, or revise a previous article, as a persona, in a genre. Returns at once with a job id; an [ef-job] notice arrives when it ends. Do not wait or poll. Call it only when the creator asks for an article or a revision. Only one job of this conversation can run at a time; if one is running, the call fails and says so.",
+        "Start a rewrite job: revise a previous article of this conversation (from_job is that article's rewrite job), as a persona, in a genre. Returns at once with a job id; an [ef-job] notice arrives when it ends. Do not wait or poll. Call it only when the creator asks for a revision. A new article starts with an interview on an editorial card, not with this tool; writing from an editorial card is not connected yet. Only one job of this conversation can run at a time; if one is running, the call fails and says so.",
       parameters: Type.Object({
         from_job: Type.String({
-          description: "The analysis job to write from, or the previous rewrite job when revising. Must be a job of this conversation",
+          description: "The previous rewrite job whose article the creator wants revised. Must be a job of this conversation",
         }),
         persona: Type.Optional(Type.String({ description: "Persona name from list_personas; leave out for the creator's own voice (me), or to keep the previous version's persona" })),
         genre: Type.Optional(
@@ -170,7 +189,7 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         goal: Type.Optional(
           Type.String({
             description:
-              "What the article should achieve. When the creator picked a topic from the report (「寫第 N 個」), that topic's working title and angle, copied from the report, plus anything the creator said",
+              "What the article should achieve, only when the creator changed it; leave it out to keep the previous version's",
           }),
         ),
         feedback: Type.Optional(Type.String({ description: "The creator's change request, in their words, when revising a previous article" })),

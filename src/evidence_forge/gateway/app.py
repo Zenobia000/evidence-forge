@@ -2,7 +2,7 @@
 
 - `POST /tools/<名稱>`：ef-tools 的工具呼叫。段（工單鑰匙）用 `read_file`、`list_files`、
   `write_file`、`fetch_url`、`web_search`、`run_script`；對話（對話鑰匙）只能用 `analyze`、
-  `read_report`、`read_article`、`job_status`、`list_personas`、`rewrite`，與編輯卡的
+  `read_report`、`read_article`、`job_status`、`list_personas`、`read_lessons`、`rewrite`，與編輯卡的
   `propose_questions`、`record_interpreted_answers`、`add_material`、`read_card`
   （`chat_tools.py`、ADR-0021、ADR-0025）。兩邊互相拿對方的工具一律 403。
   畫面才能叫的 `submit_station`、`keep_decision`、`reask_station` 拿任何鑰匙來都 403（對話主機的 API 才有）。
