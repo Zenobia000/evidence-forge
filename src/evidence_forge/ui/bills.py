@@ -40,7 +40,12 @@ SKILL_LABEL = {
     "verify": "檢查",
     "echo": "打通",
 }
-TIER_LABEL: dict[Tier, str] = {"local": "本機", "strong": "雲端（強）", "max": "雲端（最強）"}
+TIER_LABEL: dict[Tier, str] = {
+    "local": "本機",
+    "fast": "雲端（快）",
+    "strong": "雲端（強）",
+    "max": "雲端（最強）",
+}
 NO_CONVERSATION = "不在對話裡的工單"
 INTAKE = "投入抓取"
 
@@ -408,7 +413,7 @@ def _models_text(entries: list[LedgerEntry]) -> str:
         if label not in seen:
             seen.append(label)
     # 本機在前、雲端在後、搜尋最後（IA 的寫法）
-    order = ["本機", "雲端（強）", "雲端（升級）", "雲端（最強）", "Tavily"]
+    order = ["本機", "雲端（快）", "雲端（強）", "雲端（升級）", "雲端（最強）", "Tavily"]
     return "＋".join(sorted(seen, key=lambda s: order.index(s) if s in order else len(order)))
 
 

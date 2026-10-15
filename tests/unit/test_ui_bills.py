@@ -201,6 +201,28 @@ def test_對話花費每次工作一列_對話本身另列_合計是全部(folde
     assert cost.budget_usd == 1.0
 
 
+def test_本機升_Haiku_再升_Sonnet_對話本身用_Haiku_帳單叫得出名字(folder: ChatFolder) -> None:
+    # ADR-0022：每一段先本機，失敗升 fast、再升 strong；對話的 Pi 預設 fast
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    folder.ledger(
+        "a1",
+        [
+            {"stage": "investigate", "tier": "local", "cost_usd": 0.0},
+            {"stage": "investigate", "tier": "fast", "model": "claude", "escalated_from": "local", "cost_usd": 0.02},
+            {"stage": "investigate", "tier": "strong", "model": "claude", "escalated_from": "fast", "cost_usd": 0.30},
+        ],
+    )
+    folder.ledger(cid, [{"stage": "chat", "attempt": 1, "tier": "fast", "model": "claude", "cost_usd": 0.01}], conversation=True)
+
+    cost = bills.conversation_cost(folder.data, RECIPES, cid)
+    by_model = {bar.label: bar.usd for bar in bills.month_view(folder.data, RECIPES, MONTH, now=at()).by_model}
+
+    assert cost.rows[0].escalation == "本機→雲端（快）、雲端（快）→雲端（強）"
+    assert cost.rows[-1].models == "雲端（快）"
+    assert by_model == pytest.approx({"雲端（升級）": 0.32, "雲端（快）": 0.01, "本機": 0.0})
+
+
 def test_舊的工單資料夾照樣讀得進來_待審通過丟棄都當結束_舊的稿子與決定檔不礙事(folder: ChatFolder) -> None:
     # S0 時代留下的資料夾：沒有對話、狀態是 approved、有 drafts/ 與 review/decision.v1.json
     cid = folder.conversation()
