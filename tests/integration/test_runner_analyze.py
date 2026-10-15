@@ -83,6 +83,9 @@ REPORT_MD = """# 巷口麵包店改成預約制之後
 PI_BODY = """
 if STAGE == "brief":
     ask()
+    # brief 段沒有搜尋額度，不能上網（#92 審查）；查證段照常抓得到
+    status, _ = call("/tools/fetch_url", {"url": "https://bakery.example/preorder"})
+    assert status == 403, status
     write("brief.md", BRIEF_MD_BY_TIER.get(TIER, BRIEF_MD))
     write("brief.json", BRIEF_JSON)
 else:

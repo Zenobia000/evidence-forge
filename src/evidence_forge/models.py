@@ -27,6 +27,7 @@ from pydantic import (
 
 # 預算的格式在檔名含 budget 的模組（改它是 T3）；Job 用到它，這裡照舊 import 得到（明確轉出）。
 from evidence_forge.budget import Budget as Budget
+from evidence_forge.jobkey import check_name
 
 # 工單只有這五種狀態（NFR-RUN-02、ADR-0010）。
 JobStatus = Literal["queued", "running", "review", "approved", "discarded"]
@@ -143,12 +144,25 @@ class Job(_Contract):
     # 開這張單的對話 id（ADR-0021）；命令列 `ef new` 開的是 None。投入去重的鍵含它，
     # 兩個對話丟同一篇文章各開各的單。能不能讀這張單看對話的 `jobs.jsonl`，不看這一欄
     conversation: str | None = None
+    # 角色（`$EF_DATA/authors/<角色>/`，ADR-0015、FR-RW-02）；舊的 job.md 沒有這欄，當成 `me`
+    persona: str | None = None
+    # 從哪一張工單接著做（`ef new --from`，ADR-0019 §3.6）：執行器開工前把那張單的產出放進 `input/`
+    parent: str | None = None
+    # 再改時創作者對上一版的一句意見（FR-RW-03）；寫進任務說明
+    feedback: str | None = None
     budget: Budget
     status: JobStatus
     stage: StageProgress | None = None
     waiting: Waiting | None = None
     result: JobResult | None = None
     versions: Versions = Versions()
+
+    @model_validator(mode="after")
+    def _parent_is_a_job_id(self) -> Self:
+        # 會拿來拼 jobs/<id>/ 路徑：跟工單鑰匙同一條字元規則（#92 審查）
+        if self.parent is not None:
+            check_name("工單 id", self.parent)
+        return self
 
     @model_validator(mode="after")
     def _status_consistency(self) -> Self:
@@ -178,6 +192,15 @@ class RecipeStage(_Contract):
     # 同一級試到 max_attempts 還不合格時，改用哪一級再試；沒寫就不升級
     escalate_to: Tier | None = None
 
+    @property
+    def online(self) -> bool:
+        """這一段能不能上網（`fetch_url`、`web_search`）：配方給了搜尋額度才能。
+
+        要上網的段一定也要搜尋（查證段先搜再抓），所以用同一個欄位宣告，不另加一欄；
+        執行器照它決定 Pi 有沒有 `web_search`，閘道照它決定准不准 `fetch_url`、`web_search`。
+        """
+        return self.tavily_credits > 0
+
     @model_validator(mode="after")
     def _escalate_upwards(self) -> Self:
         if self.escalate_to is not None and _tier_rank(self.escalate_to) <= _tier_rank(
@@ -199,6 +222,9 @@ class Recipe(_Contract):
     on_feedback: str
     # 投入時沒填目標就用這一句（FR-IN-01）；沒寫的配方，投入時一定要填目標
     default_goal: str | None = None
+    # 要從上一張工單（`ef new --from`）拿的產出檔名，例：重構要分析的 `report.md`。
+    # 有寫的配方一定要 `--from`，而且上一張單要交得出這些檔；沒寫的配方不接 `--from`（ADR-0019 §3.6）
+    needs: tuple[str, ...] = ()
     # 每段最多試幾次（含升級前）
     max_attempts: PositiveInt = 2
     # 檢查沒過時，自動回寫作段修幾次

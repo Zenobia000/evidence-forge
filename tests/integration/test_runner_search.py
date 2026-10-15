@@ -129,8 +129,13 @@ def _search_fails_then_writes(summary: object) -> str:
     return (
         FAKE_PI_LIB
         + f"""
-status, body = call("/tools/web_search", {{"query": "故障"}})
-assert status == 502, (status, body)
+if STAGE == "research":
+    status, body = call("/tools/web_search", {{"query": "故障"}})
+    assert status == 502, (status, body)
+else:
+    # 沒有搜尋額度的段不能上網（#92 審查）：閘道直接拒絕，不打 Tavily
+    status, body = call("/tools/web_search", {{"query": "故障"}})
+    assert status == 403, (status, body)
 ask()
 write("summary.json", {summary!r})
 event(type="agent_end")

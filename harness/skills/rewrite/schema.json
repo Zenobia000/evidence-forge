@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rewrite 段的產出 article.json",
+  "description": "重構文章（article.md）的附表（FR-RW-01）：選定的標題與全部候選標題，給創作者換標題用。文章本身的格式與出處由執行器的程式檢查（checks/article.py）。",
+  "type": "object",
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "title_candidates": {
+      "description": "寫過的候選標題，含選定的那個（SKILL.md 要 5～10 個）",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "required": ["title", "title_candidates"],
+  "additionalProperties": false
+}

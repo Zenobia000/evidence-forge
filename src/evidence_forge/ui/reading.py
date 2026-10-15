@@ -2,8 +2,8 @@
 
 工單、事件、帳本、素材項目、檢查結果都用契約模型讀（`models`、`checks.report`），
 不自己解析格式；對不上格式就回報「讀不懂」，不假裝沒事。
-整理結果（`claims.json`）的契約是 `harness/skills/digest/schema.json`；這裡只定
-「UI 要用到的那幾個欄位」的寬鬆模型：多出來的欄位忽略、缺的用預設值。
+整理結果（`claims.json`）是已經退場的 `digest` skill 的產出（ADR-0020），只有舊工單才有；
+這裡只定「UI 要用到的那幾個欄位」的寬鬆模型：多出來的欄位忽略、缺的用預設值。新的介面見 #86。
 """
 
 import json

@@ -14,6 +14,10 @@
    兩個對話丟同一篇文章各開各的單（ADR-0021 §3.6）；命令列 `ef new` 沒有對話（None），
    只跟同樣沒有對話的工單去重。
 
+從上一張工單接著做（`ef new --from`，`open_job_from`，ADR-0019 §3.6）：不投入新素材，
+新工單沿用上一張的素材項目，不放原文全文；上一張的產出由執行器開工前放進 `input/`
+（`stage_inputs.carried_files`）。每一版都是一張新工單，不走去重。
+
 工單的 `job.md` 與 `events.jsonl` 只有執行器寫，所以開單放在 runner。
 """
 
@@ -36,7 +40,16 @@ from evidence_forge.gateway.fetch import Fetcher, cache_key, fetch_for_intake
 from evidence_forge.models import Budget, Event, FeedRef, Item, Job, Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.runner import events
-from evidence_forge.runner.stage_inputs import default_genre
+from evidence_forge.runner.stage_inputs import (
+    AUTHOR,
+    PREVIOUS_ARTICLE,
+    carried_files,
+    default_genre,
+    personas,
+)
+from evidence_forge.runner.stage_inputs import (
+    parent_dir as stage_parent_dir,
+)
 from evidence_forge.write_once import write_once
 
 MANUAL_FEED = "manual"
@@ -294,6 +307,7 @@ def open_job(
     conversation: str | None = None,
     again: bool = False,
     before_create: Callable[[], None] | None = None,
+    persona: str | None = None,
 ) -> Intake:
     """投入一篇東西並開單（或回傳已有的那張）。
 
@@ -308,9 +322,15 @@ def open_job(
     錯誤：網址讀不到丟 `SourceUnreadable`；內容是空的、檔案格式不支援、PDF 抽不到字、
     沒有目標可用丟 `ValueError`（含 `ExtractError`）。兩種都不開單。
     """
+    if recipe.needs:
+        raise ValueError(
+            f"配方 {recipe.name} 要從上一張工單接著做：用 --from 指定那張單，不投入新素材"
+        )
+    if persona is not None:
+        _check_persona(data, persona)
     chosen_goal = effective_goal(recipe, goal)
     # 目標文類沒指定就用作家設定的預設文類，開單時記進 job.md（FR-CP-03、ADR-0015 §3.5）
-    genre = genre or default_genre(data)
+    genre = genre or default_genre(data, persona or AUTHOR)
     match source:
         case PastedText(text=text):
             material = _Material(text=text, title=_title(text))
@@ -352,8 +372,118 @@ def open_job(
             budget,
             genre,
             conversation,
+            persona,
         )
     return Intake(job=job, created=True)
+
+
+def _check_persona(data: DataDir, persona: str) -> None:
+    """角色一定要是 `authors/` 底下現有的資料夾；不是就丟 `ValueError`，列出現有的角色。
+
+    只認名單上的名字，所以 `../x` 這種會跑出 `authors/` 的寫法也一起擋掉。
+    """
+    known = personas(data)
+    if persona not in known:
+        raise ValueError(
+            f"沒有角色 {persona}（有：{'、'.join(known) or '還沒有任何角色'}）；"
+            f"角色是 {data.authors}/<角色>/ 一個資料夾"
+        )
+
+
+def open_job_from(
+    data: DataDir,
+    recipe: Recipe,
+    parent_id: str,
+    *,
+    goal: str | None = None,
+    now: datetime,
+    persona: str | None = None,
+    genre: str | None = None,
+    feedback: str | None = None,
+    budget_usd: float = 0.5,
+    budget_credits: int | None = None,
+) -> Job:
+    """從上一張工單接著做，開一張新的排隊中工單（重構、再改，之後的補查）。
+
+    - 配方一定要有 `needs`，上一張單要交得出這些檔（過了程式檢查的產出，見 `carried_files`）；
+      帶意見再改時，上一張單還要交得出文章（`article.md`）。
+    - 角色、文類、目標沒給：上一張單用同一份配方（再改）就沿用它的；不然角色是 `me`、
+      文類是角色的預設文類、目標是配方的預設目標。角色一定要有資料夾。
+    - 新工單沿用上一張的素材項目（出處、內容 hash），但不放原文全文（FR-RW-01）。不走去重。
+
+    錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
+    """
+    if not recipe.needs:
+        raise ValueError(f"配方 {recipe.name} 不從上一張工單接著做，不能用 --from")
+    # id 不合規則、或資料夾跑出 jobs/ 都在這裡擋下（InputError 是 ValueError）
+    parent_dir = stage_parent_dir(data, parent_id)
+    try:
+        parent = read_job(parent_dir / "job.md").job
+    except (OSError, FrontmatterError, ValidationError):
+        raise ValueError(f"找不到工單 {parent_id}") from None
+    if parent.status in ("queued", "running"):
+        raise ValueError(
+            f"工單 {parent_id} 還沒跑完（{parent.status}），等它結束再接著做"
+        )
+    carried = {Path(target).name for target in carried_files(parent_dir)}
+    wanted = list(recipe.needs)
+    if feedback is not None and feedback.strip():
+        wanted.append(Path(PREVIOUS_ARTICLE).name)
+    missing = [name for name in wanted if name not in carried]
+    if missing:
+        raise ValueError(
+            f"工單 {parent_id} 交不出 {'、'.join(missing)}（要過了程式檢查的產出），沒辦法接著做"
+        )
+
+    same = parent.recipe == recipe.name
+    chosen_persona = persona or (parent.persona if same else None) or AUTHOR
+    _check_persona(data, chosen_persona)
+    chosen_goal = (
+        (goal or "").strip()
+        or (parent.goal if same else "")
+        or effective_goal(recipe, None)
+    )
+    chosen_genre = (
+        genre
+        or (parent.target_genre if same else None)
+        or default_genre(data, chosen_persona)
+    )
+    item = Item.model_validate_json(
+        (data.root / parent.feed.item / "item.json").read_bytes()
+    )
+    assert item.content_hash is not None  # 開得出工單的素材項目一定讀得到
+    budget = Budget(
+        usd=budget_usd,
+        tavily_credits=(
+            recipe_credits(recipe) if budget_credits is None else budget_credits
+        ),
+    )
+    job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
+    job = Job(
+        id=job_id,
+        recipe=recipe.name,
+        feed=parent.feed,
+        goal=chosen_goal,
+        target_genre=chosen_genre,
+        persona=chosen_persona,
+        parent=parent_id,
+        feedback=feedback.strip() if feedback and feedback.strip() else None,
+        budget=budget,
+        status="queued",
+    )
+    # 跟 `_create_job` 一樣：先寫開單事件、最後寫 job.md
+    events.append(
+        job_dir,
+        Event(
+            ts=now,
+            kind="status",
+            from_status=None,
+            to_status="queued",
+            message=f"開單（接著工單 {parent_id} 做）",
+        ),
+    )
+    write_job(job_dir / "job.md", JobDocument(job=job))
+    return job
 
 
 @contextmanager
@@ -384,6 +514,7 @@ def _create_job(
     budget: Budget,
     genre: str | None,
     conversation: str | None,
+    persona: str | None,
 ) -> Job:
     assert item.content_hash is not None  # 讀得到的素材項目一定有
     job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
@@ -396,6 +527,7 @@ def _create_job(
         goal=goal,
         target_genre=genre,
         conversation=conversation,
+        persona=persona,
         budget=budget,
         status="queued",
     )

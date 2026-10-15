@@ -2,7 +2,6 @@
 
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 # Markdown 標記用到、但 Unicode 不算標點的符號：引言的 >、表格的 |、刪除線的 ~、
@@ -109,18 +108,6 @@ def mask_code(text: str) -> str:
     return _CODE_SPAN.sub(lambda match: " " * len(match.group(0)), masked)
 
 
-# GFM 註腳定義：行首（最多 3 個空白）的 `[^編號]:`，到行尾。群組：標記、編號、標記之後的整行
-_FOOTNOTE_DEFINITION = re.compile(r"^( {0,3}\[\^([^\]\s]+)\]:)(.*)$", re.MULTILINE)
-
-
-def mask_footnote_definitions(text: str) -> str:
-    """把整行註腳定義（`[^S1]: <來源標題>，<網址>`）換成空白，換行與長度不變。
-
-    C2 數「正文引用了幾個來源」時用：註腳定義列了編號不等於正文用了那個來源。
-    """
-    return _FOOTNOTE_DEFINITION.sub(lambda match: " " * len(match.group(0)), text)
-
-
 def line_column(text: str, offset: int) -> tuple[int, int]:
     """字元位移換成（行, 欄），都從 1 起算；欄以字元計，一個中文字算一欄。"""
     line = text.count("\n", 0, offset) + 1
@@ -155,33 +142,6 @@ def tokenize(text: str) -> list[Token]:
         Token(unicodedata.normalize("NFKC", match.group(0)).casefold(), *match.span())
         for match in _TOKEN.finditer(text)
     ]
-
-
-def mask_footnote_sources(text: str, references: Mapping[str, Sequence[str]]) -> str:
-    """註腳定義行只遮編號標記，與那個來源的出處（`references[編號]`：標題、網址）相符的部分。
-
-    註腳本來就該照抄來源的標題與網址；C3 算照抄時把它算進去，標題一長就誤擋（#67）。
-    但整行都不比對的話，註腳裡可以藏一整段照抄（#70 審查第 8 條），所以只遮出處：
-    以詞為單位，跟標題或網址整串相同的那一段換成空白，其餘照常比對。換行與長度不變。
-    """
-
-    def mask(match: re.Match[str]) -> str:
-        marker, source_id, rest = match.group(1), match.group(2), match.group(3)
-        tokens = tokenize(rest)
-        words = [token.text for token in tokens]
-        chars = list(rest)
-        for reference in references.get(source_id, ()):
-            target = [token.text for token in tokenize(reference)]
-            if not target:
-                continue
-            for first in range(len(words) - len(target) + 1):
-                if words[first : first + len(target)] == target:
-                    start = tokens[first].start
-                    end = tokens[first + len(target) - 1].end
-                    chars[start:end] = " " * (end - start)
-        return " " * len(marker) + "".join(chars)
-
-    return _FOOTNOTE_DEFINITION.sub(mask, text)
 
 
 # 協定://主機 路徑 ?查詢；`#` 之後先切掉。不用 urllib：`checks/` 不 import 任何碰得到網路的套件（test_purity.py）

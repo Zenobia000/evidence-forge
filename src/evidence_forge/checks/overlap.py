@@ -1,42 +1,38 @@
-"""C3 不照抄（PRD §7）：稿子跟原文的逐字重疊不能超過門檻。
+"""C3 逐字重疊（PRD v3.0 §7、ADR-0020 §3.4）：算出文章跟原文、跟每一份來源的逐字重疊，**只顯示、不擋**。
 
 量兩個數：
 
-- **最長共同片段**：稿子裡最長的一段、跟原文某一段一字不差（以詞計）。
-- **n-gram 重疊率**：稿子裡連續 n 個詞的組合，有幾成在原文裡也出現。
+- **最長共同片段**：文章裡最長的一段、跟來源某一段一字不差（以詞計）。
+- **n-gram 重疊率**：文章裡連續 n 個詞的組合，有幾成在來源裡也出現。
 
-任何一個超過門檻就 fail，並列出稿子裡每一段至少 n 個詞、跟原文相同的位置，
-讓二創段知道要改寫哪裡。門檻是設定值（`OverlapThresholds`，預設見 `defaults.yaml`）；
-Q-28 還沒定，S0.14 用實際稿子量，所以結果的理由會註明「門檻暫定」。
+結果只會是 pass 或 warn，從來不 fail：重構不讀原文全文，照抄的機會從做法上就小了，
+不必靠 C3 擋（ADR-0020 §4）。任何一個數超過提醒門檻就 warn，並列出文章裡每一段
+至少 n 個詞、跟來源相同的位置，給創作者看。門檻是設定值（`OverlapThresholds`，
+預設見 `defaults.yaml`）；Q-28 還沒定，結果的理由會註明「門檻暫定」。
+重構常常照搬某份來源時，ADR-0020 說要把這裡改回擋下。
 
 詞的算法見 `text.tokenize`：中日韓文一個字一個詞，其他文字一串字母數字一個詞，
 標點、空白、大小寫、全形半形都不算差別。
 """
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from evidence_forge.checks.report import CheckEntry, Location
-from evidence_forge.checks.text import (
-    Token,
-    line_column,
-    mask_footnote_sources,
-    tokenize,
-)
+from evidence_forge.checks.text import Token, line_column, tokenize
 
 
 class OverlapThresholds(BaseModel):
-    """C3 的門檻。"""
+    """C3 的提醒門檻：超過就 warn，不擋。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # 算重疊率時，幾個連續的詞算一組
     ngram_size: PositiveInt
-    # 稿子的 n-gram 有多少比例出現在原文，超過就 fail（0 表示一組都不能有）
+    # 文章的 n-gram 有多少比例出現在來源，超過就提醒（0 表示有一組就提醒）
     max_ngram_overlap: float = Field(ge=0, le=1)
-    # 最長共同片段最多幾個詞，超過就 fail
+    # 最長共同片段超過幾個詞就提醒
     max_common_tokens: PositiveInt
     # Q-28 定案前是 True，結果的理由會註明門檻暫定
     provisional: bool = True
@@ -125,14 +121,13 @@ def check_overlap(
     thresholds: OverlapThresholds,
     *,
     file: str,
-    footnotes: Mapping[str, Sequence[str]] | None = None,
+    label: str = "原文",
 ) -> list[CheckEntry]:
-    """沒超過門檻就一條 pass；超過就一條總結的 fail，加上每段重疊各一條 fail。
+    """跟一份來源比。沒超過提醒門檻就一條 pass；超過就一條總結的 warn，加上每段重疊各一條 warn。
 
-    `footnotes` 是每個來源的出處（編號 → 標題、網址）。稿子的註腳定義行裡，跟那個來源出處相符的
-    部分不算（註腳本來就照抄標題，#67），其餘照常比對；遮成空白，位置照樣對得回稿子。
+    `label` 是這份來源給人看的名字（「原文」「S2」），寫在每一條理由的最前面。
     """
-    draft_tokens: list[Token] = tokenize(mask_footnote_sources(draft, footnotes or {}))
+    draft_tokens: list[Token] = tokenize(draft)
     lengths = _match_lengths(
         [token.text for token in tokenize(source_text)],
         [token.text for token in draft_tokens],
@@ -144,8 +139,8 @@ def check_overlap(
     longest = max(lengths, default=0)
 
     summary = (
-        f"最長共同片段 {longest} 個詞（上限 {thresholds.max_common_tokens}）；"
-        f"{n}-gram 重疊率 {rate:.1%}（上限 {thresholds.max_ngram_overlap:.1%}）"
+        f"{label}：{n}-gram 重疊率 {rate:.1%}（提醒門檻 {thresholds.max_ngram_overlap:.1%}）；"
+        f"最長共同片段 {longest} 個詞（提醒門檻 {thresholds.max_common_tokens}）"
     )
     if thresholds.provisional:
         summary += "；門檻暫定（Q-28 未定）"
@@ -154,10 +149,14 @@ def check_overlap(
         return [CheckEntry(check="C3", status="pass", reason=summary)]
 
     entries = [
-        CheckEntry(check="C3", status="fail", reason=f"跟原文逐字重疊太多：{summary}")
+        CheckEntry(
+            check="C3",
+            status="warn",
+            reason=f"{summary}；逐字重疊偏多，只提醒、不擋",
+        )
     ]
-    # 列片段的最短長度：n-gram 的長度，或剛好超過最長共同片段上限的長度，取短的。
-    # 只用 n 的話，上限設得比 n 短時會 fail 卻一個位置都列不出來。
+    # 列片段的最短長度：n-gram 的長度，或剛好超過最長共同片段門檻的長度，取短的。
+    # 只用 n 的話，門檻設得比 n 短時會提醒卻一個位置都列不出來。
     for span in _copied_spans(lengths, min(n, thresholds.max_common_tokens + 1)):
         start = draft_tokens[span.first].start
         end = draft_tokens[span.last].end
@@ -165,8 +164,9 @@ def check_overlap(
         entries.append(
             CheckEntry(
                 check="C3",
-                status="fail",
-                reason=f"這段 {span.length} 個詞都落在跟原文一字不差的片段裡（相鄰的片段已併成一段）",
+                status="warn",
+                reason=f"{label}：這段 {span.length} 個詞都落在跟{label}一字不差的片段裡"
+                "（相鄰的片段已併成一段）",
                 location=Location(file=file, line=line, column=column),
                 excerpt=draft[start:end],
             )

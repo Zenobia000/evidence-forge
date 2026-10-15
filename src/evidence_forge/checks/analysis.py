@@ -40,7 +40,7 @@ _HEADING = re.compile(r"^ {0,3}##[ \t]+(.*?)[ \t#]*$")
 _NUMBERING = re.compile(r"^(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*")
 
 
-def _headings(markdown: str) -> list[tuple[int, str]]:
+def headings(markdown: str) -> list[tuple[int, str]]:
     """Markdown 的 `##` 標題：（行號, 去掉編號與粗體的標題文字）。程式碼區塊裡的不算。"""
     found: list[tuple[int, str]] = []
     for number, line in enumerate(mask_code(markdown).split("\n"), start=1):
@@ -59,11 +59,11 @@ def check_sections(
 
     `ordered` 時還要照 `required` 的順序出現。少一節或順序不對各一條 fail；都對就一條 pass。
     """
-    headings = _headings(markdown)
+    found = headings(markdown)
     failures: list[CheckEntry] = []
     previous: tuple[str, int] | None = None
     for title in required:
-        line = next((n for n, text in headings if text.startswith(title)), None)
+        line = next((n for n, text in found if text.startswith(title)), None)
         if line is None:
             failures.append(
                 CheckEntry(
@@ -199,11 +199,11 @@ def check_report_citations(
 
 def _section_lines(markdown: str, title: str) -> list[tuple[int, str]]:
     """以 `title` 開頭的那一節（到下一個 `##` 為止）的每一行：（行號, 原文）。沒有這一節是空的。"""
-    headings = _headings(markdown)
-    start = next((n for n, text in headings if text.startswith(title)), None)
+    found_headings = headings(markdown)
+    start = next((n for n, text in found_headings if text.startswith(title)), None)
     if start is None:
         return []
-    end = next((n for n, _ in headings if n > start), None)
+    end = next((n for n, _ in found_headings if n > start), None)
     lines = markdown.split("\n")
     stop = end - 1 if end is not None else len(lines)
     return [(number, lines[number - 1]) for number in range(start + 1, stop + 1)]
