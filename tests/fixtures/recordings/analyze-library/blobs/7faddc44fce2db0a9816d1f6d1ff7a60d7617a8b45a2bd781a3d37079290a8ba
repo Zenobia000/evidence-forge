@@ -1,0 +1,69 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg46ruVgj3Rdi8HYxiYB5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1577,"cache_read_input_tokens":8537,"cache_creation":{"ephemeral_5m_input_tokens":1577,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}             }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}    }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS1QgKEAgSGAI4AUIIdGhpbmtpbmcSDGFOOpzm1b3P/plHWxoMAC2U9pAPGjEtcD+KIjBx3Bp9na3g2FpfBb3PZu6+TO6KRSGFvh4AdMfFvLS8V6KoZ8o/GEvgOdNXqs0dmLkq8ge2P9oX9bYZSzP5OTS7tF9Iul8DmLwZRFRWQR/Or6dEsIaa2WKf7+fQbSJB33MSlTd5ArKAV3YrVekCIWiiN2DxoKKigguMEv/ejUegykXlrSPWmbNNf0G5Pl5x3ixeueGqk9Uwdn3AOUgcNvaLiD4f1h0YY4B/57iWLioLH3CVEoMCVdr6BSxq04iosL1uQAE3aNfJSUsnnzclkokXkI4Qz5ffswuL+EHoBK1eCJ4MSi/2N+RO+1Jz70RTbbLkR5WUVue7ZfJoNjXV8PqLrtRiwD8iJD6SfLzsa9CBATWiVUnnAQhsrqNY8GsnE0elzEoYAf9NMMXPnbm2QB0Y88ocdGAcRklwpRIDMSRwawtodIkoMe0LFFi9jAdEY4fbTdJ7z4x4PAXdwqzilcYt1F/gjSreBpY5olMwfWM7oyF/LrufwUYE/SfiE3vBMptsqqj1ajmiFYvl+RdG+1MRjeEQFWQjKH0L/gRvgGa19EU5dWFzcGedfD0RHw4j2qvSMRia213TCF39d8VrxqZgIuDBxJ+X6HOtk1r2Iq7g4jn7PH+iW/3mMnd6ArjmJ9wUyPmezuoTiLFcx2sR4TRoyd8PO7czVeL9dg+LlmXaANvetOdL9+XMka/pO6Y094MOi2zavkCu1sEP/MT8h3eetbXbnPdaipZwxvQeOK3jCG9rJA1AyMHEDWcWh/dOHngbc4a8LbvM62+ivFX8A6cSHRfjcRuRYGl2vYZbhDGOrOYq+4P/qVQ89DOm8bHwxWYdNEiGkxgoSw6VuphveirlU7fLEBz7Z41p/ASiZaS4jJXJssprFXfLxitxQnGmef1QKyNBLjr7dS+g/JMprAHMmiWiAQSSgRFHcQuJT72nZROYG5ijQl5PzkdjssckxoMfArCJGXP6aT3n/rihvmlDXZC32coW1GE0m5mR0N/4H4Y2ZUx2Q67U5ehawlPpQ2H9T9Jv1kaNvik/Tr8g7HkfDfXSX5lZfQqGVmOVGTyb3upGRz2bpTVZUa2F8vGc5vhiymMKU46mCqBaGZCLoL4oK7f7K++QzIhLL2PnLGqzwzWTmwoCTsPs4BxIWKpYgR0y8zZCOvwMrQU1XOGrYQo/P/+G++J2yIR5mPXFVjihznLeeOjeA71LqkpOdMnAiTG1HWsoN0RMFR/N9tbRjytbsSITzagW5v4R09xnDTqU2HfHHV+8LfVUWgR7QRZU995JK5HbIanUn/rEalqlQ0nayT7aF6rAJUamEfA4tFrrmD5T+yy/afZDF04P/IAe6ZoUyALnq0hZtaoAzWX6nf9TE2lBMORBqXBmeGSlN8fpAOl4dm01Elu1BSTMa9fe3lIEiqSrFxgB"}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0               }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01GEXxLWEjGKFcHho5RjwWTb","name":"web_search","input":{},"caller":{"type":"direct"}}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"圖書"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館 "}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"夜間延"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"長開放 入"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"館人次"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 統"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"計 公"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"共"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"圖書館 臺"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"灣"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"}"}           }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1     }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1577,"cache_read_input_tokens":8537,"output_tokens":255,"output_tokens_details":{"thinking_tokens":153}}    }
+
+event: message_stop
+data: {"type":"message_stop"              }
+

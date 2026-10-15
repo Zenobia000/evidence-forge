@@ -26,7 +26,8 @@ ADR-0014：錄音會進公開 repo，**種子、來源、作家設定、標題�
     # 複製前先看模型請求裡有沒有工單 id（agent 讀了 job.md 之類的檔），有就重錄
 
 2026-10-15 重錄的這一份（#106：目標文體換成 7 種之一的研究評論，`input/target-genre.md` 是新的通用定義，
-沒有轉換說明）：重構段直接用 `fast`（Claude Haiku 5.5），一次就過（沒有回去修），花 US$0.0071。目標是對話的
+沒有轉換說明；T3 第一輪後通用定義改用自己的話寫）：重構段直接用 `fast`（Claude Haiku 5.5），一次就過
+（沒有回去修），花 US$0.0065。目標是對話的
 agent 在創作者說「寫第 1 個」時會帶的樣子：那個題材的暫定標題與角度；文體照報告的建議文體。
 
 錄音只准用本機與 Haiku（月底額度）；重播用錄音當時的配方等級（`conftest.py`）。
@@ -51,8 +52,8 @@ ARTICLE = FIXTURES / "articles" / "library-night.md"
 RECORDINGS = FIXTURES / "recordings"
 # 創作者說「寫第 1 個」時，對話的 agent 帶的目標：那個題材的暫定標題與角度（chat-system-prompt.md、ADR-0024）
 GOAL = (
-    "題材 1：新鮮感之後的那條線：延長開館的人數該怎麼看。"
-    "角度：把延長開館後的人數分成前三個月和之後的穩定期來看，用自己的判斷標準讀數字，而不只看開館初期的平均。"
+    "題材 1：夜間開館的人流為什麼先高後降：頭半年的數字該怎麼看。"
+    "角度：用創作者自己的觀察說明，為什麼新開的夜間時段要等到第九個月才看得出真正的人流，以及評估時該看哪一條線。"
     "寫給台灣上班族看的短文。"
 )
 # 那個題材的建議文體（analyze-library 錄音的報告）：研究評論（research-review）
@@ -174,7 +175,10 @@ def test_自己寫的短文_重播跑完分析再重構_文章合格_結尾列�
     ]
     assert report.passed
     summaries = [e for e in report.entries if e.check == "C3" and e.location is None]
-    assert [e.reason.split("：", 1)[0] for e in summaries] == ["原文", "S2", "S3", "S4", "S5"]
+    # 重疊率對原文與分析段抓過的每一份來源各算一次
+    placed = sorted(p.stem for p in (analysis / "input" / "sources").glob("S*.md"))
+    assert [e.reason.split("：", 1)[0] for e in summaries] == ["原文", *placed]
+    assert len(placed) >= 2
     # 新的兩項文章檢查都跑了，而且過了
     reasons = [e.reason for e in report.entries if e.check == "C5" and e.status == "pass"]
     assert "標題沒有用文類骨架的字" in reasons and "內文沒有提原文的標題與原作者" in reasons

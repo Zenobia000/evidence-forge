@@ -26,11 +26,10 @@
     # 讀 job.md（工單 id、預算每次開單都不同），那份錄音重播對不上，要重錄
     # 錄完卸載本機模型：curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","keep_alive":0}'
 
-2026-10-15 重錄的這一份（#106：文體換成 ADR-0026 的 7 種，題材的建議文體寫成「中文名（slug）」）：
-brief 在本機一次就過（沒有升級），原文判成 `explainer`、五條關鍵主張；查證段在 Haiku 跑了兩次：
-第 1 次報告的查證少標了一條，對不上 sources.json，程式檢查擋下，第 2 次過了。五條關鍵主張都是「查不到」
-（種子是虛構的，模型照實寫查不到，沒有用記憶補），三個可以寫的題材各附抓過的文章，建議文體都在 7 種裡。
-花 US$0.0126（同一天先錄的一份 brief 只列了兩條關鍵主張，花 US$0.0060，沒採用）。
+2026-10-15 重錄的這一份（#106 T3 第一輪：7 種文體的通用定義改用自己的話寫，查證一節不准多寫註記）：
+brief 在本機一次就過（沒有升級；本機第一次呼叫回錯誤，閘道記一筆 error 後重送），原文判成 `essay`、
+四條關鍵主張；查證段在 Haiku 一次就過，四條都是「查不到」（種子是虛構的，模型照實寫查不到，
+沒有用記憶補），三個可以寫的題材各附抓過的文章，建議文體都在 7 種裡。花 US$0.0052。
 
 重播時模型回應、搜尋、抓取都從錄音回放；讀寫工單、放來源正文、程式檢查照樣真的跑。
 不需要 Ollama，不打任何付費 API，也不連網。
@@ -148,9 +147,8 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
         ChecksReport.model_validate_json(p.read_text(encoding="utf-8"))
         for p in sorted((job_dir / "checks").glob("checks.v*.json"))
     ]
-    # 錄音裡查證段第 1 次的報告跟 sources.json 對不上，被擋下重試；最後一次才過
-    assert [r.stage for r in reports] == ["brief", "investigate", "investigate"]
-    assert reports[0].passed and not reports[1].passed and reports[2].passed
+    assert [r.stage for r in reports] == ["brief", "investigate"]
+    assert all(r.passed for r in reports)
 
     # 來源正文由執行器照抓過的網頁放：正文就是自寫文章的正文
     listed = json.loads(
@@ -166,7 +164,10 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
         assert body in bodies, path.name
 
     ledger = _ledger(job_dir / "ledger.jsonl")
-    assert len(ledger) == len(_ledger(RECORDING / "ledger.jsonl"))
+    # 錄音時本機模型第一次呼叫回了錯誤（閘道記一筆 error，Pi 重送同一個請求）；
+    # 重播只回放成功的那一份，所以比對時不算那一筆
+    recorded = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.status != "error"]
+    assert len(ledger) == len(recorded)
     assert {entry.status for entry in ledger if entry.kind != "fetch"} == {"cache_hit"}
 
 
