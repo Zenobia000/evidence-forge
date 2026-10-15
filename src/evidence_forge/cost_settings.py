@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,12 +75,13 @@ def load(data: DataDir) -> Loaded:
         return _broken(path, f"讀不到：{exc.strerror or exc}")
     try:
         return Loaded(CostSettings.model_validate(json.loads(raw)))
-    except ValueError as exc:
-        # json 的錯誤與 pydantic 的 ValidationError 都是 ValueError
+    except (ValueError, RecursionError) as exc:
+        # json 的錯誤與 pydantic 的 ValidationError 都是 ValueError；極深的巢狀是 RecursionError。
+        # 閘道每次預留都讀這裡，丟出去的話每個模型請求都會失敗
         return _broken(path, _reason(exc))
 
 
-def _reason(exc: ValueError) -> str:
+def _reason(exc: ValueError | RecursionError) -> str:
     if isinstance(exc, ValidationError):
         return "；".join(
             f"{'.'.join(str(p) for p in error['loc']) or '整份'}：{error['msg']}"
@@ -130,13 +131,22 @@ def effective(data: DataDir, environ: Mapping[str, str]) -> Effective:
 
 
 def save(data: DataDir, new: CostSettings, *, now: datetime) -> list[dict[str, Any]]:
-    """寫進設定檔，每個改到的欄位在 `changes.jsonl` 記一筆；回傳記下的那幾筆。
+    """整份換成 `new`；見 `update`。"""
+    return update(data, lambda _: new, now=now)
+
+
+def update(
+    data: DataDir, change: Callable[[CostSettings], CostSettings], *, now: datetime
+) -> list[dict[str, Any]]:
+    """讀出現在的設定、交給 `change` 改、寫回去，三步在同一把鎖裡（同時改不同欄位不會互相蓋掉）。
+    每個改到的欄位在 `changes.jsonl` 記一筆；回傳記下的那幾筆。`change` 丟的例外原樣丟出，什麼都不寫。
 
     舊值是寫之前實際在用的值：檔案讀不懂時就是預設值。先記改動再換檔：
     換檔失敗的話紀錄多一筆沒生效的，總比生效了卻沒有紀錄好。
     """
     with _write_lock:
         old = load(data).settings
+        new = change(old)
         stamp = now.isoformat()
         changes = [
             {"ts": stamp, "field": name, "old": getattr(old, name), "new": getattr(new, name)}

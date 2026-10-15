@@ -401,13 +401,15 @@ def install(
             body = await request.json()
         except ValueError:
             return JSONResponse({"error": "請求內容要是 JSON"}, status_code=400)
-        current = await asyncio.to_thread(cost_settings.load, data)
         try:
-            new = costs.parse_update(body, current.settings)
+            # 讀、合併、寫在同一把鎖裡：只給部分欄位的兩個請求同時到，也不會互相蓋掉
+            changes = await asyncio.to_thread(
+                cost_settings.update, data, lambda current: costs.parse_update(body, current), now=clock()
+            )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        changes = await asyncio.to_thread(cost_settings.save, data, new, now=clock())
-        return JSONResponse({"settings": new.model_dump(), "changes": changes})
+        saved = await asyncio.to_thread(cost_settings.load, data)
+        return JSONResponse({"settings": saved.settings.model_dump(), "changes": changes})
 
     @app.post("/api/extract")
     async def extract(request: Request) -> Response:

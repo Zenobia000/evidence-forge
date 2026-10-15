@@ -66,6 +66,36 @@ def test_設定檔讀不懂_用預設值_說得出原因_不當掉(data: DataDir
     assert loaded.problem is not None and "costs.json" in loaded.problem
 
 
+def test_設定檔是極深的巢狀_JSON_也不當掉(data: DataDir) -> None:
+    # 閘道每次預留都讀設定：這裡丟例外，每個模型請求都會變成 500
+    _write(data, "[" * 100_000 + "]" * 100_000)
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.settings == CostSettings()
+    assert loaded.problem is not None
+
+
+def test_改設定是讀_改_寫一起做_同時改不同欄位不會互相蓋掉(data: DataDir) -> None:
+    import threading
+
+    names = ("analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd", "monthly_cap_usd")
+    workers = [
+        threading.Thread(
+            target=cost_settings.update,
+            args=(data, lambda current, name=name: current.model_copy(update={name: 2.0})),
+            kwargs={"now": NOW},
+        )
+        for name in names
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+
+    assert cost_settings.load(data).settings == CostSettings(**{name: 2.0 for name in names})
+
+
 def _changes(data: DataDir) -> list[dict[str, object]]:
     path = data.root / "settings" / "changes.jsonl"
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]

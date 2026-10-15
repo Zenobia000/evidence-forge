@@ -226,3 +226,10 @@ def test_帳單頁看以前的月份_不顯示剩多少(world: tuple[str, ChatFo
     html = httpx.get(f"{url}/bills", params={"month": "2026-01"}).text
 
     assert "剩 US$" not in html
+
+
+def test_設定頁的欄位名跟設定檔的欄位一一對得上() -> None:
+    from evidence_forge.ui.costs import FIELD_LABELS
+
+    # 設定檔多一個欄位卻忘了在這裡給名字，存設定就會把它當成「不認得的欄位」拒絕
+    assert set(FIELD_LABELS) == set(CostSettings.model_fields)
