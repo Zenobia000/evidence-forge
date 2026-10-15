@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% block content %}
-<div class="s0-alert" role="alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">{{ title }}</p><p class="s0-small" style="margin: 0">{{ body }}</p></div></div>
-<p><a class="lm-btn lm-btn--line" data-variant="quiet" href="/">回看板</a></p>
+<main class="s0-main s0-main--narrow">
+<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">{{ title }}</p><p class="s0-small" style="margin: 0">{{ body }}</p></div></div>
+<p><a class="lm-btn lm-btn--line" data-variant="quiet" href="/">回聊天室</a></p>
+</main>
 {% endblock %}

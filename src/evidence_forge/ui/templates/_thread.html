@@ -1,0 +1,75 @@
+{% from "_icons.html" import icon %}
+{# 對話串流（IA §4）。跑著的工單只放一個空位，進度列由 app.js 照 ef_job 事件填；結束的是結果卡。 #}
+{%- macro rate(value) -%}{{ ("%.1f" % value).rstrip("0").rstrip(".") }}{%- endmacro -%}
+{% if missing %}
+<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">找不到這個對話</p><p class="s0-small" style="margin: 0">可能是資料夾被移走了。</p></div></div>
+{% elif unavailable %}
+<div data-thread-error>
+<div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">這個對話暫時打不開</p><p class="s0-small" style="margin: 0">紀錄都還在，只是 agent 接不回來。<br>{{ unavailable }}</p></div></div>
+<p><button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-action="retry-thread">重試</button></p>
+</div>
+{% else %}
+<div data-thread-root data-title="{{ title }}" data-spent="{{ spent }}" data-latest-job="{{ latest_job or '' }}"
+     data-latest-done="{{ 'true' if latest_done else 'false' }}" data-latest-failed="{{ 'true' if latest_failed else 'false' }}"
+     data-last-kind="{{ last_kind or '' }}" data-persona="{{ persona }}" data-has-report="{{ 'true' if has_report else 'false' }}"
+     data-has-article="{{ 'true' if has_article else 'false' }}">
+{% for b in blocks %}
+{% if b.kind == "me" %}
+<div class="ch-me">
+{% if b.text %}<div class="ch-me__bubble">{{ b.text }}</div>{% endif %}
+{% if b.url %}<a class="ch-linkcard" href="{{ b.url }}" target="_blank" rel="noopener noreferrer">
+<span class="ch-linkcard__domain">{{ icon("link") }}{{ b.domain }}</span>
+{% if b.link_title %}<span class="ch-linkcard__title">{{ b.link_title }}</span>{% endif %}
+</a>{% endif %}
+{% for a in b.attachments %}<div class="ch-linkcard"><span class="ch-linkcard__domain">{{ icon("clip") }}附檔</span><span class="ch-linkcard__title">{{ a.name }}</span><span class="ch-time">{{ "{:,}".format(a.chars) }} 字</span></div>{% endfor %}
+{% if b.time %}<span class="ch-time">{{ b.time }}</span>{% endif %}
+</div>
+{% elif b.kind == "tool" %}
+{% if b.args %}<details class="ch-tool"><summary>{{ icon("chevron") }}{{ b.label }}</summary><div class="ch-tool__args">{{ b.args }}</div></details>
+{% else %}<div class="ch-tool"><span class="ch-tool__line">{{ b.label }}</span></div>{% endif %}
+{% elif b.kind == "agent" %}
+<div class="ch-agent"><span class="ch-agent__mark" aria-hidden="true">EF</span><div class="ch-agent__body">{{ b.html }}</div></div>
+{% elif b.kind == "error" %}
+<div class="ch-error" role="alert">{{ icon("warn") }}<span>{{ b.text }}{% if b.help %}。<span class="ch-error__help">{{ b.help }}</span>{% endif %}</span></div>
+{% elif b.kind == "job" %}
+{% set c = b.job %}
+{% if c.state != "done" %}
+<div class="ch-progress" role="status" aria-label="工作進度" data-job="{{ c.job_id }}" data-kind="{{ c.kind }}" hidden></div>
+{% else %}
+<div class="ch-result{% if c.compact %} ch-result--compact{% endif %}"{% if not c.compact %} aria-current="true"{% endif %} data-job="{{ c.job_id }}" data-kind="{{ c.kind }}">
+<span class="ch-result__kind">{{ icon("doc" if c.kind == "analysis" else "pencil") }}{{ "分析報告" if c.kind == "analysis" else "文章" }} {{ c.label }}{% if c.outcome == "complete" and not c.compact %}・完成{% endif %}</span>
+{% if c.outcome == "incomplete" %}<span class="s0-badge" data-tone="incomplete" style="align-self: flex-start">{{ icon("warn") }}未完成：{{ c.reason }}</span>
+{% elif c.outcome == "failed" %}<span class="s0-badge" data-tone="failed" style="align-self: flex-start">{{ icon("x") }}失敗：{{ c.reason }}</span>{% endif %}
+{% if c.can_open %}
+{% if c.kind == "rewrite" and c.title and not c.compact %}<p class="ch-result__title">{{ c.title }}</p>{% endif %}
+{% if c.kind == "analysis" and c.lead and not c.compact %}<p class="ch-result__lead">{{ c.lead }}</p>{% endif %}
+<div class="ch-result__facts">
+{% if c.kind == "analysis" %}
+<span>{{ icon("warn") }}<span class="s0-mono">{{ c.doubtful }}</span> 有疑慮</span>
+<span>{{ icon("check") }}<span class="s0-mono">{{ c.supported }}</span> 有佐證</span>
+<span>{{ icon("unfound") }}<span class="s0-mono">{{ c.unfound }}</span> 查不到</span>
+{% if not c.compact %}<span>研究題材 <span class="s0-mono">{{ c.topics }}</span> 個</span>{% endif %}
+{% else %}
+<span>角色 {{ c.persona }}{% if c.genre %}・{{ c.genre }}{% endif %}</span>
+{% if c.uncalibrated %}<span class="s0-badge" data-tone="genre">{{ icon("question") }}未校準</span>{% endif %}
+<span><span class="s0-mono">{{ "{:,}".format(c.words) }}</span> 字</span>
+{% if c.overlap and not c.compact %}<span>重疊率 <span class="s0-mono">{{ rate(c.overlap.rate) }}%</span>（{{ c.overlap.source }}）</span>{% endif %}
+{% endif %}
+<span class="s0-mono">{{ usd(c.spent_usd) }}</span>
+</div>
+{% else %}
+<div class="ch-result__facts"><span class="s0-mono">{{ usd(c.spent_usd) }}</span></div>
+{% endif %}
+{% if not c.compact or c.can_open %}
+<div class="ch-result__actions">
+{% if c.can_open %}<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-open="{{ 'report' if c.kind == 'analysis' else 'article' }}" data-job="{{ c.job_id }}" aria-pressed="false">{{ icon("panel") }}{% if c.outcome == "incomplete" %}打開目前的產出{% elif c.kind == "analysis" %}打開報告{% else %}打開文章{% endif %}</button>{% endif %}
+{% if c.can_open and c.kind == "rewrite" %}<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-copy-article="{{ c.job_id }}">{{ icon("copy") }}複製 Markdown</button>{% endif %}
+{% if c.outcome == "failed" and not c.compact %}<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-send="重試">重試</button>{% endif %}
+</div>
+{% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endfor %}
+</div>
+{% endif %}

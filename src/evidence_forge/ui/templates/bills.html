@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{# 帳單（IA §6）：沿用 S0 的設計，三處改成聊天室版——頂部三個數字、分項表、列表從工單改成對話。 #}
+{% macro bars(items, label) %}
+{% set h = items|length * 32 + 8 %}
+<svg class="s0-bars" viewBox="0 0 560 {{ h }}" role="img" aria-label="{{ label }}：{% for b in items %}{{ b.label }} {{ '%.2f'|format(b.usd) }} 美元{% if not loop.last %}、{% endif %}{% endfor %}">
+{% for b in items %}{% set y = loop.index0 * 32 %}
+<text x="0" y="{{ y + 20 }}">{{ b.label }}</text><rect class="track" x="150" y="{{ y + 8 }}" width="320" height="16" rx="3"/>{% if b.width %}<rect class="fill" x="150" y="{{ y + 8 }}" width="{{ b.width }}" height="16" rx="3"/>{% endif %}<text class="val" x="556" y="{{ y + 20 }}" text-anchor="end">{{ usd(b.usd) }}</text>
+{% endfor %}
+</svg>
+{% endmacro %}
+{% block content %}
+<main class="s0-main" style="max-width: 1200px; margin: 0 auto">
+<div class="s0-pagehead">
+<div>
+<h1 class="s0-h1">帳單</h1>
+<p class="s0-sub">資料來自模型閘道的帳本，每一筆呼叫都記在裡面，包含 agent 在對話裡回話的花費。</p>
+</div>
+<div class="s0-row" role="group" aria-label="切換月份">
+<a class="lm-btn lm-btn--line" data-variant="quiet" href="/bills?month={{ view.previous_month }}" aria-label="上一個月">{{ icon("left") }}</a>
+<span class="s0-mono" style="min-width: 96px; text-align: center; font-weight: 600">{{ view.month }}</span>
+{% if view.next_month %}<a class="lm-btn lm-btn--line" data-variant="quiet" href="/bills?month={{ view.next_month }}" aria-label="下一個月">{{ icon("right") }}</a>
+{% else %}<span class="lm-btn lm-btn--line" data-variant="quiet" aria-label="下一個月" aria-disabled="true" style="opacity: 0.4">{{ icon("right") }}</span>{% endif %}
+</div>
+</div>
+
+{% if view.bad_lines %}
+<div class="s0-alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">帳本有 {{ view.bad_lines|length }} 行讀不懂，已略過</p><p class="s0-small" style="margin: 0">{% for b in view.bad_lines[:5] %}<span class="s0-mono">{{ b.where }}{% if b.line %}:{{ b.line }}{% else %}（整個檔案讀不懂）{% endif %}</span>{% if not loop.last %}、{% endif %}{% endfor %}{% if view.bad_lines|length > 5 %} 等{% endif %}。其餘照算，這些行的金額沒有算進總數，所以總數可能偏低。</p></div></div>
+{% endif %}
+
+<div class="s0-stats">
+<div class="s0-panel s0-stat"><span class="s0-stat__label">本月總花費</span><span class="s0-stat__num">{{ usd(view.total_usd) }}</span><span class="s0-stat__note">{{ view.conversation_count }} 個對話，含失敗與對話本身</span></div>
+<div class="s0-panel s0-stat"><span class="s0-stat__label">報告</span><span class="s0-stat__num">{{ view.reports }} 份</span><span class="s0-stat__note">{% if view.reports %}平均每份 <span class="s0-mono">{{ usd(view.report_average) }}</span>（brief＋查證與找題材，含補查）{% else %}這個月沒有報告{% endif %}</span></div>
+<div class="s0-panel s0-stat"><span class="s0-stat__label">文章</span><span class="s0-stat__num">{{ view.articles }} 篇</span><span class="s0-stat__note">{% if view.articles %}平均每篇 <span class="s0-mono">{{ usd(view.article_average) }}</span>（v1、v2… 算同一篇，所有版本的錢都算進去）{% else %}這個月沒有文章{% endif %}</span></div>
+</div>
+
+{% if view.empty %}
+<div class="s0-state" role="status">
+<p style="margin: 0; font-weight: 600">這個月還沒有花費</p>
+<p class="s0-small" style="margin: 0">三個數字都顯示 0，下面的表不畫。可以切到上一個月看。</p>
+</div>
+{% else %}
+<div class="s0-grid2" style="margin-bottom: 16px">
+<section class="s0-panel" aria-labelledby="by-skill">
+<h2 class="s0-h2" id="by-skill">依 skill</h2>
+{{ bars(view.by_skill, "依 skill 的花費") }}
+<p class="s0-small" style="margin: 12px 0 0">「對話本身」是 agent 讀報告、回你話、聽懂你要什麼的花費，不屬於哪一次工作。</p>
+</section>
+<section class="s0-panel" aria-labelledby="by-model">
+<h2 class="s0-h2" id="by-model">依模型</h2>
+{{ bars(view.by_model, "依模型的花費") }}
+</section>
+<section class="s0-panel" aria-labelledby="by-persona">
+<h2 class="s0-h2" id="by-persona">依角色</h2>
+{% if view.by_persona %}
+<div class="s0-tablewrap">
+<table class="s0-table">
+<thead><tr><th>角色</th><th class="num">文章</th><th class="num">版本</th><th class="num">未校準</th><th class="num">金額</th></tr></thead>
+<tbody>{% for p in view.by_persona %}<tr><td>{{ p.persona }}</td><td class="num">{{ p.articles }}</td><td class="num">{{ p.versions }}</td><td class="num">{{ p.uncalibrated }}</td><td class="num">{{ usd(p.usd) }}</td></tr>{% endfor %}</tbody>
+<tfoot><tr><td>合計</td><td class="num">{{ view.by_persona|sum(attribute="articles") }}</td><td class="num">{{ view.by_persona|sum(attribute="versions") }}</td><td class="num">{{ view.by_persona|sum(attribute="uncalibrated") }}</td><td class="num">{{ usd(view.by_persona|sum(attribute="usd")) }}</td></tr></tfoot>
+</table>
+</div>
+{% else %}<p class="s0-small" style="margin: 0">這個月沒有寫文章。</p>{% endif %}
+<p class="s0-small" style="margin: 12px 0 0">同一個對話裡的 v1、v2… 算一篇。只有寫文章用到角色；分析與對話本身不算在任何角色裡。</p>
+</section>
+<section class="s0-panel" aria-labelledby="by-where">
+<h2 class="s0-h2" id="by-where">本機／雲端</h2>
+<div class="s0-tablewrap">
+<table class="s0-table">
+<thead><tr><th>在哪跑</th><th class="num">呼叫次數</th><th class="num">GPU 秒</th><th class="num">金額</th></tr></thead>
+<tbody>{% for w in view.by_where %}<tr><td>{{ w.label }}</td><td class="num">{{ "{:,}".format(w.calls) }}{% if w.unit %} {{ w.unit }}{% endif %}</td><td class="num">{% if w.gpu_seconds is not none %}{{ "{:,.0f}".format(w.gpu_seconds) }}{% else %}—{% endif %}</td><td class="num">{{ usd(w.usd) }}</td></tr>{% endfor %}</tbody>
+</table>
+</div>
+</section>
+</div>
+
+<section class="s0-panel" aria-labelledby="convos-h" style="padding: 20px 16px 8px">
+<h2 class="s0-h2" id="convos-h" style="padding: 0 8px">本月每個對話</h2>
+<div class="s0-tablewrap">
+<table class="s0-table">
+<thead><tr><th>對話</th><th class="num">報告</th><th class="num">文章</th><th>最後活動</th><th class="num">金額</th></tr></thead>
+<tbody>
+{% for r in view.conversations %}<tr><td>{% if r.conversation_id %}<a href="/c/{{ r.conversation_id }}?tab=cost">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}</td><td class="num">{{ r.reports }}</td><td class="num">{{ r.articles }}{% if r.articles %}（{{ r.versions }} 版）{% endif %}</td><td class="s0-mono">{{ r.last_activity|mdhm if r.last_activity else "—" }}</td><td class="num">{{ usd(r.usd) }}</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="s0-small" style="margin: 8px 8px 12px">點標題進到那個對話，右側面板直接開在「花費」分頁。補查與每一版文章的錢都算在同一個對話裡。</p>
+</section>
+{% endif %}
+</main>
+{% endblock %}

@@ -72,7 +72,7 @@ def _finish(data: DataDir, job_id: str, recipe: str = "analyze") -> None:
     done = job.model_copy(
         update={
             "recipe": recipe,
-            "status": "review",
+            "status": "done",
             "result": JobResult(outcome="complete", reason="跑完"),
         }
     )

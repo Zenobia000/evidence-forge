@@ -197,6 +197,11 @@ def test_丟文章到拿到整理_全程經過_ef_serve_關掉之後不留_Pi(
     ledger = data / "conversations" / cid / "ledger.jsonl"
     rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert rows and all(r["conversation_id"] == cid and r.get("job_id") is None for r in rows)
+    # 聊天室畫面跟 API 同一個程序、同一個埠送出（#86）：清單認得這個對話，帳單頁開得起來
+    page = httpx.get(f"{api}/", timeout=10)
+    assert page.status_code == 200 and 'id="ch-shell"' in page.text
+    assert "圖書館的夜班" in httpx.get(f"{api}/ui/list", timeout=10).text
+    assert httpx.get(f"{api}/bills", timeout=10).status_code == 200
     # 對話與段都打了假 Anthropic；沒有任何一個請求出這台機器
     assert len(model.requests) >= 5
 

@@ -10,7 +10,8 @@
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
   啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01，含 `harness/pi/` 的 Pi 有沒有裝）；同時最多跑 `--parallel` 張（預設 2）；
   重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
-  還有對話主機（#85，`chat/host.py`）與給畫面的 API（`chat/api.py`，`--chat-port`，預設 8790，也只綁 127.0.0.1）：
+  還有對話主機（#85，`chat/host.py`）與給畫面的 API 和畫面本身（`chat/api.py`、`ui/pages.py`，`--chat-port`，預設 8790，也只綁 127.0.0.1；
+  瀏覽器開 `http://127.0.0.1:8790/` 就是聊天室，帳單在 `/bills`，頁面跟 API 同源）：
   對話的 Pi 閒置 `--chat-idle-minutes`（預設 10）分鐘就關掉，`analyze` 開 `--chat-recipe`（預設 analyze）。
   `--chat-port 0` 或 `--once` 時不開對話主機。
 
@@ -238,12 +239,14 @@ def _serve(args: argparse.Namespace) -> int:
             prepare_agent_dir(harness.pi, data, gateway_url)
             # 主機先收掉前一次留下的 Pi，API 才開門：不然第一句話開的 Pi 會被當成孤兒殺掉
             host.start()
-            chat_server = _start_server(chat_api.create_app(host), args.chat_port)
+            chat_server = _start_server(
+                chat_api.create_app(host, data=data, recipes=recipes), args.chat_port
+            )
             if chat_server is None:
                 print(f"對話的 API 沒有啟動（埠 {args.chat_port} 被佔用？）", file=sys.stderr)
                 return 1
             print(
-                f"對話 API http://127.0.0.1:{args.chat_port}/api/conversations；"
+                f"聊天室 http://127.0.0.1:{args.chat_port}/（帳單 /bills；API /api/conversations）；"
                 f"analyze 開 {args.chat_recipe}；閒置 {args.chat_idle_minutes:g} 分鐘關掉對話的 Pi",
                 flush=True,
             )
@@ -257,7 +260,7 @@ def _serve(args: argparse.Namespace) -> int:
             # 重開之後先接著跑沒跑完的單，再照開單順序拿排隊單，同時最多 --parallel 張
             started = runner.start_available()
             for job_id in runner.finished():
-                print(f"工單 {job_id} 已進待審", flush=True)
+                print(f"工單 {job_id} 已結束", flush=True)
             if runner.blocked != blocked:
                 blocked = runner.blocked
                 if blocked is not None:

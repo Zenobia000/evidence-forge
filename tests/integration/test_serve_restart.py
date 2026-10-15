@@ -167,7 +167,7 @@ def test_跑到一半殺掉_ef_serve_重開後從同一段同一次重跑_前面
     assert second.returncode == 0, err.decode()
 
     job = read_job(job_md).job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "complete", job.result
     # 沒有多出新的嘗試目錄；重跑的請求跟殺掉前一樣，從帳本回放，後端沒再收到請求
     assert [p.name for p in (data.job_dir(job_id) / "stages" / "echo").iterdir()] == [

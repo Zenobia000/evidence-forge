@@ -86,7 +86,7 @@ def _events(data: DataDir, job_id: str) -> list[Event]:
 
 
 @pytest.mark.promise("FR-RC-01", "NFR-KEEP-02")
-def test_開單後跑完唯一一段_產出合格_工單進待審且結果完成(
+def test_開單後跑完唯一一段_產出合格_工單結束且結果完成(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(WELL_BEHAVED)
@@ -95,7 +95,7 @@ def test_開單後跑完唯一一段_產出合格_工單進待審且結果完成
     assert world.runner.run_once() == job_id
 
     job = read_job(world.data.job_dir(job_id) / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "complete"
     summary = world.data.job_dir(job_id) / "stages" / "echo" / "1" / "summary.json"
     assert json.loads(summary.read_text(encoding="utf-8")) == {
@@ -118,7 +118,7 @@ def test_狀態轉換依序寫進事件紀錄(world_for: Callable[..., World]) -
     assert transitions == [
         (None, "queued"),
         ("queued", "running"),
-        ("running", "review"),
+        ("running", "done"),
     ]
 
 
@@ -127,7 +127,7 @@ def test_沒有排隊中的工單就什麼都不做(world_for: Callable[..., Wor
 
 
 @pytest.mark.promise("NFR-SEC-02", "NFR-KEEP-02")
-def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常停在待審(
+def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常結束(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(INJECTED)
@@ -137,7 +137,7 @@ def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常停在
     job_dir = world.data.job_dir(job_id)
     assert not (job_dir / "review").exists()
     job = read_job(job_dir / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     for event in _events(world.data, job_id):
         assert "approve" not in event.message
     # Pi 自己回報的被拒結果：四個都是 403
@@ -147,7 +147,7 @@ def test_agent_試著寫審稿決定與狀態檔_全部被拒_工單照常停在
 
 
 @pytest.mark.promise("NFR-RUN-03")
-def test_產出不合_schema_工單以失敗進待審並寫明原因(
+def test_產出不合_schema_工單以失敗結束並寫明原因(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(BAD_OUTPUT)
@@ -155,12 +155,12 @@ def test_產出不合_schema_工單以失敗進待審並寫明原因(
     world.runner.run_once()
 
     job = read_job(world.data.job_dir(job_id) / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert "summary.json" in job.result.reason
 
 
-def test_Pi_非零結束_工單以失敗進待審並附上錯誤輸出(
+def test_Pi_非零結束_工單以失敗結束並附上錯誤輸出(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(CRASHES)
@@ -234,7 +234,7 @@ def test_用前一次存下的帳本與_blobs_重播整條流程_後端一個請
 
 
 @pytest.mark.promise("NFR-COST-01")
-def test_工單預算不夠_Pi_被擋下_工單以未完成進待審_原因是預算用完(
+def test_工單預算不夠_Pi_被擋下_工單以未完成結束_原因是預算用完(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(CLOUD_CALL)
@@ -243,14 +243,14 @@ def test_工單預算不夠_Pi_被擋下_工單以未完成進待審_原因是�
     world.runner.run_once()
 
     job = read_job(world.data.job_dir(job_id) / "job.md").job
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None
     assert (job.result.outcome, job.result.reason) == ("incomplete", "預算用完")
     assert world.backend_calls == []
 
 
 @pytest.mark.promise("NFR-COST-01", "FR-LG-01")
-def test_本月額度用完_工單以未完成進待審_原因是本月額度用完(
+def test_本月額度用完_工單以未完成結束_原因是本月額度用完(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(CLOUD_CALL)
@@ -276,7 +276,7 @@ def test_本月額度用完_工單以未完成進待審_原因是本月額度用
 
 
 @pytest.mark.promise("NFR-RUN-02")
-def test_段裡丟例外_Pi_執行檔不見_工單以失敗進待審_不卡在執行中(
+def test_段裡丟例外_Pi_執行檔不見_工單以失敗結束_不卡在執行中(
     world_for: Callable[..., World],
 ) -> None:
     world = world_for(WELL_BEHAVED)
@@ -289,7 +289,7 @@ def test_段裡丟例外_Pi_執行檔不見_工單以失敗進待審_不卡在�
     assert world.runner.run_once() == job_id
 
     job = world.read(job_id)
-    assert job.status == "review"
+    assert job.status == "done"
     assert job.result is not None and job.result.outcome == "failed"
     assert "/nonexistent/pi" in job.result.reason
     # 鑰匙有撤銷
@@ -306,7 +306,7 @@ def test_有一張的_job_md_壞掉_略過它_照樣跑下一張(
     job_id = world.job()
 
     assert world.runner.run_once() == job_id
-    assert world.read(job_id).status == "review"
+    assert world.read(job_id).status == "done"
 
 
 @pytest.mark.promise("NFR-PAR-01")
@@ -363,7 +363,7 @@ def test_開跑前檢查沒過_工單留在排隊_事件紀錄寫明是哪一項
 
     problems.clear()
     assert world.runner.run_once() == job_id
-    assert world.read(job_id).status == "review"
+    assert world.read(job_id).status == "done"
 
 
 @pytest.mark.promise("NFR-RUN-06")

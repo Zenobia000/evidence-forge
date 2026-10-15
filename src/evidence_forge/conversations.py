@@ -28,9 +28,11 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     ValidationError,
+    field_validator,
 )
 
 from evidence_forge.gateway.ledger import append_line
+from evidence_forge.jobkey import check_name
 from evidence_forge.paths import DataDir
 
 DEFAULT_BUDGET_USD = 1.0
@@ -53,6 +55,9 @@ class Conversation(BaseModel):
     # 結束通知已經確定進了 Pi 紀錄的工單（主機看到 `ef-job` 訊息的 `message_end` 才記，#85）。
     # 主機重開時只補送不在這裡的；ef-tools 自己也照紀錄去重，這裡漏記頂多多送一次、不會多一則通知
     notified_jobs: list[str] = Field(default_factory=list)
+    # 創作者看過結果的最後一張工單（#86）：對話最新的一張結束的單不是它，清單就標「有新結果」。
+    # 畫面打開對話時回報，主機寫；舊的 conversation.json 沒有這欄，讀進來是 None
+    seen_job: str | None = None
 
 
 class ConversationJob(BaseModel):
@@ -69,6 +74,14 @@ class ConversationJob(BaseModel):
     ts: AwareDatetime
     version: PositiveInt = 1
     parent: str | None = None
+
+    @field_validator("job_id", "parent")
+    @classmethod
+    def _is_a_job_id(cls, value: str | None) -> str | None:
+        # 會拿來拼 `jobs/<id>/`：跟 `Job.id`、工單鑰匙同一條字元規則，`../` 之類在這裡就進不來
+        if value is not None:
+            check_name("工單 id", value)
+        return value
 
 
 def _folder(data: DataDir, conversation_id: str) -> Path:
@@ -139,8 +152,15 @@ def jobs(data: DataDir, conversation_id: str) -> list[ConversationJob]:
             row = ConversationJob.model_validate_json(line)
         except ValidationError:
             continue
+        if not _inside_jobs(data, row.job_id):
+            continue
         found.setdefault(row.job_id, row)
     return list(found.values())
+
+
+def _inside_jobs(data: DataDir, job_id: str) -> bool:
+    """這張單的資料夾真的在 `jobs/` 底下：`jobs/<id>` 是指到外面的符號連結就不算。"""
+    return (data.jobs / job_id).resolve().is_relative_to(data.jobs.resolve())
 
 
 def owns_job(data: DataDir, conversation_id: str, job_id: str) -> bool:

@@ -140,7 +140,7 @@ def _finish(data: DataDir, job_id: str, report: str) -> None:
     path = data.job_dir(job_id) / "job.md"
     job = read_job(path).job
     done = job.model_copy(
-        update={"status": "review", "result": JobResult(outcome="complete", reason="跑完")}
+        update={"status": "done", "result": JobResult(outcome="complete", reason="跑完")}
     )
     write_job(path, JobDocument(job=done))
 

@@ -120,7 +120,7 @@ def test_結束了_帶結果與原因_告示板殘留的等待不算(tmp_path: P
     _update(
         data,
         job_id,
-        status="review",
+        status="done",
         result=JobResult(outcome="incomplete", reason="預算用完"),
     )
     board = JobBoard(lambda: NOW)

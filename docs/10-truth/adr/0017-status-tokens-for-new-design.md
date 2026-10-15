@@ -2,6 +2,7 @@
 
 > **狀態：** 已接受 | **日期：** 2026-10-11 | **決策者：** 專案擁有者（視覺設計、Product 兩個 session 對過名單，系統架構 session 撰寫）
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
+> **後續補充：** 聊天室新增 `--chat-*`、`--verify-*`、`--diff-*`，並退役 `--job-review`、`--job-approved`、`--job-discarded`，見 ADR-0023。
 > **修正 ADR-0007**：§3.1 第 2 點的狀態前綴清單；§3.4 表格最後一列的字型值。ADR-0007 的其餘規則不變，包括兩層命名、顏色的意思、三條硬規則。
 
 ## 1. 背景與問題

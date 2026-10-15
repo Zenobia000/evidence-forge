@@ -1,0 +1,6 @@
+{
+  "name": "evidence-forge-ui",
+  "private": true,
+  "type": "module",
+  "description": "瀏覽器直接載入的 ES module，沒有建置；這個檔只讓 node 知道它們是 module，tests/js 才跑得起來"
+}

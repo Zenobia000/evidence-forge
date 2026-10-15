@@ -4,26 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ page_title }}{% endblock %}</title>
-{# 順序不能反：tokens.css 先，s0.css 後（s0.css 的字型清單要蓋過 tokens.css 的 Noto） #}
+{# 順序不能反：tokens.css 先，s0.css 後（s0.css 的字型清單要蓋過 tokens.css 原本的中文網路字型） #}
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/css/fonts.css">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/s0.css">
-<link rel="stylesheet" href="/static/css/ui.css">
-<script src="/static/js/htmx.min.js" defer></script>
+<link rel="stylesheet" href="/static/css/chat.css">
+{% block head %}{% endblock %}
 </head>
 <body style="margin: 0">
-<div class="s0-app" data-theme="light" data-zone="console">
+<div class="s0-app" data-theme="light" data-zone="console" data-page="{{ nav }}">
 <header class="s0-topbar">
 <a class="s0-wordmark" href="/">Evidence Forge</a>
 <nav class="s0-nav" aria-label="主導覽">
-<a href="/"{% if nav == "board" %} aria-current="page"{% endif %}>看板 {% include "_nav_count.html" %}</a>
+<a href="/"{% if nav == "chat" %} aria-current="page"{% endif %}>聊天室 <span class="s0-nav__count" data-new-count{% if not new_count %} hidden{% endif %}>有新結果 {{ new_count }}</span></a>
 <a href="/bills"{% if nav == "bills" %} aria-current="page"{% endif %}>帳單</a>
 </nav>
-<a class="lm-btn" data-variant="primary" href="/jobs/new">{{ icon("plus") }}新增工單</a>
 </header>
-<main class="s0-main">
 {% block content %}{% endblock %}
-</main>
 </div>
 </body>
 </html>

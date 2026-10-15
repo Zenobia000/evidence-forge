@@ -51,7 +51,7 @@ def test_模型還沒回應時_job_md_寫著在等模型回應_回完就清掉(
             world.runner.wait(timeout_s=30)
     assert waiting is not None
     job = world.read(job_id)
-    assert job.status == "review" and job.waiting is None
+    assert job.status == "done" and job.waiting is None
     # 進度欄位：第幾段／共幾段、開始時間
     assert job.stage is not None and (job.stage.index, job.stage.total) == (1, 1)
 

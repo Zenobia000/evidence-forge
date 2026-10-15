@@ -110,11 +110,12 @@ def _settle(data: DataDir, job_id: str, status: JobStatus, outcome: str | None) 
     [
         ("queued", None, True),
         ("running", None, True),
-        ("review", "complete", True),
+        ("done", "complete", True),
+        ("done", "incomplete", False),
+        ("done", "failed", False),
+        # 舊資料：通過與丟棄都讀成結束，看結果決定拿不拿回（#89 之前丟棄的單不拿回，現在沒有這個分別）
         ("approved", "complete", True),
-        ("review", "incomplete", False),
-        ("review", "failed", False),
-        ("discarded", "complete", False),
+        ("discarded", "complete", True),
     ],
 )
 def test_只拿回排隊中_執行中或完成的單(

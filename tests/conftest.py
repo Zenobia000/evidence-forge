@@ -7,11 +7,9 @@
 
 import socket
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
-from ui_folder import Folder
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
@@ -46,9 +44,3 @@ def _replay_only(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
     yield
-
-
-@pytest.fixture
-def folder(tmp_path: Path) -> Folder:
-    """簡易 UI 測試用的資料目錄（`tests/ui_folder.py`）。"""
-    return Folder(tmp_path / "ef-data")

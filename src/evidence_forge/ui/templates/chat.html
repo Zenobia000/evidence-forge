@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block head %}<script type="module" src="/static/js/app.js"></script>{% endblock %}
+{% block content %}
+{# 三欄：對話清單、對話、右側面板（IA §2）。內容由 /static/js/app.js 照 /ui/… 的片段與 /api/… 填；
+   這裡先放好外框和清單，沒有 script 也看得到清單、點得進對話。 #}
+<div class="ch-shell" id="ch-shell"
+     data-conversation="{{ conversation_id or '' }}"
+     data-loose="{{ 'true' if loose else 'false' }}"
+     data-initial-tab="{{ initial_tab }}"
+     data-panel="closed">
+
+<aside class="ch-list" id="ch-list" aria-label="對話清單">
+<div class="ch-list__top">
+<a class="lm-btn" data-variant="primary" href="/" id="ch-new">{{ icon("plus") }}新對話</a>
+<label for="ch-search" class="ch-sr">搜尋對話</label>
+<input id="ch-search" class="ch-search" type="search" placeholder="搜尋標題" autocomplete="off">
+</div>
+<div id="ch-list-body">{% include "_list.html" %}</div>
+</aside>
+
+<section class="ch-convo" aria-label="對話">
+<div class="ch-convo__head">
+<div class="ch-convo__lead">
+<button class="ch-iconbtn ch-narrow-only" type="button" id="ch-list-toggle" aria-label="打開對話清單" aria-expanded="false">{{ icon("menu") }}</button>
+<h1 class="ch-convo__title" id="ch-title">{{ conversation_title or "新對話" }}</h1>
+</div>
+<span class="s0-small" id="ch-spent-wrap"{% if not conversation_id %} hidden{% endif %}>{% if loose %}這些工單花了{% else %}這個對話花了{% endif %} <span class="s0-mono" id="ch-spent">—</span></span>
+</div>
+
+<div class="ch-stream" id="ch-stream">
+<div class="ch-stream__inner" id="ch-inner">
+{% if conversation_id %}
+<div id="ch-loading" aria-label="載入中" role="status">
+<span class="s0-skel" style="width: 60%"></span><span class="s0-skel" style="width: 85%; margin-top: 12px"></span><span class="s0-skel" style="width: 45%; margin-top: 12px"></span>
+</div>
+{% else %}
+<div class="s0-state ch-empty" id="ch-empty">
+<p style="margin: 0; font-weight: 600">從一篇文章開始</p>
+<p class="s0-small" style="margin: 0">它會讀懂作者在說什麼、查證關鍵數字、找可以延伸的題材，交一份報告給你。</p>
+<div class="ch-suggest"><button class="ch-chip" type="button" data-example="url">貼一個網址</button><button class="ch-chip" type="button" data-example="text">貼一段文字</button><button class="ch-chip" type="button" data-example="file">丟一個 PDF</button></div>
+</div>
+{% endif %}
+<div id="ch-thread"></div>
+<div id="ch-live" aria-live="polite"></div>
+<div id="ch-notes"></div>
+</div>
+</div>
+
+<div class="ch-compose"{% if loose %} hidden{% endif %}>
+<div class="ch-compose__inner">
+<div class="ch-suggest" id="ch-suggest" aria-label="建議"></div>
+<div class="ch-attached" id="ch-attached" hidden></div>
+<div class="ch-box" id="ch-box">
+<button class="ch-iconbtn" type="button" id="ch-attach" aria-label="附加檔案">{{ icon("clip") }}</button>
+<input type="file" id="ch-file" accept=".md,.markdown,.txt,.pdf,text/markdown,text/plain,application/pdf" multiple hidden>
+<label for="ch-input" class="ch-sr">訊息</label>
+<textarea id="ch-input" rows="1" placeholder="打字、貼網址，或把檔案拖進來"></textarea>
+<button class="lm-btn" data-variant="primary" type="button" id="ch-send">{{ icon("send") }}送出</button>
+</div>
+<p class="ch-compose__hint" id="ch-hint" style="margin: 0">分析跑的時候也可以打字，訊息會排在它後面。</p>
+</div>
+</div>
+</section>
+
+<aside class="ch-rail" id="ch-rail" aria-label="右側面板（已收起）">
+<button class="ch-iconbtn" type="button" id="ch-panel-open" aria-label="打開右側面板" aria-expanded="false" aria-controls="ch-panel">{{ icon("panel") }}</button>
+<span class="ch-rail__label">報告・文章・花費</span>
+</aside>
+<aside class="ch-panel" id="ch-panel" aria-label="右側面板" hidden></aside>
+
+</div>
+{% endblock %}

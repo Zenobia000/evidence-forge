@@ -1,4 +1,4 @@
-"""工單狀態只能照架構草案 v0.3 §2.4 的圖轉換。"""
+"""工單狀態只能照 ADR-0019 §3.4 的圖轉換：排隊、執行中、結束（ADR-0010 原本的五種已收成三種）。"""
 
 import itertools
 
@@ -6,17 +6,14 @@ import pytest
 
 from evidence_forge.transitions import InvalidTransition, transition
 
-STATUSES = ["queued", "running", "review", "approved", "discarded"]
+STATUSES = ["queued", "running", "done"]
 
-# 直接從 v0.3 §2.4 的狀態圖抄下來，不從被測程式讀。
+# 直接從 ADR-0019 §3.4 抄下來，不從被測程式讀。
 ALLOWED = {
     ("queued", "running"),  # 執行器有空位
     ("running", "running"),  # 下一段
-    ("running", "review"),  # 做完、預算用完、出錯
-    ("review", "approved"),  # 通過
-    ("review", "queued"),  # 退件、失敗重試
-    ("review", "discarded"),  # 丟棄
-    ("approved", "queued"),  # 通過後又想改
+    ("running", "done"),  # 做完、預算用完、出錯
+    ("running", "queued"),  # 當機後放回排隊（ADR-0019 §3.4）
 }
 FORBIDDEN = [
     pair for pair in itertools.product(STATUSES, STATUSES) if pair not in ALLOWED
@@ -37,11 +34,11 @@ def test_any_other_transition_is_refused(current: str, target: str) -> None:
 
 
 def test_refusal_names_both_statuses() -> None:
-    with pytest.raises(InvalidTransition, match="discarded.*running"):
-        transition("discarded", "running")
+    with pytest.raises(InvalidTransition, match="done.*running"):
+        transition("done", "running")
 
 
 @pytest.mark.promise("NFR-RUN-02")
 def test_unknown_status_is_refused() -> None:
     with pytest.raises(InvalidTransition):
-        transition("review", "published")  # type: ignore[arg-type]
+        transition("done", "published")  # type: ignore[arg-type]

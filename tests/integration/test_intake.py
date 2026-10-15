@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from evidence_forge.documents import JobDocument, read_job, write_job
+from evidence_forge.documents import read_job
 from evidence_forge.extract import ExtractError
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.ledger_models import IntakeEntry
@@ -328,19 +328,6 @@ def test_沒填目標等於手打配方預設目標(data: DataDir) -> None:
     assert first.job.goal == DEFAULT_GOAL
     assert {typed.job.id, blank.job.id} == {first.job.id}
     assert not typed.created and not blank.created
-
-
-@pytest.mark.promise("FR-IN-01")
-def test_原來那張已丟棄_同內容同目標再投入會開新單(data: DataDir) -> None:
-    first = _submit(data, PastedText("同一篇文章"))
-    path = data.job_dir(first.job.id) / "job.md"
-    doc = read_job(path)
-    write_job(path, JobDocument(job=doc.job.model_copy(update={"status": "discarded"})))
-
-    again = _submit(data, PastedText("同一篇文章"))
-    assert again.created
-    assert again.job.id != first.job.id
-    assert read_job(path).job.status == "discarded"
 
 
 @pytest.mark.promise("FR-IN-01", "NFR-COST-03")
