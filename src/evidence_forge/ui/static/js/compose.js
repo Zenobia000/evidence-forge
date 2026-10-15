@@ -32,7 +32,7 @@ export function buildMessage(text, attachments = []) {
 // 建議按鈕要填進框裡的字
 export function suggestions(lastKind, persona) {
   if (lastKind === "analysis") {
-    return [`用 ${persona} 寫一篇觀點文`, "再查一下有疑慮的那條", "這篇的立場是什麼？"];
+    return [`用 ${persona} 寫一篇理論教學`, "再查一下有疑慮的那條", "這篇的立場是什麼？"];
   }
   if (lastKind === "rewrite") {
     return ["開頭直接講結論", "換一個標題", "換成 B2B 角色寫"];

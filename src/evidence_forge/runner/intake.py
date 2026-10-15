@@ -26,7 +26,7 @@ import hashlib
 import json
 import shutil
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -399,6 +399,7 @@ def open_job_from(
     budget_usd: float = 0.5,
     budget_credits: int | None = None,
     conversation: str | None = None,
+    allowed_genres: Mapping[str, str] | None = None,
 ) -> Job:
     """從上一張工單接著做，開一張新的排隊中工單（重構、再改，之後的補查）。
 
@@ -408,6 +409,8 @@ def open_job_from(
       文類是角色的預設文類、目標是配方的預設目標。角色一定要有資料夾。
     - 新工單沿用上一張的素材項目（出處、內容 hash），但不放原文全文（FR-RW-01）。不走去重。
     - `conversation` 是開單的對話 id，記進 `job.md`（對話的 `rewrite`，#102）；命令列不給。
+    - `allowed_genres`（文體 slug → 中文名）：給了就檢查最後定下的文體，包括沿用上一張的、
+      角色的預設文體；不在裡面（例：舊工單的 12 種文類 id）就不開單，訊息列出有哪些（ADR-0026 §3.4）。
       「上一張單是不是這個對話的」由閘道檢查，這裡不管。
 
     錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
@@ -447,6 +450,9 @@ def open_job_from(
         or (parent.target_genre if same else None)
         or default_genre(data, chosen_persona)
     )
+    if allowed_genres is not None and chosen_genre is not None and chosen_genre not in allowed_genres:
+        listed = "、".join(f"{key}（{name}）" for key, name in allowed_genres.items())
+        raise ValueError(f"文體 {chosen_genre} 不是現在的文體之一（有：{listed}）")
     item = Item.model_validate_json(
         (data.root / parent.feed.item / "item.json").read_bytes()
     )

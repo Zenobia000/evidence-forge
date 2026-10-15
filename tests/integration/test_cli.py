@@ -245,7 +245,7 @@ def test_ef_new_from_開重構工單_預設配方是_rewrite_帶角色與文體(
     ef_data: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     parent = _finished_analysis(ef_data, capsys)
-    args = ["new", "--from", parent, "--persona", "me", "--genre", "opinion"]
+    args = ["new", "--from", parent, "--persona", "me", "--genre", "essay"]
     assert main([*args, "--goal", "寫給 PM"]) == 0
 
     job_id = capsys.readouterr().out.strip()
@@ -254,7 +254,7 @@ def test_ef_new_from_開重構工單_預設配方是_rewrite_帶角色與文體(
         "rewrite",
         parent,
         "me",
-        "opinion",
+        "essay",
         "寫給 PM",
     )
 

@@ -59,7 +59,7 @@ markers = [
 
 # 型別錯誤在這裡擋，不留到執行時才炸。涵蓋 src/ 與 tests/。
 [tool.mypy]
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 # tests/ 也列進來，並依目錄算模組名：tests/conftest.py 與 tests/integration/conftest.py 才不會撞名。
 mypy_path = ["src", "tests"]
 explicit_package_bases = true

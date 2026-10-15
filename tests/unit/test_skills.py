@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from evidence_forge.checks.format import check_schema
+from evidence_forge.documents import read_frontmatter
 from evidence_forge.harness import default_harness
 from evidence_forge.models import TIER_ORDER
 from evidence_forge.runner import hard_checks, sources
@@ -175,8 +176,9 @@ def test_brief_的_schema_收文類_主題標籤_關鍵主張_不要逐字引句
             {"key_claims": [{"id": f"K{i}", "claim": "x"} for i in range(1, 8)]},
             "/key_claims",
         ),
-        ({"genre": {"primary": "essay", "confidence": 0.5}}, "/genre/primary"),
-        ({"genre": {"primary": "news", "confidence": 1.5}}, "/genre/confidence"),
+        # 舊的 12 種文類不再收（ADR-0026 §3.4）
+        ({"genre": {"primary": "opinion", "confidence": 0.5}}, "/genre/primary"),
+        ({"genre": {"primary": "trend", "confidence": 1.5}}, "/genre/confidence"),
         ({"topics": []}, "/topics"),
     ],
     ids=["零條關鍵主張", "超過六條", "文類不在清單", "信心超過1", "沒有主題標籤"],
@@ -187,7 +189,7 @@ def test_brief_的_schema_擋下不合格的產出(change: dict[str, Any], point
 
 def test_brief_的_schema_文類跟_harness_genres_一致() -> None:
     allowed = set(_schema("brief")["$defs"]["genre_id"]["enum"])
-    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
+    assert allowed == {path.stem for path in HARNESS.genre_files()}
 
 
 _INVESTIGATE: dict[str, Any] = {
@@ -351,3 +353,23 @@ def test_rewrite_的_schema_收標題與候選標題() -> None:
     good = {"title": "標題", "title_candidates": ["標題", "另一個"]}
     assert _failures("rewrite", good, "article.json") == set()
     assert _failures("rewrite", {"title": "標題"}, "article.json") == {""}
+
+
+# 舊的 12 種文類的中文名（ADR-0015）：新的 skill 不再提（ADR-0026 §3.4）
+_OLD_GENRE_NAMES = (
+    "新聞快訊", "熱點評論", "教學文", "清單技巧", "解說文", "深度長文",
+    "筆記摘要", "評測比較", "案例拆解", "觀點文", "故事心得", "精選彙整",
+)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_查證段的建議文體列出新的_7_種_寫法是中文名加_slug() -> None:
+    # 工作台認得「中文名（slug）」（chat/desk.py）；報告照這個寫，「寫第 N 個」才帶得過去
+    text = (HARNESS.skill_dir("investigate") / "SKILL.md").read_text(encoding="utf-8")
+    for path in HARNESS.genre_files():
+        meta = read_frontmatter(path)
+        assert f"{meta['name']}（{meta['id']}）" in text
+    assert "建議文體" in text and "建議文類" not in text
+    for skill in ("brief", "investigate", "rewrite"):
+        body = (HARNESS.skill_dir(skill) / "SKILL.md").read_text(encoding="utf-8")
+        assert not [name for name in _OLD_GENRE_NAMES if name in body], skill

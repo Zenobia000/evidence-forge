@@ -26,9 +26,10 @@
     # 讀 job.md（工單 id、預算每次開單都不同），那份錄音重播對不上，要重錄
     # 錄完卸載本機模型：curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","keep_alive":0}'
 
-2026-10-15 重錄的這一份（#100：報告改成一句話、下一步、新的五節、可以寫的題材）：brief 在本機一次就過
-（沒有升級），查證段在 Haiku 一次就過，搜 3 次、列了 4 篇來源，四條關鍵主張都是「查不到」
-（種子是虛構的，模型照實寫查不到，沒有用記憶補），三個可以寫的題材各附抓過的文章。花 US$0.0054。
+2026-10-15 重錄的這一份（#106 T3 第一輪：7 種文體的通用定義改用自己的話寫，查證一節不准多寫註記）：
+brief 在本機一次就過（沒有升級；本機第一次呼叫回錯誤，閘道記一筆 error 後重送），原文判成 `essay`、
+四條關鍵主張；查證段在 Haiku 一次就過，四條都是「查不到」（種子是虛構的，模型照實寫查不到，
+沒有用記憶補），三個可以寫的題材各附抓過的文章，建議文體都在 7 種裡。花 US$0.0052。
 
 重播時模型回應、搜尋、抓取都從錄音回放；讀寫工單、放來源正文、程式檢查照樣真的跑。
 不需要 Ollama，不打任何付費 API，也不連網。
@@ -163,7 +164,10 @@ def test_自己寫的短文_重播跑完分析_報告五節依序_來源都是�
         assert body in bodies, path.name
 
     ledger = _ledger(job_dir / "ledger.jsonl")
-    assert len(ledger) == len(_ledger(RECORDING / "ledger.jsonl"))
+    # 錄音時本機模型第一次呼叫回了錯誤（閘道記一筆 error，Pi 重送同一個請求）；
+    # 重播只回放成功的那一份，所以比對時不算那一筆
+    recorded = [e for e in _ledger(RECORDING / "ledger.jsonl") if e.status != "error"]
+    assert len(ledger) == len(recorded)
     assert {entry.status for entry in ledger if entry.kind != "fetch"} == {"cache_hit"}
 
 
@@ -188,6 +192,27 @@ def test_brief_的關鍵主張每一條都有查證結果_可以寫的題材各�
     assert len(found["topics"]) >= 2
     assert all(set(topic["sources"]) <= listed for topic in found["topics"])
     assert brief["topics"]
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_每個題材的建議文體都是_7_種之一_寫成中文名加_slug(job_dir: Path) -> None:
+    # ADR-0026：新程式只認 7 種；工作台照「中文名（slug）」把它帶進「寫第 N 個」
+    seven = {
+        "essay": "隨筆",
+        "research-review": "研究評論",
+        "product-case": "產品個案",
+        "benchmark": "實證評測",
+        "postmortem": "工程復盤",
+        "explainer": "理論教學",
+        "trend": "趨勢解讀",
+    }
+    report = (_last_attempt(job_dir, "investigate") / "report.md").read_text(encoding="utf-8")
+    suggested = re.findall(r"^- 建議文體：(.+?)（([a-z-]+)）$", report, flags=re.MULTILINE)
+    topics = re.findall(r"^### \d+\.", report, flags=re.MULTILINE)
+    assert len(suggested) == len(topics) >= 2
+    assert all(seven.get(slug) == name for name, slug in suggested)
+    brief = json.loads((_last_attempt(job_dir, "brief") / "brief.json").read_text(encoding="utf-8"))
+    assert brief["genre"]["primary"] in seven
 
 
 def _recorded_llm_calls() -> list[LedgerEntry]:

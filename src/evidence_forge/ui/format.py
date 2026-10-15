@@ -1,4 +1,4 @@
-"""把數字與時間整理成畫面上的字：金額、時長、日期、文類名。
+"""把數字與時間整理成畫面上的字：金額、時長、日期、文體名。
 
 純粹的轉換，不碰檔案、不碰 HTTP。寫法照聊天室 IA（`30-snapshot/plans/design/2026-10-13-chat-ui-ia.md`）。
 """
@@ -8,20 +8,16 @@ from zoneinfo import ZoneInfo
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
-# 文類 id → 中文名（CONTEXT.md〈文類〉的 12 種）；不認得的照原樣顯示
+# 文體 slug → 中文名（ADR-0026 §3.1 的 7 種，跟 `harness/genres/` 的 front matter 同一份，有測試盯著）。
+# 舊工單的 12 種文類 id 不做對照（ADR-0026 §3.4）：認不得的照原字顯示，畫面不會因此壞掉。
 GENRE_NAME = {
-    "news": "新聞快訊",
-    "hot-take": "熱點評論",
-    "tutorial": "教學文",
-    "tips": "清單技巧",
-    "explainer": "解說文",
-    "deep-dive": "深度長文",
-    "notes": "筆記摘要",
-    "review": "評測比較",
-    "case-study": "案例拆解",
-    "opinion": "觀點文",
-    "story": "故事心得",
-    "roundup": "精選彙整",
+    "essay": "隨筆",
+    "research-review": "研究評論",
+    "product-case": "產品個案",
+    "benchmark": "實證評測",
+    "postmortem": "工程復盤",
+    "explainer": "理論教學",
+    "trend": "趨勢解讀",
 }
 
 

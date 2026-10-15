@@ -66,7 +66,7 @@ def _free_port() -> int:
 def _harness(root: Path) -> Path:
     """真的 Pi、ef-tools、skill，只換配方。"""
     root.mkdir()
-    for name in ("pi", "skills", "genres", "conversions"):
+    for name in ("pi", "skills", "genres"):
         (root / name).symlink_to(REAL.root / name)
     (root / "recipes").mkdir()
     (root / "recipes" / "chat-echo.md").write_text(CHAT_ECHO, encoding="utf-8")

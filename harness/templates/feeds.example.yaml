@@ -4,5 +4,5 @@
   params: { url: https://example.com/feed.xml }
   schedule: "0 7 * * *"
   recipe: analyze
-  goal: 整理成給台灣 PM 看的 1,500 字觀點文
+  goal: 整理成給台灣 PM 看的 1,500 字理論教學
   budget: { usd: 0.50, tavily_credits: 20 }
