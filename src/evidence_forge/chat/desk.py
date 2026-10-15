@@ -68,6 +68,7 @@ class Desk:
         on_opened: Callable[[str, str], None] | None = None,
         rewrite_recipe: str = "rewrite",
         on_card: Callable[[str, str, list[dict[str, Any]]], None] | None = None,
+        on_lesson: Callable[[str, list[dict[str, Any]]], None] | None = None,
         max_running_jobs: int = 1,
     ) -> None:
         """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
@@ -83,6 +84,9 @@ class Desk:
         `on_card(對話 id, 卡 id, 新事件)` 在閘道替對話的 agent 寫完編輯卡的事件之後呼叫（ADR-0025 §3.3）：
         對話主機據此推 `ef_card` 給畫面（例如 agent 剛提出的問題卡）。
 
+        `on_lesson(對話 id, 新事件)` 在閘道替對話的 agent 記了一筆 lesson 提議之後呼叫（ADR-0026 §3.3、#114）：
+        對話主機據此推 `ef_lesson` 給畫面（「同意／不要」的小卡）。
+
         `max_running_jobs`：「照這張編輯卡寫稿」開單時，這個對話同一時間最多幾張單在跑
         （跟閘道的 `chat_max_running_jobs` 同一個數字，`ef serve` 傳進來）。
         """
@@ -95,6 +99,7 @@ class Desk:
         self._on_opened = on_opened
         self._rewrite_recipe = rewrite_recipe
         self._on_card = on_card
+        self._on_lesson = on_lesson
         self._max_running_jobs = max_running_jobs
 
     @property
@@ -313,6 +318,11 @@ class Desk:
         """閘道替對話的 agent 寫了編輯卡的事件：通知對話主機（見 `on_card`）。"""
         if self._on_card is not None:
             self._on_card(conversation_id, card_id, events)
+
+    def lesson_changed(self, conversation_id: str, events: list[dict[str, Any]]) -> None:
+        """閘道替對話的 agent 記了一筆 lesson 提議：通知對話主機（見 `on_lesson`）。"""
+        if self._on_lesson is not None:
+            self._on_lesson(conversation_id, events)
 
     def _tidy(self, reason: str) -> str:
         """原因要交給對話的模型：資料目錄的絕對路徑換成相對路徑。"""

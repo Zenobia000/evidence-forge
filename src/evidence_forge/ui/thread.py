@@ -7,6 +7,7 @@
 - `tool`：一行灰字的工具呼叫，可以展開看參數。
 - `error`：開不成工的一行錯誤，原因照工具回的，再補一句能做什麼。
 - `job`：工單。跑著的由畫面照 `ef_job` 事件填進度列；結束的是結果卡。
+- `lesson`：agent 提議的 lesson，還在等創作者按「同意」「不要」（`ui/lessons.py`、#114）；決定之後收成一行 `line`。
 - `qset`、`line`：訪談（#108）。現在要答的一關是問題卡、送出過的是摘要卡（`qset`）；按了沿用、重問是置中的一行
   系統小字（`line`）。它們來自編輯卡的決策紀錄（`ui/interview.py`），照時間插進 Pi 的紀錄裡。
 
@@ -24,7 +25,7 @@ from urllib.parse import urlsplit
 from markupsafe import Markup
 
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, interview, markdown
+from evidence_forge.ui import artifacts, interview, lessons, markdown
 from evidence_forge.ui.format import clock
 
 ATTACHMENT = re.compile(r"〔附檔 (?P<name>[^〕\n]+)〕\n(?P<body>.*?)\n〔附檔結束〕", re.DOTALL)
@@ -45,6 +46,8 @@ TOOL_LABEL = {
     "record_interpreted_answers": "把你打的字記進決策紀錄",
     "add_material": "收下你給的素材",
     "read_card": "讀編輯卡",
+    "read_lessons": "讀角色的 lessons",
+    "propose_lesson": "提議一筆 lesson",
 }
 ERROR_HELP = {
     "analyze": "可以改貼文字，或上傳檔案。",
@@ -108,6 +111,8 @@ class Block:
     # qset：`interview.ActiveSet`（要答的）或 `interview.AnsweredSet`（摘要）；line：`interview.Line`
     qset: interview.ActiveSet | interview.AnsweredSet | None = None
     line: interview.Line | None = None
+    # lesson：`lessons.LessonCard`
+    lesson: lessons.LessonCard | None = None
 
 
 def _text_of(content: Any) -> str:
@@ -215,9 +220,11 @@ def _when(message: dict[str, Any]) -> datetime | None:
     return None
 
 
-def _card_block(item: interview.Item) -> Block:
+def _card_block(item: interview.Item | lessons.Item) -> Block:
     if isinstance(item, interview.Line):
         return Block("line", line=item)
+    if isinstance(item, lessons.LessonCard):
+        return Block("lesson", lesson=item)
     return Block("qset", qset=item)
 
 
@@ -225,7 +232,7 @@ def build(
     data: DataDir,
     jobs: list[artifacts.JobInfo],
     messages: list[dict[str, Any]],
-    card_items: list[tuple[datetime, interview.Item]] | None = None,
+    card_items: list[tuple[datetime, interview.Item | lessons.Item]] | None = None,
 ) -> list[Block]:
     """`card_items`：訪談的項目與它們的時間（`interview.thread_items`），照時間插在比它晚的第一則訊息前面。"""
     cards = {info.job_id: _card(data, info, info is jobs[-1]) for info in jobs}

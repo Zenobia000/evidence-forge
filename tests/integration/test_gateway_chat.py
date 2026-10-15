@@ -189,6 +189,10 @@ class IntakeDesk:
         # 編輯卡的工具另外測（test_gateway_cards.py）
         pass
 
+    def lesson_changed(self, conversation_id: str, events: list[dict[str, Any]]) -> None:
+        # lessons 的提議另外測（test_gateway_lessons.py）
+        pass
+
 
 def _mark_done(data: DataDir, job_id: str) -> None:
     path = data.job_dir(job_id) / "job.md"

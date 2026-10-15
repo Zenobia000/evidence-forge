@@ -75,6 +75,7 @@ CHAT_TOOLS = {
     "job_status",
     "list_personas",
     "read_lessons",
+    "propose_lesson",
     "rewrite",
     "propose_questions",
     "record_interpreted_answers",

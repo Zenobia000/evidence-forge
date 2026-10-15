@@ -12,6 +12,8 @@ export function createState() {
     jobs: {},
     // 每張編輯卡最新的 ef_card 事件：{ seq, events（決策紀錄的筆數）, card }
     cards: {},
+    // lesson 提議最新的 ef_lesson 事件序號（票 114）：提議的內容畫面從串流重抓，這裡只擋舊事件
+    lessons: { seq: 0 },
     // Pi 的狀態：{state, reason, busy, seq}
     pi: { state: "unknown", reason: null, busy: false, seq: 0 },
     // 這條連線看過的最大序號（給沒有分門別類的事件用）
@@ -29,6 +31,7 @@ export function reconnect(state) {
     lastSeq: 0,
     jobs: mapValues(state.jobs, (job) => ({ ...job, seq: 0 })),
     cards: mapValues(state.cards, (card) => ({ ...card, seq: 0 })),
+    lessons: { ...state.lessons, seq: 0 },
     pi: { ...state.pi, seq: 0 },
   };
 }
@@ -63,6 +66,7 @@ function textOf(message) {
 //   live        串流中的回答文字變了（帶 text）
 //   note        要顯示的一行說明（帶 kind: "resume" | "error"、text），kind 為 "clear" 時收掉
 //   title       對話標題變了（帶 title）
+//   （lesson 提議有變：沒有獨立的 effect，只重抓串流，小卡與系統小字從提議紀錄長出來）
 //   card        某張編輯卡變了（帶 card_id、card）；同時會有 refresh thread／panel／list
 //               （問題卡、摘要卡、決策分頁、清單都從決策紀錄長出來）
 export function reduce(state, event) {
@@ -99,6 +103,13 @@ export function reduce(state, event) {
       if (changed) {
         effects.push({ type: "refresh", what: "thread" }, { type: "refresh", what: "list" }, { type: "refresh", what: "panel" });
       }
+      return { state: next, effects };
+    }
+    case "ef_lesson": {
+      if (seq !== null && state.lessons.seq >= seq) return { state, effects };
+      const next = { ...state, lessons: { seq: seq ?? 0 } };
+      // 訂閱時先送一則 events: [] 的現況：連上時畫面本來就會整個重抓，不用再抓
+      if (Array.isArray(event.events) && event.events.length > 0) effects.push({ type: "refresh", what: "thread" });
       return { state: next, effects };
     }
     case "ef_pi": {

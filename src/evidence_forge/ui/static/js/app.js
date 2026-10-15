@@ -10,6 +10,7 @@
 import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
 import { writeOutcome, writeRequest } from "./interview.js";
 import { initInterview } from "./interview-ui.js";
+import { lessonFailure, lessonRequest } from "./lessons.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
 
@@ -671,6 +672,11 @@ document.addEventListener("click", (event) => {
     copyArticle(copy.dataset.copyArticle, copy);
     return;
   }
+  const lesson = target.closest("[data-lesson-action]");
+  if (lesson) {
+    decideLesson(lesson);
+    return;
+  }
   const sendButton = target.closest("[data-send]");
   if (sendButton) {
     send(sendButton.dataset.send);
@@ -749,6 +755,34 @@ async function startWritingFromCard(cardId, events) {
   }
   showNote("error", outcome.text);
   if (outcome.reopen) await interview.openWriteConfirm(cardId);
+}
+
+// lesson 提議的「同意」「不要」（票 114）：按鈕只在這一張小卡上；打對話主機，由閘道寫角色的 lessons.md（同意）或什麼都不寫（不要）。
+// 失敗（角色不見了、已經決定過…）說原因、小卡留著；成功之後串流重抓，小卡換成一行系統小字。
+async function decideLesson(button) {
+  const card = button.closest("[data-lesson]");
+  const action = button.dataset.lessonAction;
+  if (!card || card.getAttribute("aria-busy") === "true") return;
+  let request;
+  try {
+    request = lessonRequest(conversationId, button.dataset.proposal, action);
+  } catch (error) {
+    showNote("error", `${error.message}。重新整理再試一次。`);
+    return;
+  }
+  card.setAttribute("aria-busy", "true");
+  $$("[data-lesson-action]", card).forEach((b) => (b.disabled = true));
+  try {
+    await postJson(request.url, request.body);
+  } catch (error) {
+    showNote("error", lessonFailure(action, error.message));
+    card.removeAttribute("aria-busy");
+    $$("[data-lesson-action]", card).forEach((b) => (b.disabled = false));
+    return;
+  }
+  showNote("error", "");
+  clearTimeout(threadTimer);
+  await loadThread();
 }
 
 const interview = initInterview({

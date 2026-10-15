@@ -17,11 +17,18 @@
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/submit` | 「確認並送出這一關」：`{"answers": [{"question", "choice"｜"other_text", "note"?}]}` → `{"card", "events"}` |
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/keep` | 「沿用」（要重確認的關）：`{}` → `{"card", "events"}` |
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/reask` | 「重問這一關」：`{}` → `{"card", "events"}` |
+| `GET /api/conversations/<id>/lessons` | 這個對話所有的 lesson 提議（含已同意、不要的）：`{"proposals": [提議…]}`（欄位見 `lesson_proposals.Proposal`，另有 `preview`：同意的話會寫進去的那一行） |
+| `POST /api/conversations/<id>/lessons/<提議>/approve` | 「同意」：由閘道把那一行附加到 `authors/<角色>/lessons.md`：`{}` → `{"proposal", "events"}`。冪等：同意過再按不會多寫 |
+| `POST /api/conversations/<id>/lessons/<提議>/reject` | 「不要」：什麼都不寫：`{}` → `{"proposal", "events"}` |
 | `POST /api/conversations/<id>/cards/<卡>/write` | 「照這張編輯卡寫稿」：`{"confirmed_events": 確認時那張卡的 card.events}` → 202 `{"job_id", "status", "persona", "genre", "theme", "card_id", "events", …}` |
 
 編輯卡的三個 POST 是**只有畫面能叫的入口**（ADR-0025 §3.3）：主機直接寫進決策紀錄（`source: ui`），再用 `/ef-card` 通知對話的 Pi；
 閘道的 `/tools/` 沒有它們，對話的 agent 叫不到。卡不是這個對話的、或沒有這張卡一律 404，不說存不存在；
 不合規則（沒有要重確認卻按沿用、選項不在卡上、沒回答到每一張）是 409 或 400，什麼都不寫。
+
+lessons 的「同意」「不要」也是**只有畫面能叫的入口**（ADR-0026 §3.3、#114）：agent 只能經閘道的 `propose_lesson` 提議，
+寫角色資料夾的只有這裡叫起的 `lesson_proposals.approve`。提議不是這個對話的、或根本沒有一律 403，不說存不存在；
+已經不要的再同意、已經同意的再不要是 409；角色不見了、是符號連結寫不進去，什麼都不寫，提議留著。
 
 `write` 也只有畫面能叫（#110）：工作台開寫稿單之前再查一次。卡還不能寫、確認之後又改過（筆數對不上，畫面要請創作者重新確認）、
 這個對話已經有單在跑、分析交不出報告都是 409，什麼都不開；`confirmed_events` 不是 0 以上的整數 400；
@@ -215,6 +222,18 @@ def create_app(
             return await _call(lambda: host.keep_decision(conversation_id, card_id, number))
         if action == "reask":
             return await _call(lambda: host.reask_station(conversation_id, card_id, number))
+        return _error(404, f"沒有這個動作：{action}")
+
+    @app.get("/api/conversations/{conversation_id}/lessons")
+    async def list_lessons(conversation_id: str) -> Any:
+        return await _call(lambda: host.list_lessons(conversation_id))
+
+    @app.post("/api/conversations/{conversation_id}/lessons/{proposal_id}/{action}")
+    async def lesson_action(conversation_id: str, proposal_id: str, action: str) -> Any:
+        if action == "approve":
+            return await _call(lambda: host.approve_lesson(conversation_id, proposal_id))
+        if action == "reject":
+            return await _call(lambda: host.reject_lesson(conversation_id, proposal_id))
         return _error(404, f"沒有這個動作：{action}")
 
     @app.post("/api/conversations/{conversation_id}/cards/{card_id}/write", status_code=202)

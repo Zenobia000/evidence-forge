@@ -34,6 +34,19 @@
 <div class="ch-error" role="alert">{{ icon("warn") }}<span>{{ b.text }}{% if b.help %}。<span class="ch-error__help">{{ b.help }}</span>{% endif %}</span></div>
 {% elif b.kind == "qset" %}
 {{ qset(b.qset) }}
+{% elif b.kind == "lesson" %}
+{% set l = b.lesson %}
+{# agent 提議的 lesson（票 114）：按鈕是畫面的，agent 沒有對應的工具；同意才由閘道寫進角色的 lessons.md #}
+<section class="ch-lesson" data-lesson="{{ l.proposal }}" aria-label="lesson 提議">
+<span class="ch-lesson__kind">{{ icon("pencil") }}要把這筆規則記下來嗎？・角色 {{ l.persona }}・{{ l.time }}</span>
+<p class="ch-lesson__text">{{ l.text }}</p>
+<p class="ch-lesson__why">你當時說的：{{ l.why }}</p>
+<div class="ch-lesson__actions">
+<button class="lm-btn" data-variant="primary" type="button" data-lesson-action="approve" data-proposal="{{ l.proposal }}">{{ icon("check") }}同意</button>
+<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-lesson-action="reject" data-proposal="{{ l.proposal }}">不要</button>
+</div>
+<p class="ch-lesson__note">按同意才會寫進 {{ l.persona }} 的 lessons，之後每次訪談與寫稿都會照著做；agent 不能替你按。</p>
+</section>
 {% elif b.kind == "line" %}
 <span class="ch-event">{{ icon(b.line.icon) }}{{ b.line.text }}</span>
 {% elif b.kind == "job" %}
