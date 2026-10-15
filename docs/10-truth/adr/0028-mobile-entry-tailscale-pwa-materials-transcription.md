@@ -61,13 +61,17 @@
 
 - **8791 上真正擋跨站偽造請求（CSRF）的是同源檢查，不是身分標頭。** 身分標頭像 cookie 一樣是自動帶上的：手機瀏覽器開著別的網站時，那個網站叫瀏覽器打 EF 的 ts.net 網址，serve 一樣會補上創作者的身分。所以 `Origin` 與 `Sec-Fetch-Site` 的檢查在 8791 上不能省。
 - 第三道照舊的理由：表單送得出的那三種 `Content-Type` 不需要瀏覽器先問（預檢），別的網站可以偷送；`application/json` 與 `application/octet-stream` 都要預檢，同源檢查就擋得下。
-- **Android 的分享目標規定用 `multipart/form-data` 送過來（§3.4），伺服器不收。** 這個請求由 PWA 的 service worker 在手機上先接住，把分享的檔案交給分享頁；分享頁再照一般上傳的規矩一個附件一個請求送出去。伺服器從頭到尾不接受表單 POST。
+- **Android 的分享目標規定用 `multipart/form-data` 送過來（§3.4），伺服器不收。** 這個請求由 PWA 的 service worker 在手機上接住、馬上交給分享頁；分享頁再照一般上傳的規矩一個附件一個請求送出去。伺服器從頭到尾不接受表單 POST。
 
 ### 3.4 像 App：PWA
 
 - 聊天室做成 PWA：有 manifest 與圖示，可以加到手機主畫面、全螢幕開。不寫原生 App。
-- **Service worker 只快取靜態檔**（HTML 外殼、CSS、JS、圖示），不快取 API 的回應、對話內容或附件。唯一的例外是分享進來的檔案：只在分享頁送出前暫時拿在 service worker 手上，送出或取消就丟掉，不寫進快取。
-- **Android：** manifest 宣告分享目標（Web Share Target），其他 App 的「分享」選單裡就有 EF，截圖、連結、檔案可以直接分享進來。分享進來先停在一頁：列出要收的東西、選要放進哪個對話（預設開一個新對話），按一下才送出。
+- **Service worker 只快取靜態檔**（HTML 外殼、CSS、JS、圖示），不快取 API 的回應、對話內容或附件。
+- **Android：** manifest 宣告分享目標（Web Share Target），其他 App 的「分享」選單裡就有 EF，截圖、連結、檔案可以直接分享進來。
+  - **service worker 不負責拿著檔案等。** 手機隨時可以把閒著的 service worker 收掉，所以它接住分享的 `multipart/form-data` 請求之後，只做一件事：馬上把檔案交給一個開著的分享頁（沒有開著的就開一個），回應用 303 轉到那一頁，免得重新整理又送一次。
+  - **分享頁拿著檔案等創作者選。** 頁面列出要收的東西、選要放進哪個對話（預設開一個新對話），按一下才把每個檔案照一般上傳一個附件一個請求送出去。
+  - **頁面在送出前被關掉，就什麼都沒送**，跟 §3.9 的「不排隊暫存」同一條規矩。
+  - MDN 的做法是先把檔案暫存在 Cache 或 IndexedDB，再用 `postMessage()` 通知頁面（[share_target - Web app manifest](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Manifest/Reference/share_target)）。實作真的需要這一步時，暫存只到分享頁接手為止，頁面接手就刪，不留在手機上。
 - **iOS：** Safari 不支援分享目標，改用聊天室輸入框的上傳按鈕（相簿、相機、檔案）。這是平台限制，不是遺漏。
 
 ### 3.5 丟進來的先收進素材清單，不自動分析
@@ -162,7 +166,7 @@ EF 跑在家裡那台電腦的 WSL 裡。電腦關機、WSL 睡著、或 Windows
   - 手機不排隊暫存：頁面關了，沒送出的就沒了（待創作者確認，§3.9）。
   - 在對話裡貼網址不再直接開分析，習慣以前那樣的會多說一句「分析這篇」。
   - 音檔超過 25 MB 先拒絕，長的口述要等切段做出來。
-- **影響範圍：** `cli.py`（`ef serve` 多一個給 serve 的埠）、`chat/api.py`（兩套進門規則、附件的上傳、素材清單、斷線狀態）、`ui/pages.py`（上傳上限、PWA 外殼與 manifest、service worker、分享頁）、`src/evidence_forge/gateway/`（轉文字供應商、`save_attachment`、`list_attachments`、`read_attachment`、`analyze` 的輸入、價目表、帳本的種類）、`ui/bills.py`（轉文字一項）、ef-tools 的對話工具；PRD FR-MO、FR-MT、FR-TR、FR-IN-01、FR-IN-04、US-21、NFR-SEC-05、§9；`CONTEXT.md` 的素材清單、附件、口述、隨身入口；BDD `chat.feature` 的「從丟網址到拿到報告」與 `intake.feature` 的「在對話裡丟素材就開始分析」（只丟東西不再直接開分析）。
+- **影響範圍：** `cli.py`（`ef serve` 多一個給 serve 的埠）、`chat/api.py`（兩套進門規則、附件的上傳、素材清單、斷線狀態）、`ui/pages.py`（上傳上限、PWA 外殼與 manifest、service worker、分享頁）、`src/evidence_forge/gateway/`（轉文字供應商、`save_attachment`、`list_attachments`、`read_attachment`、`analyze` 的輸入、價目表、帳本的種類）、`ui/bills.py`（轉文字一項）、ef-tools 的對話工具；PRD FR-MO、FR-MT、FR-TR、FR-IN-01、FR-IN-04、US-21、NFR-SEC-05、§9；`CONTEXT.md` 的素材清單、附件、口述、隨身入口；BDD `chat.feature`、`intake.feature`（只丟東西不開工單、說要分析才開，兩種情境跟這份 ADR 一起改好）。
 - **重新評估觸發：** 要給第二個人用；常常因為家裡電腦連不到而放棄丟東西（P5a 的 Exit Gate 量得到）；轉文字的花費在帳單上變成大項；或常常有超過 25 MB 的口述。
 
 ## 5. 參考
