@@ -607,7 +607,9 @@ def test_從報告的題材寫稿_只帶那個題材的來源_不帶_brief(tmp_p
     assert not (inputs / "brief.md").exists() and not (inputs / "brief.json").exists()
 
 
-def test_報告沒有題材的來源清單_照舊帶全部的來源(tmp_path: Path) -> None:
+def test_報告沒有題材的來源清單_照舊帶全部的來源_但說出來(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     data = _data(tmp_path)
     _analysis(data)
     job_dir = _rewrite_job_dir(data)
@@ -619,9 +621,12 @@ def test_報告沒有題材的來源清單_照舊帶全部的來源(tmp_path: Pa
         encoding="utf-8",
     )
 
-    prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
+    notes = prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
 
     assert sorted(p.name for p in (job_dir / "input" / "sources").iterdir()) == ["S2.md", "S3.md"]
+    # 多帶的來源可能讓本機的上下文放不下：交回給執行器記進事件紀錄，也寫進記錄檔
+    assert [n for n in notes if n.startswith("題材的來源對不上，帶了全部來源")]
+    assert "題材的來源對不上" in caplog.text
 
 
 def test_分鏡整篇不配圖_不帶圖文編排的手藝(tmp_path: Path) -> None:

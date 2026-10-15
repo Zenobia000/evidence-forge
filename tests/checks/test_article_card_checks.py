@@ -138,6 +138,30 @@ def test_原文那一筆後面再接一個編的網址_照樣擋() -> None:
     assert any("invented.example" in reason for reason in _urls(article))
 
 
+def test_front_matter_用引號包起來的網址_不把引號算進網址() -> None:
+    quoted = FRONT.replace("description: 延長開放的成本在人", f'description: "見 {SOURCE}"')
+    single = FRONT.replace("description: 延長開放的成本在人", f"description: '見 {SOURCE}'")
+    assert _urls(quoted + BODY + REFERENCES) == []
+    assert _urls(single + BODY + REFERENCES) == []
+    # 括號與句末標點也一樣
+    assert _urls(FRONT + f"# 標題\n\n見（{SOURCE}）。另見 <{SOURCE}>。\n\n" + REFERENCES) == []
+
+
+def test_參考來源清單後面另起一段文字_有原文或來源時擋() -> None:
+    article = ARTICLE + "\n本文另外參考了作者自己的觀察。\n"
+    assert any("清單以外" in reason for reason in _urls(article))
+
+
+def test_清單項目的縮排續行不算另起一段() -> None:
+    article = FRONT + BODY + f"## 參考來源\n\n- 王小明，〈{TITLE}〉\n  {URL}\n- 〈加班的成本〉，{SOURCE}\n"
+    assert _urls(article) == []
+
+
+def test_沒有原文也沒有來源_清單加一段說明可以() -> None:
+    article = FRONT + BODY + "## 參考來源\n\n本文只根據作者自己的經驗與筆記。\n"
+    assert _urls(article, original=False, known=frozenset(), list_required=False) == []
+
+
 def test_front_matter_裡的網址也算() -> None:
     article = FRONT.replace("description: 延長開放的成本在人", "description: 見 https://invented.example/z") + BODY + REFERENCES
     assert any("invented.example" in reason for reason in _urls(article))

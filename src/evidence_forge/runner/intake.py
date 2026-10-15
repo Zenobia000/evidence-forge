@@ -437,7 +437,7 @@ def open_job_from(
       「上一張單是不是這個對話的」由閘道檢查，這裡不管。
     - 再改照編輯卡寫的文章（#110、ADR-0025 §3.4「改稿也是新工單、新快照」）：拿著卡的鎖讀一份**新的**快照
       放進新工單。卡在上一版寫好之後又改過（事件筆數不一樣）就不開，丟 `CardChanged`，請創作者看過編輯卡、
-      按「照這張編輯卡寫稿」寫新的一篇；沒改過，新快照跟上一版的一樣。文體由第 1 關定，改稿要換文體也丟 `CardChanged`。
+      按「照這張編輯卡寫稿」寫新的一篇；沒改過，新快照跟上一版的一樣。文體與角色由第 1 關定，改稿要換也丟 `CardChanged`。
 
     錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
     """
@@ -469,9 +469,15 @@ def open_job_from(
     taken: cards.Snapshot | None = None
     materials: dict[str, bytes] = {}
     if same and parent.card is not None:
+        # 文體與角色都是第 1 關的決定（ADR-0025 §3.2）：改稿不能悄悄換掉
         if genre is not None and genre != parent.target_genre:
             raise CardChanged(
                 f"這篇照編輯卡寫，文體由第 1 關定（{parent.target_genre}）：要換成 {genre}，"
+                "改編輯卡第 1 關，再按照這張編輯卡寫稿"
+            )
+        if persona is not None and persona != (parent.persona or AUTHOR):
+            raise CardChanged(
+                f"這篇照編輯卡寫，角色由第 1 關定（{parent.persona or AUTHOR}）：要換成 {persona}，"
                 "改編輯卡第 1 關，再按照這張編輯卡寫稿"
             )
         taken, materials = _fresh_snapshot(data, parent_dir, parent)

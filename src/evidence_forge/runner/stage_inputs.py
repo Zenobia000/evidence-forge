@@ -36,6 +36,7 @@ agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -60,6 +61,11 @@ from evidence_forge.persona_spec import (
     genre_file,
 )
 from evidence_forge.write_once import write_once
+
+_log = logging.getLogger(__name__)
+
+# 拿不到題材的來源清單、只好帶全部來源時交回給執行器的說明（記進事件紀錄）
+ALL_SOURCES_NOTE = "題材的來源對不上，帶了全部來源"
 
 # 工單沒指定角色時用創作者自己（舊的 job.md 沒有 persona 欄）
 AUTHOR = "me"
@@ -263,14 +269,22 @@ def _card_meta(job_dir: Path) -> dict[str, Any] | None:
     return found if isinstance(found, dict) else None
 
 
+def _report_topic(card: dict[str, Any]) -> int | None:
+    """從報告第 N 個題材開始的卡的 N；不是從報告開始是 None。"""
+    origin = card.get("origin")
+    topic = origin.get("topic") if isinstance(origin, dict) and origin.get("kind") == "report_topic" else None
+    if isinstance(topic, bool) or not isinstance(topic, int) or topic < 1:
+        return None
+    return topic
+
+
 def _topic_sources(parent: Path, card: dict[str, Any]) -> set[str] | None:
     """從報告第 N 個題材開始的卡：分析 `sources.json` 的 `topics` 裡那個題材列的來源編號。
 
     不是從報告開始、或上一張單沒有過了檢查的來源清單、或題材編號對不上：None（照舊帶全部的來源）。
     """
-    origin = card.get("origin")
-    topic = origin.get("topic") if isinstance(origin, dict) and origin.get("kind") == "report_topic" else None
-    if isinstance(topic, bool) or not isinstance(topic, int) or topic < 1:
+    topic = _report_topic(card)
+    if topic is None:
         return None
     listed: Path | None = None
     for report in _passed_reports(parent):
@@ -360,10 +374,15 @@ def put_once(job_dir: Path, relative: str, data: str | bytes) -> None:
         partial.unlink()
 
 
-def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> None:
-    """把這張單用得到的參考資料放進 `input/`；放過一次（有 `PREPARED`）就整段跳過。"""
+def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> list[str]:
+    """把這張單用得到的參考資料放進 `input/`；放過一次（有 `PREPARED`）就整段跳過。
+
+    回傳要讓人知道的事（執行器記進事件紀錄），例如拿不到題材的來源清單、只好帶全部來源：
+    多帶的來源可能讓本機模型的上下文放不下，寫稿就會升級到雲端。
+    """
+    notes: list[str] = []
     if (job_dir / PREPARED).is_file():
-        return
+        return notes
     placed: list[str] = []
 
     def put(relative: str, content: str | bytes) -> None:
@@ -394,6 +413,11 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
         carried = carried_files(parent)
         card_job = own_card is not None or CARD_JSON in carried
         topic = _topic_sources(parent, own_card) if own_card is not None else None
+        if topic is None and own_card is not None and _report_topic(own_card) is not None:
+            # 內容比預算重要：照舊帶全部的來源，但說出來
+            note = f"{ALL_SOURCES_NOTE}：分析工單 {job.parent} 沒有第 {_report_topic(own_card)} 個題材的來源清單"
+            _log.warning("工單 %s：%s", job_dir.name, note)
+            notes.append(note)
         for relative, source in carried.items():
             if relative == PREVIOUS_ARTICLE and not job.feedback:
                 # 沒有意見就不是再改（例：換角色重寫）：不放上一版，免得照著上一版抄
@@ -450,3 +474,4 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
 
     # 最後才寫：寫之前當機，下次重開會從頭再放一次（已經放好的檔沿用）
     write_once(job_dir / PREPARED, json.dumps({"files": placed}, ensure_ascii=False))
+    return notes

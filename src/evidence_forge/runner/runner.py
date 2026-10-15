@@ -594,7 +594,7 @@ class Runner:
 
         try:
             # agent 讀不到 harness/ 與作家設定：開段之前放進工單的 input/（ADR-0015、ADR-0018）
-            stage_inputs.prepare_inputs(self.harness, self.data, job_dir, doc.job)
+            notes = stage_inputs.prepare_inputs(self.harness, self.data, job_dir, doc.job)
         except stage_inputs.InputError as exc:
             if doc.job.status == "queued":
                 doc = self._set(job_dir, doc, "running", "開始")
@@ -607,6 +607,11 @@ class Runner:
                 result=JobResult(outcome="failed", reason=reason),
             )
             return
+
+        for warning in notes:
+            # 放參考資料時要讓人知道的事（例：拿不到題材的來源清單，帶了全部來源）
+            _log.warning("工單 %s：%s", job_dir.name, warning)
+            events.append(job_dir, Event(ts=self.clock(), kind="stage", message=warning))
 
         self._ensure_agent_dir()
         start, resumed = 0, None

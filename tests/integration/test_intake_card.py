@@ -197,6 +197,17 @@ def test_照編輯卡寫的文章改稿不能換文體_要改編輯卡第_1_關(
     assert same.target_genre == "research-review"
 
 
+def test_照編輯卡寫的文章改稿不能換角色_要改編輯卡第_1_關(data: DataDir, cid: str) -> None:
+    card_id = decided_card(data, cid, persona="nightowl")
+    first = _written(data, cid, card_id)
+
+    with pytest.raises(CardChanged, match="改編輯卡第 1 關"):
+        open_job_from(data, REWRITE, first, now=NOW, persona="me", feedback="換個口吻", conversation=cid)
+    # 角色一樣不算換
+    same = open_job_from(data, REWRITE, first, now=NOW, persona="nightowl", feedback="改短", conversation=cid)
+    assert same.persona == "nightowl"
+
+
 def test_作者素材的檔不見了_不開單_說是哪一份(data: DataDir, cid: str) -> None:
     card_id = decided_card(data, cid, material=NOTES)
     cards.material_path(data, cid, card_id, "M1").unlink()

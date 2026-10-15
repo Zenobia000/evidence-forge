@@ -33,8 +33,10 @@ from evidence_forge.checks.text import mask_code, normalize_for_match, normalize
 
 # 文章結尾那一節的標題；`harness/skills/rewrite/SKILL.md` 照這個寫
 REFERENCES_HEADING = "參考來源"
-# 參考來源裡的網址：到空白、全形標點或 Markdown 的括號為止
-_URL = re.compile(r"https?://[^\s<>\]）】」，。、；]+")
+# 參考來源裡的網址：到空白、引號、全形標點或 Markdown 的括號為止
+_URL = re.compile(r"https?://[^\s<>\]）】」，。、；\"']+")
+# 網址結尾黏著的標點與括號（句子裡的「見 https://…）。」）：不算網址
+_URL_TAIL = ").,;:!?]}"
 
 
 def split_references(article: str) -> tuple[str, str | None, int | None]:
@@ -541,6 +543,16 @@ def check_reference_urls(
                 line,
             )
         )
+    prose = _prose(references)
+    if list_required and listed and prose:
+        failures.append(
+            _fail(
+                f"「{REFERENCES_HEADING}」除了清單還有別的文字（{prose[0][:40]}）：清單以外的說明只在沒有原文、"
+                "也沒有分析抓過的來源時可以寫",
+                file,
+                line,
+            )
+        )
     for entry in _entries(references) if listed else []:
         if _URL.findall(entry):
             continue
@@ -550,7 +562,7 @@ def check_reference_urls(
     if known_urls is not None:
         reported: set[str] = set()
         for found in _URL.findall(mask_code(article)):
-            url = found.rstrip(").,")
+            url = found.rstrip(_URL_TAIL)
             normalized = normalize_url(url)
             if normalized in known_urls or normalized in reported:
                 continue
@@ -566,6 +578,31 @@ def check_reference_urls(
     if failures:
         return failures
     return [CheckEntry(check="C5", status="pass", reason="參考來源每一筆都有網址，文章裡的網址都是這篇真的有的來源")]
+
+
+def _prose(references: str) -> list[str]:
+    """參考來源那一節裡，清單以外的段落（一段一筆，取它的第一行）。
+
+    照 Markdown 的區塊算：清單項目底下縮排的行、與緊接在項目後面（中間沒有空行）的行是那一項的續行；
+    空行之後沒縮排的行是另起一段，不屬於清單。
+    """
+    found: list[str] = []
+    in_item = False
+    after_blank = False
+    for text in references.split("\n"):
+        if not text.strip():
+            after_blank = True
+            continue
+        if _ITEM.match(text):
+            in_item = True
+        elif in_item and (text.startswith(("  ", "\t")) or not after_blank):
+            pass
+        else:
+            in_item = False
+            if after_blank or not found:
+                found.append(text.strip())
+        after_blank = False
+    return found
 
 
 def check_sentence_patterns(

@@ -398,3 +398,21 @@ def test_照編輯卡寫的文章少了_front_matter_帶著檢查結果回去修
     assert job.result is not None and job.result.outcome == "complete", job.result
     assert [r.passed for r in _reports(world, job_id)] == [False, True]
     assert "front matter" in _prompts(world)[1]
+
+
+def test_報告沒有題材的來源清單_帶了全部來源_事件紀錄裡說出來(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_script())
+    analysis = _analysis(world)  # 這張分析的 sources.json 沒有題材的來源清單
+    cid = conversations.create(world.data, NOW).id
+    conversations.add_job(world.data, cid, conversations.ConversationJob(job_id=analysis, ts=NOW))
+    card_id = decided_card(world.data, cid, origin={"kind": "report_topic", "job_id": analysis, "topic": 1})
+    job_id = open_job_from_card(
+        world.data, world.runner.recipes["rewrite"], cards.snapshot(world.data, cid, card_id), now=NOW, conversation=cid
+    ).id
+    world.runner.run_once()
+
+    events = (world.data.job_dir(job_id) / "events.jsonl").read_text(encoding="utf-8")
+    assert "題材的來源對不上，帶了全部來源" in events
+    assert (world.data.job_dir(job_id) / "input" / "sources" / "S2.md").is_file()
