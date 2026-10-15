@@ -223,6 +223,8 @@ def _serve(args: argparse.Namespace) -> int:
             on_opened=host.job_opened,
             # 閘道替 agent 寫了編輯卡：推給畫面（ADR-0025 §3.3）
             on_card=host.card_changed,
+            # 閘道替 agent 記了 lesson 提議：畫面放「同意／不要」的小卡（ADR-0026 §3.3）
+            on_lesson=host.lesson_changed,
             # 畫面的「照這張編輯卡寫稿」跟閘道的工具守同一個上限（#110）
             max_running_jobs=config.chat_max_running_jobs,
         )

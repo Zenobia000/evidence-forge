@@ -228,6 +228,41 @@ def write_atomic_at(dir_fd: int, name: str, content: str) -> None:
         raise
 
 
+def append_text(folder: Path, name: str, content: str) -> None:
+    """在 `folder` 底下的 `name` 檔尾附加 `content`（沒有就建）：只增不改，不重寫整個檔。
+
+    全程用 `folder` 的 fd，檔本身用 `O_NOFOLLOW` 開、`fstat` 確認是一般檔案：
+    `folder` 或 `name` 是（或剛被換成）符號連結，就不寫、也不寫到連結指到的地方。
+    檔尾不是換行（上一筆寫到一半，或手改過）先補一個換行，這一筆才不會黏在上一行後面；
+    `content` 用一次 `O_APPEND` 的 write 寫完。
+    """
+    _require()
+    if not name or "/" in name or name in (".", "..") or "\x00" in name:
+        raise ValueError(f"檔名不對：{name!r}")
+    with open_root(folder) as root:
+        if root is None:
+            raise FolderChanged(f"{folder.name} 不是一個真的資料夾（被換成連結或移走了）")
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(name, flags, 0o666, dir_fd=root)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.EMLINK):
+                raise EntryRefused(f"{name} 是符號連結，不寫") from exc
+            raise
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise EntryRefused(f"{name} 不是一般檔案，不寫")
+            size = os.fstat(fd).st_size
+            data = content.encode("utf-8")
+            if size > 0 and os.pread(fd, 1, size - 1) != b"\n":
+                data = b"\n" + data
+            written = os.write(fd, data)
+        finally:
+            os.close(fd)
+    if written != len(data):
+        raise OSError(f"只寫進 {written}／{len(data)} bytes：{name}")
+
+
 def make_dir(dir_fd: int, name: str) -> int:
     """在 `dir_fd` 底下建一個新資料夾（`mkdir` 搶位：已經有任何東西就丟 `FileExistsError`），回它的 fd。
 
@@ -270,3 +305,7 @@ def remove_entry(dir_fd: int, name: str) -> None:
 
 class FolderChanged(OSError):
     """檢查過的資料夾在動手之前被換掉了。"""
+
+
+class EntryRefused(OSError):
+    """要寫的檔是符號連結或不是一般檔案，沒有寫。"""

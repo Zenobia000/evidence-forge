@@ -84,6 +84,12 @@ HARD_RULES = {
     "文體只有七種": "Never put anything outside the seven on the card",
     "口述在聊天裡確認": "do not propose a confirmation card",
     "讀不到 lessons 照樣往下": "continue the interview without them",
+    # lessons 只提議、不替創作者存（ADR-0026 §3.3、決定 G，#114）
+    "lesson 只提議": "You only propose; the creator decides, on screen, whether it is kept.",
+    "不說已經存了": "Never say a lesson is saved.",
+    "agent 沒有同意的工具": "You have no tool to approve or dismiss it.",
+    "一次指正最多一筆": "At most one proposal per creator correction.",
+    "只在退件或被否決的方向之後提議": "Propose after one of these, and only then",
 }
 
 

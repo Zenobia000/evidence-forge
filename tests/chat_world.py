@@ -6,6 +6,7 @@
   一輪回答發 `agent_start` → 使用者訊息的 `message_end` → 助理訊息的 `message_end` → `agent_settled`。
   回答要花多久看設定的 `turn_s`（在另一條執行緒跑，stdin 照樣在讀）。
 - `/ef-card <卡> <n> <動作> <關>`：編輯卡的通知，跟 `/ef-job-done` 一樣馬上處理、照紀錄去重、開一輪。
+- `/ef-lesson <提議> <approved|rejected> <角色>`：lesson 提議的通知：照提議與決定去重，放一則 `custom` 訊息，**不開一輪**。
 - `/ef-job-done <工單>`：擴充指令，馬上處理（正在回答也一樣）。紀錄裡已經有這張單的 `ef-job` 通知就什麼都不做；
   沒有就放一則 `custom` 訊息（`message_end` 事件），再開一輪回答（正在回答就排在後面）。
 - `get_messages`：回完整紀錄；`slow_get_messages_s` 讓它晚一點回，後送的指令的回應會先到。
@@ -154,6 +155,18 @@ def handle(command):
             keep({"role": "custom", "customType": "ef-card", "content": "[ef-card] " + text,
                   "display": True, "details": details})
             start_or_queue({"kind": "job", "job_id": parts[1]})
+        respond(command, data={"disposition": "handled"})
+        return
+    if text.startswith("/ef-lesson "):
+        parts = text.split()
+        details = {"proposal": parts[1], "decision": parts[2], "persona": parts[3]}
+        already = any(
+            m.get("role") == "custom" and m.get("customType") == "ef-lesson" and m.get("details") == details
+            for m in messages
+        )
+        if not already:
+            keep({"role": "custom", "customType": "ef-lesson", "content": "[ef-lesson] " + text,
+                  "display": True, "details": details})
         respond(command, data={"disposition": "handled"})
         return
     if text.startswith("/ef-job-done "):

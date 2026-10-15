@@ -10,6 +10,8 @@
 //   （新文章從訪談開始）；照編輯卡寫稿是 #110。
 // - 編輯卡的 propose_questions、record_interpreted_answers、add_material、read_card 與 /ef-card 指令在 cards.ts
 //   （ADR-0025 §3.3），這裡一起註冊。
+// - lessons 的 propose_lesson 與 /ef-lesson 指令在 lessons.ts（ADR-0026 §3.3、#114），這裡一起註冊：agent 只能提議，
+//   同意與不要是畫面的按鈕，由閘道寫角色的 lessons.md。
 // - /ef-job-done <工單 id>：對話主機在工單結束時送進來的指令（不是模型能叫的工具）。
 //   它向閘道問那張單的狀態，用 sendMessage 把一則 ef-job 通知放進對話並叫模型接著回答。
 //   同一張單已經通知過（對話紀錄裡已有那則 ef-job）就什麼都不做，所以主機可以放心重送：
@@ -19,6 +21,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCardTools } from "./cards.ts";
+import { registerLessonTools } from "./lessons.ts";
 
 type CallGateway = (tool: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -215,6 +218,7 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
   );
 
   registerCardTools(pi, callGateway);
+  registerLessonTools(pi, callGateway);
 
   pi.registerCommand("ef-job-done", {
     description: "Internal: the chat host reports that a job of this conversation ended.",

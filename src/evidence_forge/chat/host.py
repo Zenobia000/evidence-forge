@@ -30,6 +30,11 @@
   （Pi 沒開就先開）。ef-tools 放一則 `ef-card` 通知、觸發一輪，agent 讀編輯卡接著往下；同一筆照紀錄去重。
   沒送成只推一則 `ef_error`，不重試：點選已經記下了，創作者在聊天裡說一句 agent 一樣讀得到。
 - 不管誰寫的（畫面，或閘道替 agent 寫完叫 `card_changed`），都推一則 `ef_card` 給畫面。
+- lessons 的提議（#114、ADR-0026 §3.3）同一個樣子：agent 提議（閘道的 `propose_lesson`）→ `lesson_changed` 推 `ef_lesson`
+  給畫面，畫面放「同意／不要」的小卡；創作者按了，這裡直接叫 `lesson_proposals.py`（同意由閘道寫角色的 `lessons.md`，
+  不要什麼都不寫），推 `ef_lesson`，再排一則 `/ef-lesson <提議> <approved|rejected> <角色>` 給 Pi：ef-tools 只在對話裡
+  放一則 `ef-lesson` 通知，**不開新的一輪**（不為了一個按鈕多花一次模型）；agent 下一輪就讀得到。
+  同意與不要的入口只在這裡（畫面的 API），閘道的 `/tools/` 拿任何鑰匙來都 403。
 - 「照這張編輯卡寫稿」（#110）也是畫面按的：交給工作台的 `write_from_card` 開寫稿單（`use_desk` 接上），
   開了的單照一般工單推進度、結束時送 `/ef-job-done`。對話的 agent 叫不到它。
 
@@ -49,6 +54,8 @@
 - `ef_conversation`：標題變了（`{"title"}`）。
 - `ef_card`：`{"card_id", "events": [這次寫的事件], "card": 編輯卡}`；`events` 的欄位見 `cards.py`，`card` 是 `card.json`
   的樣子（`cards.CardState`）。訂閱時每張卡先送一則 `events: []` 的現況。畫面照 `card` 整張換掉就好。
+- `ef_lesson`：`{"events": [這次寫的事件], "proposals": [這個對話所有 lesson 提議現在的樣子]}`（欄位見
+  `lesson_proposals.Proposal`）。訂閱時先送一則 `events: []` 的現況（有提議才送）。畫面照 `proposals` 整份換掉就好。
 - `ef_error`：`{"message"}`，例如 Pi 開不起來、指令被 Pi 拒絕。
 """
 
@@ -64,7 +71,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from evidence_forge import cards, conversations
+from evidence_forge import cards, conversations, lesson_proposals
 from evidence_forge.budget import micros_to_usd
 from evidence_forge.chat.pi_rpc import (
     PiExited,
@@ -440,6 +447,7 @@ class ConversationHost:
                     _card_event(card.card_id, [], card)
                     for card in cards.list_cards(self._data, conversation_id)
                 ),
+                *self._lesson_snapshot(conversation_id),
             ]
             for event in snapshot:
                 subscription.put(self._stamp(event))
@@ -519,6 +527,62 @@ class ConversationHost:
             return
         self._emit(conversation_id, _card_event(card_id, events, card))
 
+    # --- lessons 的提議（ADR-0026 §3.3、#114） -----------------------------------------------
+
+    def list_lessons(self, conversation_id: str) -> dict[str, Any]:
+        """這個對話所有的 lesson 提議（含已同意、不要的）。"""
+        self._read(conversation_id)
+        return {"proposals": self._proposals(conversation_id)}
+
+    def approve_lesson(self, conversation_id: str, proposal_id: object) -> dict[str, Any]:
+        """畫面的「同意」：由閘道（這裡）把那一行附加到角色的 `lessons.md`。錯誤丟 `ToolRejected`。"""
+        self._read(conversation_id)
+        written = lesson_proposals.approve(self._data, conversation_id, proposal_id, now=self._clock())
+        return self._lesson_decided(conversation_id, written, "approved")
+
+    def reject_lesson(self, conversation_id: str, proposal_id: object) -> dict[str, Any]:
+        """畫面的「不要」：什麼都不寫。"""
+        self._read(conversation_id)
+        written = lesson_proposals.reject(self._data, conversation_id, proposal_id, now=self._clock())
+        return self._lesson_decided(conversation_id, written, "rejected")
+
+    def lesson_changed(self, conversation_id: str, events: list[dict[str, Any]]) -> None:
+        """閘道替對話的 agent 記了 lesson 提議（工作台的 `on_lesson`）：推給畫面。可能在閘道的執行緒上，不做慢的事。"""
+        try:
+            proposals = self._proposals(conversation_id)
+        except ToolRejected:
+            return
+        self._emit(conversation_id, _lesson_event(events, proposals))
+
+    def _proposals(self, conversation_id: str) -> list[dict[str, Any]]:
+        return [
+            {**p.model_dump(mode="json"), "preview": p.preview}
+            for p in lesson_proposals.read_proposals(self._data, conversation_id)
+        ]
+
+    def _lesson_snapshot(self, conversation_id: str) -> list[Event]:
+        try:
+            proposals = self._proposals(conversation_id)
+        except (ToolRejected, OSError, ValueError):
+            return []
+        return [_lesson_event([], proposals)] if proposals else []
+
+    def _lesson_decided(
+        self, conversation_id: str, written: lesson_proposals.Written, decision: str
+    ) -> dict[str, Any]:
+        """畫面按完：推給畫面，再排一則 `/ef-lesson` 給這個對話的 Pi（工作執行緒送，不讓畫面等 Pi 開起來）。
+        冪等的重按（沒有新事件）不再通知 agent。"""
+        self.lesson_changed(conversation_id, written.events)
+        proposal = written.proposal
+        if written.events:
+            self._enqueue(
+                ("lesson", f"{conversation_id} {proposal.id} {decision} {proposal.persona}")
+            )
+        return {
+            "proposal": {**proposal.model_dump(mode="json"), "preview": proposal.preview},
+            "events": written.events,
+        }
+
     def _clicked(
         self, conversation_id: str, written: cards.Written, action: str, station: object
     ) -> dict[str, Any]:
@@ -533,8 +597,8 @@ class ConversationHost:
             self._enqueue(("card", f"{conversation_id} {written.card_id} {last} {action} {station}"))
         return {"card": written.card.model_dump(mode="json"), "events": written.events}
 
-    def _deliver_card(self, conversation_id: str, command: str) -> None:
-        """把 `/ef-card …` 送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
+    def _deliver_card(self, conversation_id: str, command: str, what: str = "編輯卡") -> None:
+        """把 `/ef-card …`（或 `/ef-lesson …`）送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
         try:
             with self._conversation_lock(conversation_id):
                 live = self._ensure(conversation_id)
@@ -552,7 +616,7 @@ class ConversationHost:
             _log.warning("編輯卡的通知沒送到對話 %s", conversation_id, exc_info=True)
             self._emit(
                 conversation_id,
-                {"type": "ef_error", "message": f"編輯卡的變化已經記下，但沒通知到對話：{exc}"},
+                {"type": "ef_error", "message": f"{what}的變化已經記下，但沒通知到對話：{exc}"},
             )
 
     # --- 事件的入口（執行器、告示板、工作台） --------------------------------------------
@@ -804,6 +868,9 @@ class ConversationHost:
                 elif kind == "card":
                     conversation_id, command = value.split(" ", 1)
                     self._deliver_card(conversation_id, f"/ef-card {command}")
+                elif kind == "lesson":
+                    conversation_id, command = value.split(" ", 1)
+                    self._deliver_card(conversation_id, f"/ef-lesson {command}", "lesson")
             except Exception:
                 _log.exception("對話主機處理 %s %s 時出錯", kind, value)
 
@@ -1061,3 +1128,7 @@ def _notice_job(message: dict[str, Any]) -> str | None:
 
 def _card_event(card_id: str, events: list[dict[str, Any]], card: cards.CardState) -> Event:
     return {"type": "ef_card", "card_id": card_id, "events": events, "card": card.model_dump(mode="json")}
+
+
+def _lesson_event(events: list[dict[str, Any]], proposals: list[dict[str, Any]]) -> Event:
+    return {"type": "ef_lesson", "events": events, "proposals": proposals}

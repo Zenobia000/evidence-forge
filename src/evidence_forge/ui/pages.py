@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePath
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -43,7 +43,7 @@ from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.harness import default_harness
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, bills, costs, interview, personas, thread
+from evidence_forge.ui import artifacts, bills, costs, interview, lessons, personas, thread
 from evidence_forge.ui.format import clock as format_clock
 from evidence_forge.ui.format import format_usd, month_day_clock, relative_day
 
@@ -147,6 +147,13 @@ def install(
             return host.list_cards(conversation_id), None
         except (ToolRejected, OSError, ValueError) as exc:
             return [], getattr(exc, "message", None) or str(exc)
+
+    def read_lessons(conversation_id: str) -> list[dict[str, Any]]:
+        """這個對話的 lesson 提議；讀不到就當沒有，不讓它拖垮整個串流。"""
+        try:
+            return cast(list[dict[str, Any]], host.list_lessons(conversation_id)["proposals"])
+        except (ToolRejected, OSError, ValueError):
+            return []
 
     def card_events(conversation_id: str, card_list: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         found: dict[str, list[dict[str, Any]]] = {}
@@ -280,7 +287,10 @@ def install(
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
         card_list, _ = await asyncio.to_thread(read_cards, conversation_id)
         events = await asyncio.to_thread(card_events, conversation_id, card_list)
-        items = interview.thread_items(card_list, events)
+        items: list[tuple[datetime, interview.Item | lessons.Item]] = [
+            *interview.thread_items(card_list, events),
+            *lessons.thread_items(await asyncio.to_thread(read_lessons, conversation_id)),
+        ]
         blocks = await asyncio.to_thread(thread.build, data, jobs, history["messages"], items)
         summary = await asyncio.to_thread(host.summary, conversation_id)
         latest = jobs[-1] if jobs else None
