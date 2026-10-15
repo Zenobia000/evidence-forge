@@ -178,6 +178,22 @@ def test_別的對話的提議_與不存在的提議_一律_403_什麼都不寫(
 
 
 @pytest.mark.promise("FR-RW-04")
+def test_兩個對話各有自己的_L1_從_B_同意_寫的是_B_的那一行_A_的提議原封不動(world: World) -> None:
+    mine = world.propose(RULE, cid=world.cid).proposal
+    theirs = world.propose("第 5 篇｜標題太長 → 標題限 20 字", cid=world.other).proposal
+    assert (mine.id, theirs.id) == ("L1", "L1")  # 兩邊編號重疊：只能靠對話分開
+    before = world.raw(world.cid)
+
+    lesson_proposals.approve(world.data, world.other, "L1", now=LATER)
+
+    assert world.lessons.read_text(encoding="utf-8") == "- 2026-10-16｜第 5 篇｜標題太長 → 標題限 20 字\n"
+    assert RULE not in world.lessons.read_text(encoding="utf-8")
+    assert world.raw(world.cid) == before
+    assert lesson_proposals.read_proposals(world.data, world.cid)[0].status == "pending"
+    assert [p.status for p in lesson_proposals.read_proposals(world.data, world.other)] == ["approved"]
+
+
+@pytest.mark.promise("FR-RW-04")
 @pytest.mark.parametrize("persona", ["nobody", "Nightowl", "me", "../nightowl", "", 7, None])
 def test_角色不存在_或名稱不合_不記提議_什麼都不寫(world: World, persona: object) -> None:
     caught = _rejected(lambda: world.propose(persona=persona))
@@ -264,7 +280,7 @@ def test_在等的提議太多_409_請創作者先處理(world: World) -> None:
     assert len(world.raw()) == lesson_proposals.MAX_PENDING
 
 
-def test_角色資料夾是符號連結_提議與同意都拒絕(world: World, tmp_path: Path) -> None:
+def test_角色資料夾是符號連結_提議拒絕(world: World, tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     link = world.data.authors / "linked"
@@ -274,6 +290,23 @@ def test_角色資料夾是符號連結_提議與同意都拒絕(world: World, t
 
     assert caught.status == 403
     assert list(outside.iterdir()) == []
+    assert world.raw() == []
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_提議的時候是真的資料夾_之後換成符號連結_同意拒絕_不寫到連結指到的地方(world: World, tmp_path: Path) -> None:
+    proposal = world.propose().proposal
+    elsewhere = tmp_path / "elsewhere"
+    world.folder.rename(elsewhere)
+    world.folder.symlink_to(elsewhere, target_is_directory=True)
+
+    caught = _rejected(lambda: lesson_proposals.approve(world.data, world.cid, proposal.id, now=LATER))
+
+    assert caught.status == 403
+    assert not (elsewhere / "lessons.md").exists()
+    assert sorted(p.name for p in elsewhere.iterdir()) == ["voice.md"]
+    assert lesson_proposals.read_proposals(world.data, world.cid)[0].status == "pending"
+    assert [e["type"] for e in world.raw()] == ["proposed"]
 
 
 def test_lessons_md_是符號連結_同意拒絕_不寫到連結指到的地方_提議留著(world: World, tmp_path: Path) -> None:
@@ -304,6 +337,74 @@ def test_殘行與壞掉的行跳過_編號接著最大的往下(world: World) -
 def test_沒有這個對話_404(world: World) -> None:
     assert _rejected(lambda: lesson_proposals.read_proposals(world.data, "c-nope")).status == 404
     assert _rejected(lambda: world.propose(cid="c-nope")).status == 404
+
+
+@pytest.mark.promise("FR-RW-04")
+@pytest.mark.parametrize("content", [b"- \xff\xfe not utf-8\n", b"x" * (confined.MAX_TEXT_BYTES + 1)])
+def test_lessons_md_讀不懂_同意_409_什麼都不寫_提議還在(world: World, content: bytes) -> None:
+    proposal = world.propose().proposal
+    world.lessons.write_bytes(content)
+
+    caught = _rejected(lambda: lesson_proposals.approve(world.data, world.cid, proposal.id, now=LATER))
+
+    assert caught.status == 409
+    assert world.lessons.read_bytes() == content
+    assert lesson_proposals.read_proposals(world.data, world.cid)[0].status == "pending"
+
+
+def test_寫進去之後當機_檔案又讀不懂_重來也不會附加第二次(world: World) -> None:
+    proposal = world.propose().proposal
+    # 那一行已經寫進去了，檔裡另外有一個壞掉的位元組；approved 事件還沒記
+    world.lessons.write_bytes(("- 2026-10-16｜" + RULE + "\n").encode() + b"\xff\n")
+
+    caught = _rejected(lambda: lesson_proposals.approve(world.data, world.cid, proposal.id, now=LATER))
+
+    assert caught.status == 409
+    assert world.lessons.read_bytes().count(RULE.encode()) == 1
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_兩個對話提議同一個角色同一天的同一句_第二次同意只標已經有_不重複寫(world: World) -> None:
+    first = world.propose(cid=world.cid).proposal
+    second = world.propose(cid=world.other).proposal
+
+    one = lesson_proposals.approve(world.data, world.cid, first.id, now=LATER)
+    two = lesson_proposals.approve(world.data, world.other, second.id, now=LATER)
+
+    assert world.lessons.read_text(encoding="utf-8").count(RULE) == 1
+    assert (one.proposal.already_present, two.proposal.already_present) == (False, True)
+    assert two.proposal.status == "approved"
+    approved = [e for e in world.raw(world.other) if e["type"] == "approved"]
+    assert [e["already_present"] for e in approved] == [True]
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_日期用台北時間_台北凌晨提議的不會變成前一天(world: World) -> None:
+    # UTC 10/15 20:00 = 台北 10/16 04:00
+    early = datetime(2026, 10, 15, 20, 0, tzinfo=UTC)
+
+    written = lesson_proposals.propose(world.data, world.cid, "nightowl", RULE, WHY, now=early)
+    lesson_proposals.approve(world.data, world.cid, written.proposal.id, now=early)
+
+    assert world.lessons.read_text(encoding="utf-8") == "- 2026-10-16｜" + RULE + "\n"
+
+
+def test_通知記錄_只對已經決定而且決定對得上的提議算數_冪等(world: World) -> None:
+    proposal = world.propose().proposal
+    assert lesson_proposals.unnotified(world.data, world.cid) == []  # 還沒決定
+    assert lesson_proposals.mark_notified(world.data, world.cid, proposal.id, "approved", now=LATER) is False
+
+    lesson_proposals.approve(world.data, world.cid, proposal.id, now=LATER)
+    assert [p.id for p in lesson_proposals.unnotified(world.data, world.cid)] == [proposal.id]
+    assert lesson_proposals.mark_notified(world.data, world.cid, proposal.id, "rejected", now=LATER) is False
+    assert lesson_proposals.mark_notified(world.data, world.cid, proposal.id, "approved", now=LATER) is True
+    assert lesson_proposals.mark_notified(world.data, world.cid, proposal.id, "approved", now=LATER) is False
+
+    assert lesson_proposals.unnotified(world.data, world.cid) == []
+    assert [(e["type"], e["source"]) for e in world.raw()][-1] == ("notified", "system")
+    assert [e["type"] for e in world.raw()].count("notified") == 1
+    # notified 不改決定
+    assert lesson_proposals.read_proposals(world.data, world.cid)[0].status == "approved"
 
 
 # --- confined.append_text（只增不改的附加；不跟隨連結）------------------------------------

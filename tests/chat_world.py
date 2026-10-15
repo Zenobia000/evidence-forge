@@ -13,6 +13,7 @@
 - stdin 關掉就結束；`ignore_eof` 時不結束（模擬卡住的 Pi，給殺孤兒的測試）。
 - `stuck` 時根本不讀 stdin（模擬事件迴圈卡死的 Pi）。
 - `fail_job_done`／`reject_job_done`：前幾次 `/ef-job-done` 丟錯（`extension_error`、照樣回成功）或被拒。
+- `fail_lesson`：前幾次 `/ef-lesson` 丟錯（`extension_error`、照樣回成功）。
 - `start_delay_s`：接受 prompt 之後過這麼久才 `agent_start`。
 - `spawn_child`：開一個同群組的子程序（`sleep 300`），編號寫在 `--session-dir/child.pid`。
 
@@ -56,7 +57,8 @@ if os.path.exists(session_path):
 busy = False
 queue = []
 # 前幾次 /ef-job-done 故意失敗：丟錯（extension_error、照樣回成功）或被拒（success: false）
-failures = {"error": int(settings.get("fail_job_done", 0)), "reject": int(settings.get("reject_job_done", 0))}
+failures = {"error": int(settings.get("fail_job_done", 0)), "reject": int(settings.get("reject_job_done", 0)),
+            "lesson": int(settings.get("fail_lesson", 0))}
 if settings.get("spawn_child"):
     # Pi 開的子程序：跟 Pi 同一個程序群組、繼承它的環境變數
     import subprocess
@@ -158,6 +160,13 @@ def handle(command):
         respond(command, data={"disposition": "handled"})
         return
     if text.startswith("/ef-lesson "):
+        if failures["lesson"] > 0:
+            failures["lesson"] -= 1
+            # 跟真的 Pi 一樣：處理函式丟錯時發 extension_error，然後照樣回成功
+            emit({"type": "extension_error", "extensionPath": "command:ef-lesson",
+                  "event": "command", "error": "boom"})
+            respond(command, data={"disposition": "handled"})
+            return
         parts = text.split()
         details = {"proposal": parts[1], "decision": parts[2], "persona": parts[3]}
         already = any(

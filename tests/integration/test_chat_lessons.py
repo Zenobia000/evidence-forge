@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -27,8 +28,8 @@ from evidence_forge.chat.pi_rpc import session_dir
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.lessons import latest_lessons
 
-# 提議的日子（假的時鐘 `at(1)`）：寫進 lessons.md 的日期是提議的那天
-DAY = at(1).date().isoformat()
+# 提議的日子（假的時鐘 `at(1)`，台北時間）：寫進 lessons.md 的日期是提議的那天
+DAY = at(1).astimezone(ZoneInfo("Asia/Taipei")).date().isoformat()
 RULE = "第 2 篇｜開頭用了問句 → 開頭直接講結論"
 WHY = "創作者說：我不要問句開頭"
 
@@ -170,6 +171,51 @@ def test_別的對話的提議與不存在的提議_畫面也是_403_什麼都�
     assert not world.lessons.exists()
     assert world.notices(mine) == [] and world.notices(other) == []
     assert lesson_proposals.read_proposals(world.folder.data, mine)[0].status == "pending"
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_兩個對話各有自己的_L1_從_B_同意_寫的是_B_的那一行_A_的提議原封不動(world: World) -> None:
+    a = world.conversation()
+    b = world.conversation()
+    assert world.propose(a) == world.propose(b, "第 5 篇｜標題太長 → 標題限 20 字") == "L1"
+    before = lesson_proposals.read_proposals(world.folder.data, a)
+
+    response = world.decide(b, "L1", "approve")
+
+    assert response.status_code == 200, response.text
+    assert world.lessons.read_text(encoding="utf-8") == f"- {DAY}｜第 5 篇｜標題太長 → 標題限 20 字\n"
+    assert lesson_proposals.read_proposals(world.folder.data, a) == before
+    assert before[0].status == "pending"
+    assert world.notices(a) == []
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_兩個對話提議同一句_第二次同意不重複寫_畫面說已經有一樣的一條(world: World) -> None:
+    a = world.conversation()
+    b = world.conversation()
+    world.propose(a)
+    world.propose(b)
+
+    first = world.decide(a, "L1", "approve")
+    second = world.decide(b, "L1", "approve")
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.json()["proposal"]["already_present"] is True
+    assert world.lessons.read_text(encoding="utf-8").count(RULE) == 1
+    assert "已經有一樣的一條" in world.thread(b)
+    assert "已經有一樣的一條" not in world.thread(a)
+
+
+@pytest.mark.promise("FR-RW-04")
+def test_通知進了_Pi_的紀錄就記_notified(world: World) -> None:
+    cid = world.conversation()
+    proposal = world.propose(cid)
+    world.decide(cid, proposal, "approve")
+
+    wait_until(
+        lambda: lesson_proposals.read_proposals(world.folder.data, cid)[0].notified,
+        what="通知進了 Pi 的紀錄、記下 notified",
+    )
 
 
 def test_角色在提議之後不見了_同意回錯誤_提議留著_沒通知(world: World) -> None:

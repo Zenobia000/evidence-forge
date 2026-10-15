@@ -11,10 +11,8 @@ export function lessonRequest(conversationId, proposalId, action) {
   return { url, body: {} };
 }
 
-// 伺服器的回覆 → 畫面上說什麼。成功就什麼都不用說（小卡會換成一行系統小字）；失敗要說原因，而且是沒寫東西、提議還在
-export function lessonOutcome(action, status, data) {
-  if (status >= 200 && status < 300) return { ok: true, text: "" };
-  const reason = (data && data.error) || `伺服器回 ${status}`;
+// 失敗（postJson 丟的錯，訊息是伺服器的 error 或狀態碼）→ 畫面上說什麼：原因，而且講明沒寫東西、提議還在
+export function lessonFailure(action, reason) {
   const what = action === "approve" ? "沒有寫進 lessons" : "沒有關掉這筆提議";
-  return { ok: false, text: `${what}：${reason}` };
+  return `${what}：${reason || "不明原因"}`;
 }

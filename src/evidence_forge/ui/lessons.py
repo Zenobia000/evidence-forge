@@ -65,7 +65,12 @@ def thread_items(proposals: list[dict[str, Any]]) -> list[tuple[datetime, Item]]
             )
             continue
         decided = _parse(proposal.get("decided_at")) or proposed
-        if status == "approved":
+        if status == "approved" and proposal.get("already_present"):
+            # 同一個角色、同一天已經有一模一樣的一條：沒有重複寫（lesson_proposals.approve）
+            line = interview.Line(
+                f"你同意了這筆 lesson，「{persona}」的 lessons 已經有一樣的一條，沒有重複寫入・{clock(decided)}", "check"
+            )
+        elif status == "approved":
             line = interview.Line(f"你同意了這筆 lesson，已寫進「{persona}」的 lessons・{clock(decided)}", "check")
         else:
             line = interview.Line(f"你不要這筆 lesson，沒有寫任何東西・{clock(decided)}", "x")

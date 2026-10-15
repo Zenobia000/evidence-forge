@@ -10,7 +10,7 @@
 import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
 import { writeOutcome, writeRequest } from "./interview.js";
 import { initInterview } from "./interview-ui.js";
-import { lessonOutcome, lessonRequest } from "./lessons.js";
+import { lessonFailure, lessonRequest } from "./lessons.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
 
@@ -772,29 +772,17 @@ async function decideLesson(button) {
   }
   card.setAttribute("aria-busy", "true");
   $$("[data-lesson-action]", card).forEach((b) => (b.disabled = true));
-  let status = 0;
-  let data = null;
   try {
-    const response = await fetch(request.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(request.body),
-    });
-    status = response.status;
-    data = await response.json().catch(() => null);
+    await postJson(request.url, request.body);
   } catch (error) {
-    data = { error: `連不上伺服器（${error.message}）` };
-  }
-  const outcome = lessonOutcome(action, status, data);
-  if (outcome.ok) {
-    showNote("error", "");
-    clearTimeout(threadTimer);
-    await loadThread();
+    showNote("error", lessonFailure(action, error.message));
+    card.removeAttribute("aria-busy");
+    $$("[data-lesson-action]", card).forEach((b) => (b.disabled = false));
     return;
   }
-  showNote("error", outcome.text);
-  card.removeAttribute("aria-busy");
-  $$("[data-lesson-action]", card).forEach((b) => (b.disabled = false));
+  showNote("error", "");
+  clearTimeout(threadTimer);
+  await loadThread();
 }
 
 const interview = initInterview({

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { lessonOutcome, lessonRequest } from "../../src/evidence_forge/ui/static/js/lessons.js";
+import { lessonFailure, lessonRequest } from "../../src/evidence_forge/ui/static/js/lessons.js";
 import { createState, reconnect, reduce } from "../../src/evidence_forge/ui/static/js/state.js";
 
 test("同意與不要各打自己的路徑，body 是空的", () => {
@@ -17,13 +17,10 @@ test("對話 id 會跳脫；編號與動作不對就不送", () => {
   assert.throws(() => lessonRequest("c-1", "L3", "delete"), /動作/);
 });
 
-test("成功什麼都不說；失敗說原因，而且講明沒寫東西", () => {
-  assert.deepEqual(lessonOutcome("approve", 200, {}), { ok: true, text: "" });
-  const failed = lessonOutcome("approve", 403, { error: "這個對話沒有這筆 lesson 提議" });
-  assert.equal(failed.ok, false);
-  assert.match(failed.text, /沒有寫進 lessons/);
-  assert.match(failed.text, /沒有這筆/);
-  assert.match(lessonOutcome("reject", 500, null).text, /沒有關掉這筆提議：伺服器回 500/);
+test("失敗說原因，而且講明沒寫東西、提議還在", () => {
+  assert.match(lessonFailure("approve", "這個對話沒有這筆 lesson 提議"), /^沒有寫進 lessons：這個對話沒有這筆/);
+  assert.match(lessonFailure("reject", "500"), /^沒有關掉這筆提議：500/);
+  assert.match(lessonFailure("approve", ""), /不明原因/);
 });
 
 const lessonEvent = (overrides = {}) => ({
@@ -36,7 +33,8 @@ const lessonEvent = (overrides = {}) => ({
 
 test("有新事件：叫畫面重抓串流；序號比較小的是舊的，丟掉", () => {
   const first = reduce(createState(), lessonEvent({ seq: 5 }));
-  assert.deepEqual(first.effects.filter((e) => e.type === "refresh").map((e) => e.what), ["thread"]);
+  assert.deepEqual(first.effects.map((e) => e.type), ["refresh"]);
+  assert.deepEqual(first.effects.map((e) => e.what), ["thread"]);
   const stale = reduce(first.state, lessonEvent({ seq: 3 }));
   assert.equal(stale.effects.length, 0);
 });

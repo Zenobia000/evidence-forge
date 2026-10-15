@@ -9,6 +9,8 @@
   - `proposed`：agent 提議（`source: agent`）：哪個角色、一行規則 `text`、為什麼 `why`（給創作者判斷用，不寫進 lessons.md）。
   - `approved`：創作者同意（`source: ui`）：記下實際寫進去的那一行 `line`。
   - `rejected`：創作者不要（`source: ui`）：什麼都不寫。
+  - `notified`：對話主機確定把決定通知到對話的 Pi 了（`source: system`）。同意或不要之後、通知送到之前主機當掉，
+    下次開 Pi 時把「決定了、還沒有 `notified`」的全部補送（`unnotified`、`mark_notified`）。
 - 同意與不要都是畫面叫的（`approve_lesson`、`reject_lesson`，閘道的 `/tools/` 拿任何鑰匙來都 403，
   見 `gateway/chat_tools.py` 的 `UI_ONLY_TOOLS`），不是 agent 的工具。
 - 只碰得到這個對話自己的提議：提議 id 不在這個對話的檔裡（別的對話的、不存在的）一律 403，不說存不存在。
@@ -17,11 +19,14 @@
 
     - <提議的日期>｜<text>
 
-`text` 由 agent 寫成「哪一篇｜發生什麼 → 改成什麼」，一行；日期由閘道照提議的時間加。
+`text` 由 agent 寫成「哪一篇｜發生什麼 → 改成什麼」，一行；日期由閘道照提議的時間加，用台北時間的日期
+（跟畫面上其他時間同一個時區：台北凌晨提議的，不會變成前一天）。
 
 同意是冪等的（兩次不會附加兩次）：
 - 同一筆提議已經同意過，再按一次什麼都不寫、不多記事件。
-- 寫進 `lessons.md` 與記下 `approved` 之間當機，重來時 `lessons.md` 裡已經有一模一樣的那一行就不再附加，只補記事件。
+- `lessons.md` 裡已經有一模一樣的那一行（同一個角色、同一天、同一句規則：例如兩個對話各提議了一次，或寫進去之後、
+  記 `approved` 之前當機重來），就不再附加，只記 `approved` 並標 `already_present`；畫面上說「已經有一樣的一條」。
+- `lessons.md` 是一般檔案卻讀不懂（不是 UTF-8、超過 5 MB）：沒辦法確定有沒有一樣的一行，409、什麼都不寫。
 - 已經不要的不能再同意，已經同意的不能再不要（409）。
 
 角色資料夾用 `confined`：不跟隨符號連結、檢查與寫入同一個 fd；角色一定要真的存在（資料夾名稱完全相符），
@@ -31,6 +36,7 @@
 import fcntl
 import threading
 import unicodedata
+from zoneinfo import ZoneInfo
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -59,6 +65,9 @@ MAX_PENDING = 10
 _COMMENT_MARKS = ("<!--", "-->")
 
 Status = Literal["pending", "approved", "rejected"]
+Decision = Literal["approved", "rejected"]
+# 畫面上的時間都用台北時間（`ui/format.py`）；lessons 的日期也是
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 # --- 事件 -------------------------------------------------------------------------------
@@ -87,7 +96,8 @@ class Approved(_Base):
     source: Literal["ui"] = "ui"
     # 實際寫進 lessons.md 的那一行（含 `- `）
     line: str
-    # lessons.md 裡已經有一模一樣的一行（上次寫進去之後當機、重來），這次沒有再附加
+    # 同意的時候 lessons.md 裡已經有一模一樣的一行，這次沒有再附加：
+    # 兩個對話各提議了同一個角色、同一天的同一句規則，或上次寫進去之後、記 `approved` 之前當機重來
     already_present: bool = False
 
 
@@ -96,8 +106,17 @@ class Rejected(_Base):
     source: Literal["ui"] = "ui"
 
 
-_Event = Annotated[Proposed | Approved | Rejected, Field(discriminator="type")]
-_EVENT: TypeAdapter[Proposed | Approved | Rejected] = TypeAdapter(_Event)
+class Notified(_Base):
+    """對話主機確定把這個決定通知到對話的 Pi 了（通知進了 Pi 的紀錄才記）。"""
+
+    type: Literal["notified"] = "notified"
+    source: Literal["system"] = "system"
+    decision: Decision
+
+
+_Event = Annotated[Proposed | Approved | Rejected | Notified, Field(discriminator="type")]
+_Any = Proposed | Approved | Rejected | Notified
+_EVENT: TypeAdapter[_Any] = TypeAdapter(_Event)
 
 
 class Proposal(BaseModel):
@@ -114,6 +133,10 @@ class Proposal(BaseModel):
     # 同意才有：寫進 lessons.md 的那一行
     line: str | None = None
     decided_at: AwareDatetime | None = None
+    # 同意時 lessons.md 已經有一模一樣的一行，沒有再附加
+    already_present: bool = False
+    # 決定已經通知到對話的 Pi（畫面不用看這個；對話主機補送通知用）
+    notified: bool = False
 
     @property
     def preview(self) -> str:
@@ -133,7 +156,7 @@ class Written:
 
 def lesson_line(when: datetime, text: str) -> str:
     """寫進 `lessons.md` 的一行。"""
-    return f"- {when.date().isoformat()}｜{text}"
+    return f"- {when.astimezone(TAIPEI).date().isoformat()}｜{text}"
 
 
 # --- 檢查 -------------------------------------------------------------------------------
@@ -206,12 +229,12 @@ def _lock(folder: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _read(folder: Path) -> list[Proposed | Approved | Rejected]:
+def _read(folder: Path) -> list[_Any]:
     """讀得懂的每一筆事件；寫到一半被砍的殘行、手改壞的行跳過。"""
     path = folder / PROPOSED_FILE
     if not path.is_file():
         return []
-    found: list[Proposed | Approved | Rejected] = []
+    found: list[_Any] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
@@ -222,7 +245,7 @@ def _read(folder: Path) -> list[Proposed | Approved | Rejected]:
     return found
 
 
-def _fold(events: list[Proposed | Approved | Rejected]) -> dict[str, Proposal]:
+def _fold(events: list[_Any]) -> dict[str, Proposal]:
     """事件算成每筆提議現在的狀態，照提議的順序。決定只認第一筆：已經同意或不要的，後面再來的不改它。"""
     found: dict[str, Proposal] = {}
     for event in events:
@@ -240,23 +263,31 @@ def _fold(events: list[Proposed | Approved | Rejected]) -> dict[str, Proposal]:
             )
             continue
         known = found.get(event.proposal)
-        if known is None or known.status != "pending":
+        if known is None:
+            continue
+        if isinstance(event, Notified):
+            # 通知只對已經決定、而且決定對得上的提議算數
+            if known.status == event.decision and not known.notified:
+                found[event.proposal] = known.model_copy(update={"notified": True})
+            continue
+        if known.status != "pending":
             continue
         found[event.proposal] = known.model_copy(
             update={
                 "status": "approved" if isinstance(event, Approved) else "rejected",
                 "line": event.line if isinstance(event, Approved) else None,
                 "decided_at": event.ts,
+                "already_present": isinstance(event, Approved) and event.already_present,
             }
         )
     return found
 
 
-def _next_n(events: list[Proposed | Approved | Rejected]) -> int:
+def _next_n(events: list[_Any]) -> int:
     return max((e.n for e in events), default=0) + 1
 
 
-def _append(folder: Path, event: Proposed | Approved | Rejected) -> dict[str, Any]:
+def _append(folder: Path, event: _Any) -> dict[str, Any]:
     append_line(folder / PROPOSED_FILE, event.model_dump_json() + "\n")
     return event.model_dump(mode="json")
 
@@ -341,6 +372,7 @@ def approve(
     - 角色在提議之後不見了、改成符號連結：不寫，提議留著還在等（創作者修好角色再按，或按不要）。
     - 附加是只增不改（`confined.append_text`）；先寫 lessons.md、再記事件，兩步之間當機，
       重來時 lessons.md 已經有一模一樣的一行就不再附加（事件記 `already_present`）。
+    - lessons.md 讀不懂：409、什麼都不寫（見 `_has_line`）。
     """
     folder, wanted = _decide_target(data, conversation_id, proposal_id)
     with _lock(folder):
@@ -380,11 +412,45 @@ def reject(
     return Written(_fold([*events, event])[proposal.id], [written])
 
 
+def unnotified(data: DataDir, conversation_id: str) -> list[Proposal]:
+    """已經決定（同意或不要）、還沒確定通知到對話的 Pi 的提議，照提議的順序。"""
+    return [p for p in read_proposals(data, conversation_id) if p.status != "pending" and not p.notified]
+
+
+def mark_notified(
+    data: DataDir, conversation_id: str, proposal_id: str, decision: str, *, now: datetime
+) -> bool:
+    """對話主機確定通知進了 Pi 的紀錄：記 `notified`。回這次有沒有新記。
+
+    提議不存在、還沒決定、決定對不上、已經記過：什麼都不做（冪等；主機照 Pi 紀錄補記時會重複叫）。
+    """
+    if decision not in ("approved", "rejected"):
+        return False
+    folder = _folder(data, conversation_id)
+    with _lock(folder):
+        events = _read(folder)
+        known = _fold(events).get(proposal_id)
+        if known is None or known.status != decision or known.notified:
+            return False
+        _append(folder, Notified(n=_next_n(events), ts=now, proposal=proposal_id, decision=decision))
+    return True
+
+
 # --- 角色的 lessons.md ------------------------------------------------------------------
 
 def _has_line(persona_folder: Path, line: str) -> bool:
-    """lessons.md 裡已經有一模一樣的一行（只比頭尾空白修掉之後的字）。"""
-    text = confined.text(persona_folder, LESSONS_FILE)
+    """lessons.md 裡已經有一模一樣的一行（只比頭尾空白修掉之後的字）。
+
+    檔案不存在是沒有。是一般檔案卻讀不懂（不是 UTF-8、超過上限）：不能當成沒有，不然寫進去之後當機、重來會附加第二次，
+    所以 409、什麼都不寫，請創作者先修好那個檔。連結與其他種類的檔不在這裡擋，附加那一步會拒絕（403）。
+    """
+    kind, text = confined.read_text(persona_folder, LESSONS_FILE)
+    if (kind == "file" and text is None) or kind == "large":
+        raise ToolRejected(
+            409,
+            f"{LESSONS_FILE} 讀不懂（不是 UTF-8，或超過 {confined.MAX_TEXT_BYTES // 1_000_000} MB）：沒辦法確定有沒有一樣的一條，"
+            "沒有寫；提議還在，修好那個檔再按一次",
+        )
     if text is None:
         return False
     return any(row.strip() == line for row in text.splitlines())

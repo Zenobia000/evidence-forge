@@ -35,6 +35,10 @@
   不要什麼都不寫），推 `ef_lesson`，再排一則 `/ef-lesson <提議> <approved|rejected> <角色>` 給 Pi：ef-tools 只在對話裡
   放一則 `ef-lesson` 通知，**不開新的一輪**（不為了一個按鈕多花一次模型）；agent 下一輪就讀得到。
   同意與不要的入口只在這裡（畫面的 API），閘道的 `/tools/` 拿任何鑰匙來都 403。
+  通知不能只排在記憶體裡：看到 `ef-lesson` 訊息的 `message_end`（已經進了 Pi 的紀錄）才在 `lessons-proposed.jsonl` 記
+  `notified`；每次開 Pi、主機每次啟動，都把「決定了、還沒有 `notified`」的全部再送一次（先用 `get_messages` 看紀錄，
+  已經在裡面的直接補記）。送出去但沒送成（`ef-lesson` 丟錯、被拒）過 `notice_retry_s` 秒再送，同一個 Pi 最多
+  `MAX_NOTICE_RETRIES` 次，之後推一則 `ef_error`、等下次接回。
 - 「照這張編輯卡寫稿」（#110）也是畫面按的：交給工作台的 `write_from_card` 開寫稿單（`use_desk` 接上），
   開了的單照一般工單推進度、結束時送 `/ef-job-done`。對話的 agent 叫不到它。
 
@@ -200,7 +204,11 @@ class _Live:
     notice_ids: dict[str, str] = field(default_factory=dict)
     # 送出去、還沒收到回應的 /ef-card 指令 id
     card_notice_ids: set[str] = field(default_factory=set)
-    # 這次開的 Pi 每張單重送過幾次
+    # 這次開的 Pi 已經送過 /ef-lesson 的提議（`<編號> <決定>`）；每次開都重來
+    lessons_sent: set[str] = field(default_factory=set)
+    # 送出去、還沒收到回應的 /ef-lesson 指令：指令 id → `<編號> <決定>`
+    lesson_notice_ids: dict[str, str] = field(default_factory=dict)
+    # 這次開的 Pi 每張單（或每筆 lesson 提議）重送過幾次
     retries: dict[str, int] = field(default_factory=dict)
     # Pi 正在回答（agent_start 到 agent_settled）
     busy: bool = False
@@ -574,14 +582,84 @@ class ConversationHost:
         冪等的重按（沒有新事件）不再通知 agent。"""
         self.lesson_changed(conversation_id, written.events)
         proposal = written.proposal
-        if written.events:
-            self._enqueue(
-                ("lesson", f"{conversation_id} {proposal.id} {decision} {proposal.persona}")
-            )
+        # 重按（沒有新事件）但上次的通知還沒確定送到：也排一次，已經送過的不會重送
+        if written.events or not proposal.notified:
+            self._enqueue(("lesson", conversation_id))
         return {
             "proposal": {**proposal.model_dump(mode="json"), "preview": proposal.preview},
             "events": written.events,
         }
+
+    def _lessons_unnotified(self, conversation_id: str) -> list[lesson_proposals.Proposal]:
+        try:
+            return lesson_proposals.unnotified(self._data, conversation_id)
+        except (ToolRejected, OSError, ValueError):
+            return []
+
+    def _notify_lessons(self, conversation_id: str, live: _Live) -> None:
+        """決定了、還沒確定通知到的 lesson 提議：送 `/ef-lesson`（這個 Pi 送過的不重送）。呼叫的人拿著對話鎖。"""
+        for proposal in self._lessons_unnotified(conversation_id):
+            sent = f"{proposal.id} {proposal.status}"
+            with self._lock:
+                if sent in live.lessons_sent:
+                    continue
+                live.lessons_sent.add(sent)
+                live.pending += 1
+                live.last_active = self._monotonic()
+            try:
+                request_id = live.pi.send(
+                    {"type": "prompt", "message": f"/ef-lesson {proposal.id} {proposal.status} {proposal.persona}"}
+                )
+            except BaseException:
+                with self._lock:
+                    live.lessons_sent.discard(sent)
+                self._settle_pending(live)
+                raise
+            with self._lock:
+                live.lesson_notice_ids[request_id] = sent
+
+    def _deliver_lessons(self, conversation_id: str) -> None:
+        """排著的 lesson 通知：送進這個對話的 Pi（沒開就接回，接回時會一起補送）；沒送成告訴畫面。"""
+        try:
+            with self._conversation_lock(conversation_id):
+                live = self._ensure(conversation_id)
+                self._notify_lessons(conversation_id, live)
+        except Exception as exc:
+            _log.warning("lesson 的決定沒通知到對話 %s", conversation_id, exc_info=True)
+            self._emit(
+                conversation_id,
+                {"type": "ef_error", "message": f"lesson 的決定已經記下，但沒通知到對話：{exc}"},
+            )
+
+    def _record_lesson_notified(self, conversation_id: str, delivered: tuple[str, str]) -> None:
+        lesson_proposals.mark_notified(
+            self._data, conversation_id, delivered[0], delivered[1], now=self._clock()
+        )
+
+    def _retry_lessons(self, conversation_id: str, live: _Live, sent: list[str]) -> None:
+        """沒送成的 lesson 通知：從「送過」拿掉（它還沒有 `notified`），過一下再排一次；重試太多次就等下次接回。"""
+        retry = False
+        given_up: list[str] = []
+        with self._lock:
+            for key in sent:
+                live.lessons_sent.discard(key)
+                tries = live.retries.get(f"lesson {key}", 0) + 1
+                live.retries[f"lesson {key}"] = tries
+                if tries <= MAX_NOTICE_RETRIES:
+                    retry = True
+                else:
+                    given_up.append(key.split(" ")[0])
+        for proposal in given_up:
+            self._emit(
+                conversation_id,
+                {"type": "ef_error", "message": f"lesson {proposal} 的決定送不進對話，下次接回時再送"},
+            )
+        if retry and not self._closing.is_set():
+            timer = threading.Timer(
+                self._notice_retry_s, self._enqueue, args=(("lesson", conversation_id),)
+            )
+            timer.daemon = True
+            timer.start()
 
     def _clicked(
         self, conversation_id: str, written: cards.Written, action: str, station: object
@@ -597,8 +675,8 @@ class ConversationHost:
             self._enqueue(("card", f"{conversation_id} {written.card_id} {last} {action} {station}"))
         return {"card": written.card.model_dump(mode="json"), "events": written.events}
 
-    def _deliver_card(self, conversation_id: str, command: str, what: str = "編輯卡") -> None:
-        """把 `/ef-card …`（或 `/ef-lesson …`）送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
+    def _deliver_card(self, conversation_id: str, command: str) -> None:
+        """把 `/ef-card …` 送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
         try:
             with self._conversation_lock(conversation_id):
                 live = self._ensure(conversation_id)
@@ -616,7 +694,7 @@ class ConversationHost:
             _log.warning("編輯卡的通知沒送到對話 %s", conversation_id, exc_info=True)
             self._emit(
                 conversation_id,
-                {"type": "ef_error", "message": f"{what}的變化已經記下，但沒通知到對話：{exc}"},
+                {"type": "ef_error", "message": f"編輯卡的變化已經記下，但沒通知到對話：{exc}"},
             )
 
     # --- 事件的入口（執行器、告示板、工作台） --------------------------------------------
@@ -706,11 +784,14 @@ class ConversationHost:
         # 新開的 Pi：結束了、還沒確定送到的通知全部再送一次（ef-tools 照紀錄去重）。
         # 送之前先看紀錄：通知已經在裡面、只是主機沒記到的（記之前被硬殺），補記就好
         pending = self._unnotified(conversation_id)
-        if pending:
+        lessons_pending = self._lessons_unnotified(conversation_id)
+        if pending or lessons_pending:
             self._backfill_notified(conversation_id, pi)
             pending = self._unnotified(conversation_id)
         for job_id in pending:
             self._notify(conversation_id, live, job_id)
+        # 決定了、還沒確定通知到的 lesson：主機在送到之前當掉也補得回來（紀錄裡已經有的，上面補記過了）
+        self._notify_lessons(conversation_id, live)
         return live
 
     def _backfill_notified(self, conversation_id: str, pi: PiProcess) -> None:
@@ -722,9 +803,14 @@ class ConversationHost:
         data = response.get("data")
         messages = data.get("messages") if isinstance(data, dict) else None
         for message in messages if isinstance(messages, list) else []:
-            job_id = _notice_job(message) if isinstance(message, dict) else None
+            if not isinstance(message, dict):
+                continue
+            job_id = _notice_job(message)
             if job_id is not None:
                 self._record_notified(conversation_id, job_id)
+            lesson = _notice_lesson(message)
+            if lesson is not None:
+                self._record_lesson_notified(conversation_id, lesson)
 
     def _stop(self, conversation_id: str, reason: str) -> None:
         lock = self._lock_for(conversation_id)
@@ -772,6 +858,7 @@ class ConversationHost:
         """Pi 的讀取執行緒上：記下忙不忙、通知送到了沒有，再轉給畫面。"""
         kind = record.get("type")
         notice: str | None = None
+        lesson_notice: str | None = None
         with self._lock:
             live = self._live.get(conversation_id)
             if live is None or live.pi.key != key:
@@ -790,7 +877,8 @@ class ConversationHost:
                     notice = live.notice_ids.pop(str(record.get("id")), None)
                     card_notice = str(record.get("id")) in live.card_notice_ids
                     live.card_notice_ids.discard(str(record.get("id")))
-                    if notice is not None or card_notice:
+                    lesson_notice = live.lesson_notice_ids.pop(str(record.get("id")), None)
+                    if notice is not None or card_notice or lesson_notice is not None:
                         # 擴充指令的回應在處理函式跑完之後才來
                         live.pending = max(0, live.pending - 1)
                         if record.get("success"):
@@ -806,6 +894,8 @@ class ConversationHost:
             if not record.get("success"):
                 if live is not None and notice is not None:
                     self._retry_notices(conversation_id, live, [notice])
+                if live is not None and lesson_notice is not None:
+                    self._retry_lessons(conversation_id, live, [lesson_notice])
                 self._emit(
                     conversation_id,
                     {"type": "ef_error", "message": str(record.get("error") or "Pi 拒絕了指令")},
@@ -819,10 +909,23 @@ class ConversationHost:
             # ef-tools 處理通知時丟錯（例如問閘道失敗）：Pi 照樣回成功，所以看這個事件。
             # 不知道是哪一張，就把這次送過、還沒確定進紀錄的都再排一次（ef-tools 會照紀錄去重）
             self._retry_notices(conversation_id, live, self._unconfirmed(conversation_id, live))
+        if (
+            kind == "extension_error"
+            and record.get("extensionPath") == "command:ef-lesson"
+            and live is not None
+        ):
+            # 同上：ef-lesson 丟錯、Pi 照樣回成功。這次送過、還沒確定進紀錄（沒有 `notified`）的都再排一次
+            waiting = {f"{p.id} {p.status}" for p in self._lessons_unnotified(conversation_id)}
+            with self._lock:
+                unconfirmed = sorted(live.lessons_sent & waiting)
+            self._retry_lessons(conversation_id, live, unconfirmed)
         if kind == "message_end":
             delivered = _delivered_job(record)
             if delivered is not None:
                 self._record_notified(conversation_id, delivered)
+            lesson = _delivered_lesson(record)
+            if lesson is not None:
+                self._record_lesson_notified(conversation_id, lesson)
         self._emit(conversation_id, record)
 
     def _on_pi_exit(self, conversation_id: str, key: ConversationKey, returncode: int) -> None:
@@ -869,8 +972,7 @@ class ConversationHost:
                     conversation_id, command = value.split(" ", 1)
                     self._deliver_card(conversation_id, f"/ef-card {command}")
                 elif kind == "lesson":
-                    conversation_id, command = value.split(" ", 1)
-                    self._deliver_card(conversation_id, f"/ef-lesson {command}", "lesson")
+                    self._deliver_lessons(value)
             except Exception:
                 _log.exception("對話主機處理 %s %s 時出錯", kind, value)
 
@@ -957,10 +1059,13 @@ class ConversationHost:
             timer.start()
 
     def _sweep(self) -> None:
-        """主機啟動時：每個對話結束了、還沒確定送到的通知補送一次。"""
+        """主機啟動時：每個對話結束了、還沒確定送到的通知（工單、lesson 的決定）補送一次。"""
         for conversation in conversations.list_all(self._data):
             for job_id in self._unnotified(conversation.id):
                 self._deliver(conversation.id, job_id)
+            # 決定了、還沒確定通知到的 lesson 也補送（`_ensure` 開 Pi 時一起送）
+            if self._lessons_unnotified(conversation.id):
+                self._deliver_lessons(conversation.id)
 
     def _unnotified(self, conversation_id: str) -> list[str]:
         """列在 `jobs.jsonl`、已經結束、還沒記進 `notified_jobs` 的工單。"""
@@ -1124,6 +1229,25 @@ def _notice_job(message: dict[str, Any]) -> str | None:
     details = message.get("details")
     job_id = details.get("job_id") if isinstance(details, dict) else None
     return job_id if isinstance(job_id, str) else None
+
+
+def _delivered_lesson(record: Event) -> tuple[str, str] | None:
+    """`message_end` 是 ef-tools 放的 `ef-lesson` 通知的話，回（提議編號, 決定）。"""
+    message = record.get("message")
+    return _notice_lesson(message) if isinstance(message, dict) else None
+
+
+def _notice_lesson(message: dict[str, Any]) -> tuple[str, str] | None:
+    """一則訊息是 `ef-lesson` 通知的話，回（提議編號, 決定）。"""
+    if message.get("role") != "custom" or message.get("customType") != "ef-lesson":
+        return None
+    details = message.get("details")
+    if not isinstance(details, dict):
+        return None
+    proposal, decision = details.get("proposal"), details.get("decision")
+    if isinstance(proposal, str) and isinstance(decision, str):
+        return proposal, decision
+    return None
 
 
 def _card_event(card_id: str, events: list[dict[str, Any]], card: cards.CardState) -> Event:

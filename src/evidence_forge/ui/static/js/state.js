@@ -66,7 +66,7 @@ function textOf(message) {
 //   live        串流中的回答文字變了（帶 text）
 //   note        要顯示的一行說明（帶 kind: "resume" | "error"、text），kind 為 "clear" 時收掉
 //   title       對話標題變了（帶 title）
-//   lesson      lesson 提議有變（agent 提議了、創作者按了同意或不要）：串流重抓（小卡與系統小字從提議紀錄長出來）
+//   （lesson 提議有變：沒有獨立的 effect，只重抓串流，小卡與系統小字從提議紀錄長出來）
 //   card        某張編輯卡變了（帶 card_id、card）；同時會有 refresh thread／panel／list
 //               （問題卡、摘要卡、決策分頁、清單都從決策紀錄長出來）
 export function reduce(state, event) {
@@ -109,7 +109,7 @@ export function reduce(state, event) {
       if (seq !== null && state.lessons.seq >= seq) return { state, effects };
       const next = { ...state, lessons: { seq: seq ?? 0 } };
       // 訂閱時先送一則 events: [] 的現況：連上時畫面本來就會整個重抓，不用再抓
-      if (Array.isArray(event.events) && event.events.length > 0) effects.push({ type: "lesson" }, { type: "refresh", what: "thread" });
+      if (Array.isArray(event.events) && event.events.length > 0) effects.push({ type: "refresh", what: "thread" });
       return { state: next, effects };
     }
     case "ef_pi": {
