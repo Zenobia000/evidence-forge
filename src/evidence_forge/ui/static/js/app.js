@@ -8,6 +8,7 @@
 // - 沒有輪詢工單：清單每 15 秒與視窗重新取得焦點時重抓一次，因為別的分頁、別的入口也會改清單。
 
 import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
+import { initInterview } from "./interview-ui.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
 
@@ -30,6 +31,7 @@ const els = {
   box: $("#ch-box"),
   empty: $("#ch-empty"),
   loading: $("#ch-loading"),
+  confirm: $("#ch-confirm"),
 };
 
 let conversationId = shell.dataset.conversation || "";
@@ -38,7 +40,9 @@ const loose = shell.dataset.loose === "true";
 let state = createState();
 let source = null;
 let attachments = [];
-const view = { panelOpen: false, tab: "report", job: null, diff: false };
+const view = { panelOpen: false, tab: "report", job: null, diff: false, card: null };
+let panelRequest = 0; // 面板重抓的流水號
+const PANEL_TABS = ["report", "decisions", "article", "cost"];
 const pending = []; // 剛送出、還沒進紀錄的訊息（畫面先放著）
 
 // ── 小工具 ───────────────────────────────────────────────────────
@@ -144,52 +148,98 @@ function filterList() {
 
 // ── 對話串流 ─────────────────────────────────────────────────────
 
-let threadBusy = false;
+let threadRun = null; // 正在重抓的那一輪（Promise）；有的話新的要求只記一筆，等這輪結束再跑
 let threadDirty = false;
 let threadTimer = null;
+// 輸入法正在組字（注音、拼音選字）：這時把對話串流整個換掉，會打斷組字中的「其他」、備註，等組完再抓
+let composing = false;
+let threadDeferred = false;
+let stashedThread = null; // 組字中回來的對話串流：先收著，組完再套
+
+document.addEventListener("compositionstart", () => {
+  composing = true;
+});
+document.addEventListener("compositionend", () => {
+  composing = false;
+  if (stashedThread) {
+    // interview-ui.js 的 compositionend 註冊得比較晚、會晚一步收進草稿：這裡晚一拍再換畫面，組好的字才不會掉
+    const { status, html, stick } = stashedThread;
+    setTimeout(() => !composing && applyThread(status, html, stick), 0);
+  }
+  if (threadDeferred) {
+    threadDeferred = false;
+    refreshThread();
+  }
+});
 
 function refreshThread() {
   clearTimeout(threadTimer);
   threadTimer = setTimeout(loadThread, 120);
 }
 
-async function loadThread() {
-  if (!conversationId) return;
-  if (threadBusy) {
-    threadDirty = true;
-    return;
+// 回傳的 Promise 在「這一次要求」的內容換好之後才結束（送出一關之後要等卡片換成摘要才解鎖，不然會多記一批）
+function loadThread() {
+  if (!conversationId) return Promise.resolve();
+  if (composing) {
+    threadDeferred = true;
+    return Promise.resolve();
   }
-  threadBusy = true;
+  if (threadRun) {
+    threadDirty = true;
+    return threadRun;
+  }
+  threadRun = (async () => {
+    do {
+      threadDirty = false;
+      await loadThreadOnce();
+    } while (threadDirty && !composing);
+    if (threadDirty) threadDeferred = true;
+  })().finally(() => {
+    threadRun = null;
+  });
+  return threadRun;
+}
+
+async function loadThreadOnce() {
   const first = !els.thread.firstChild;
   const stick = first || nearBottom();
   try {
     const { status, html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/thread`);
-    if (els.loading) els.loading.remove();
-    els.loading = null;
-    els.thread.innerHTML = html;
-    const root = $("[data-thread-root]", els.thread);
-    if (status === 200 && root) {
-      pending.length = 0;
-      els.live.replaceChildren();
-      $("#ch-title").textContent = root.dataset.title || "新對話";
-      $("#ch-spent").textContent = root.dataset.spent || "—";
-      $("#ch-spent-wrap").hidden = false;
-      // 載入時串流裡已經是結果卡的工單：之後的現況事件不用為它們重抓
-      state = seedFinished(state, $$(".ch-result[data-job]", els.thread).map((n) => n.dataset.job));
-      renderSuggestions(root);
-      renderAllProgress();
-      reportSeen(root);
+    if (composing) {
+      // 要求送出的時候還沒開始組字，回來時已經在組字了：現在換掉輸入框會打斷輸入法，先收著，組完（compositionend）再套
+      stashedThread = { status, html, stick };
+      return;
     }
+    applyThread(status, html, stick);
   } catch (error) {
     els.thread.replaceChildren(el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` })));
-  } finally {
-    threadBusy = false;
     if (stick) scrollToEnd();
-    if (threadDirty) {
-      threadDirty = false;
-      refreshThread();
-    }
   }
+}
+
+function applyThread(status, html, stick) {
+  stashedThread = null; // 有更新的就不用舊的
+  if (els.loading) els.loading.remove();
+  els.loading = null;
+  const focusToken = interview.captureFocus();
+  els.thread.innerHTML = html;
+  // 問題卡長出狀態：答到一半的草稿與焦點接回去（interview-ui.js）
+  interview.mountAll(els.thread);
+  interview.restoreFocus(focusToken);
+  const root = $("[data-thread-root]", els.thread);
+  if (status === 200 && root) {
+    pending.length = 0;
+    els.live.replaceChildren();
+    $("#ch-title").textContent = root.dataset.title || "新對話";
+    $("#ch-spent").textContent = root.dataset.spent || "—";
+    $("#ch-spent-wrap").hidden = false;
+    // 載入時串流裡已經是結果卡的工單：之後的現況事件不用為它們重抓
+    state = seedFinished(state, $$(".ch-result[data-job]", els.thread).map((n) => n.dataset.job));
+    renderSuggestions(root);
+    renderAllProgress();
+    reportSeen(root);
+  }
+  if (stick) scrollToEnd();
 }
 
 function renderSuggestions(root) {
@@ -303,6 +353,9 @@ function applyEffects(effects) {
       if (effect.what === "thread") refreshThread();
       else if (effect.what === "list") refreshList();
       else if (effect.what === "panel" && view.panelOpen) loadPanel();
+    } else if (effect.type === "card") {
+      // 這張卡的決策紀錄比確認卡手上的新：「照這張寫」講的已經不是現在的卡
+      interview.dropStaleConfirm(effect.card_id, effect.card && typeof effect.card.events === "number" ? effect.card.events : 0);
     } else if (effect.type === "live") {
       showLive(effect.text);
     } else if (effect.type === "note") {
@@ -320,8 +373,9 @@ function connect() {
   source.onopen = () => {
     state = reconnect(state);
     // 每次連上（第一次，也包括斷線重連）都重抓一次串流：主機重開、積太多被斷開、
-    // 第一次載入到連上之間漏掉的事件，都靠完整紀錄補回來（#94 審查）
+    // 第一次載入到連上之間漏掉的事件，都靠完整紀錄補回來（#94 審查）；編輯卡的事件同理，面板開著就一起重抓
     refreshThread();
+    if (view.panelOpen) loadPanel();
   };
   source.onmessage = (message) => {
     let event;
@@ -359,9 +413,18 @@ async function loadPanel() {
   const params = new URLSearchParams({ tab: view.tab });
   if (view.job) params.set("v", view.job);
   if (view.diff) params.set("diff", "1");
+  if (view.tab === "decisions" && view.card) params.set("card", view.card);
   els.panel.setAttribute("aria-busy", "true");
+  const mine = ++panelRequest;
+  // 決策分頁第一次打開：先放骨架，讀編輯卡要一點時間
+  if (view.tab === "decisions" && shell.dataset.tab !== "decisions" && !els.panel.hidden) {
+    const body = $(".ch-panel__body", els.panel);
+    if (body) body.replaceChildren(el("span", { class: "s0-skel", style: "width: 45%; height: 16px" }), el("span", { class: "s0-skel", style: "width: 90%; margin-top: 12px" }), el("span", { class: "s0-skel", style: "width: 80%; margin-top: 12px" }));
+  }
   try {
     const { html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/panel?${params}`);
+    // 同時有好幾次重抓（點分頁、事件、按完沿用）：只收最新那一次的回應，舊的晚到不能蓋掉新的
+    if (mine !== panelRequest) return;
     const body = $(".ch-panel__body", els.panel);
     const top = body ? body.scrollTop : 0;
     els.panel.innerHTML = html;
@@ -371,13 +434,26 @@ async function loadPanel() {
     // 伺服器選了哪一版就記哪一版
     const picked = $("[data-version]", els.panel);
     if (picked) view.job = picked.value;
+    foldDecisions();
+    interview.paintDrafts();
   } catch (error) {
+    if (mine !== panelRequest) return;
     els.panel.replaceChildren(el("div", { class: "ch-panel__body" }, el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` }))));
   } finally {
-    els.panel.removeAttribute("aria-busy");
+    if (mine === panelRequest) els.panel.removeAttribute("aria-busy");
     syncPressed();
   }
 }
+
+// 手機寬度：決策分頁每一關收成一行摘要（點關名展開），正在問的那關與要重確認的關自己打開；寬螢幕一律展開
+const narrowQuery = window.matchMedia("(max-width: 640px)");
+function foldDecisions() {
+  for (const fold of $$(".ch-dec__fold", els.panel)) {
+    const item = fold.closest(".ch-dec__item");
+    fold.open = !narrowQuery.matches || item?.dataset.state === "asking";
+  }
+}
+narrowQuery.addEventListener("change", foldDecisions);
 
 function openPanel(tab, job = null) {
   view.tab = tab;
@@ -617,6 +693,9 @@ document.addEventListener("change", (event) => {
   if (target.matches("[data-version]")) {
     view.job = target.value;
     loadPanel();
+  } else if (target.matches("[data-card-select]")) {
+    view.card = target.value;
+    loadPanel();
   } else if (target.matches("[data-diff]")) {
     view.diff = target.checked;
     loadPanel();
@@ -632,6 +711,38 @@ $("#ch-list-toggle").addEventListener("click", () => {
 window.addEventListener("focus", refreshList);
 setInterval(refreshList, 15000);
 
+// ── 訪談：問題卡、決策分頁的按鈕、寫稿前的最後確認（interview-ui.js） ──────
+
+// 「照這張編輯卡寫稿」的預留位置：寫稿本身（開 rewrite 工單、帶編輯卡的快照）是 票 110 的事。
+// 最後確認卡按下「照這張寫」會走到這裡；票 110 接上之前只說明還沒接上，編輯卡照舊留著，不開工單、不花錢。
+function startWritingFromCard(cardId) {
+  showNote("info", `「照這張編輯卡寫稿」還沒接上（票 110）。編輯卡 ${cardId} 先留著，什麼都沒開、沒花錢。`);
+  setTimeout(() => showNote("info", ""), 10000);
+}
+
+const interview = initInterview({
+  conversation: () => conversationId,
+  post: postJson,
+  fragment,
+  // 寫進決策紀錄之後：對話串流（摘要卡、系統小字）、決策分頁、清單都重抓
+  afterWrite: async () => {
+    interview.clearConfirm();
+    clearTimeout(threadTimer);
+    await Promise.all([loadThread(), view.panelOpen ? loadPanel() : null, refreshList()]);
+  },
+  // 給螢幕閱讀器念的一句（#ch-live 是 aria-live）；視覺上看不到
+  announce: (text) => {
+    els.live.append(el("p", { class: "ch-sr", text }));
+  },
+  startWriting: startWritingFromCard,
+  // 窄螢幕上面板是蓋住對話的抽屜：要看最後確認卡就先收起來
+  revealChat: () => {
+    if (window.matchMedia("(max-width: 1100px)").matches) setPanel(false);
+  },
+  confirmHost: els.confirm,
+  panel: els.panel,
+});
+
 // ── 開頁 ─────────────────────────────────────────────────────────
 
 (async function init() {
@@ -641,9 +752,9 @@ setInterval(refreshList, 15000);
     connect();
     const wanted = shell.dataset.initialTab;
     const remembered = load(`ef:panel:${conversationId}`);
-    if (["report", "article", "cost"].includes(wanted)) await openPanel(wanted);
+    if (PANEL_TABS.includes(wanted)) await openPanel(wanted);
     else if (remembered?.open) {
-      view.tab = remembered.tab || "report";
+      view.tab = PANEL_TABS.includes(remembered.tab) ? remembered.tab : "report";
       await openPanel(view.tab);
     }
   }

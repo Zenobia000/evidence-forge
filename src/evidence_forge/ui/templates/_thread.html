@@ -1,4 +1,5 @@
 {% from "_icons.html" import icon %}
+{% from "_interview.html" import qset %}
 {# 對話串流（IA §4）。跑著的工單只放一個空位，進度列由 app.js 照 ef_job 事件填；結束的是結果卡。 #}
 {%- macro rate(value) -%}{{ ("%.1f" % value).rstrip("0").rstrip(".") }}{%- endmacro -%}
 {% if missing %}
@@ -31,6 +32,10 @@
 <div class="ch-agent"><span class="ch-agent__mark" aria-hidden="true">EF</span><div class="ch-agent__body">{{ b.html }}</div></div>
 {% elif b.kind == "error" %}
 <div class="ch-error" role="alert">{{ icon("warn") }}<span>{{ b.text }}{% if b.help %}。<span class="ch-error__help">{{ b.help }}</span>{% endif %}</span></div>
+{% elif b.kind == "qset" %}
+{{ qset(b.qset) }}
+{% elif b.kind == "line" %}
+<span class="ch-event">{{ icon(b.line.icon) }}{{ b.line.text }}</span>
 {% elif b.kind == "job" %}
 {% set c = b.job %}
 {% if c.state != "done" %}

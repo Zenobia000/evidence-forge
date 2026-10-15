@@ -9,7 +9,8 @@
 | `GET /personas`、`GET /personas/<角色>`、`/api/personas…` | 角色頁（#116）：路由在 `ui/personas.py` |
 | `GET /ui/list?current=<id>` | 對話清單（HTML 片段） |
 | `GET /ui/c/<id>/thread` | 對話串流（HTML 片段）：Pi 的完整紀錄加工單；Pi 接不回來回 503 的錯誤片段 |
-| `GET /ui/c/<id>/panel?tab=report｜article｜cost&v=<工單 id>&diff=1` | 右側面板（HTML 片段） |
+| `GET /ui/c/<id>/panel?tab=report｜decisions｜article｜cost&v=<工單 id>&card=<卡 id>&diff=1` | 右側面板（HTML 片段）。決策分頁列每一關問過的每張卡（#108） |
+| `GET /ui/c/<id>/write-confirm?card=<卡 id>` | 寫稿前的最後確認卡（HTML 片段）：角色、預估金額、這張工單的上限；卡不能寫稿（有關卡沒選好或要重確認）回 409 |
 | `GET /ui/c/<id>/article.md?v=<工單 id>` | 文章的 Markdown 原文（複製用） |
 | `POST /api/extract` | 上傳的檔案（Markdown、純文字、PDF）抽成文字：`{"name", "data"（base64）}` → `{"name", "text", "chars"}` |
 | `/static/…` | 樣式、字型、script（沒有建置，沒有外部資源） |
@@ -33,15 +34,16 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from evidence_forge import cost_settings
+from evidence_forge import cards, cost_settings, persona
 from evidence_forge.chat.desk import MAX_FILE_CHARS
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.extract import ExtractError, pdf_to_text
+from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.harness import default_harness
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, bills, costs, personas, thread
+from evidence_forge.ui import artifacts, bills, costs, interview, personas, thread
 from evidence_forge.ui.format import clock as format_clock
 from evidence_forge.ui.format import format_usd, month_day_clock, relative_day
 
@@ -50,7 +52,7 @@ _UI_DIR = Path(__file__).resolve().parent
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 _TEXT_SUFFIXES = (".md", ".markdown", ".txt")
 NO_CONVERSATION_TITLE = "不在對話裡的工單"
-TABS = ("report", "article", "cost")
+TABS = ("report", "decisions", "article", "cost")
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,24 @@ def install(
 
     def page(request: Request, name: str, context: dict[str, Any], status: int = 200) -> HTMLResponse:
         return templates.TemplateResponse(request, name, context, status_code=status)
+
+    def read_cards(conversation_id: str) -> tuple[list[dict[str, Any]], str | None]:
+        """這個對話的編輯卡（`cards.CardState` 的 JSON）；讀不到回空清單與原因，不讓一張壞掉的卡拖垮整個畫面。"""
+        if conversation_id == artifacts.LOOSE:
+            return [], None
+        try:
+            return host.list_cards(conversation_id), None
+        except (ToolRejected, OSError, ValueError) as exc:
+            return [], getattr(exc, "message", None) or str(exc)
+
+    def card_events(conversation_id: str, card_list: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        found: dict[str, list[dict[str, Any]]] = {}
+        for card in card_list:
+            try:
+                found[card["card_id"]] = cards.read_events(data, conversation_id, card["card_id"])
+            except (ToolRejected, OSError, ValueError):
+                found[card["card_id"]] = []
+        return found
 
     def new_count(rows: list[ListRow]) -> int:
         return sum(1 for r in rows if r.state == "new")
@@ -258,7 +278,10 @@ def install(
         except (PiExited, TimeoutError, OSError, RuntimeError) as exc:
             return page(request, "_thread.html", {"unavailable": str(exc), "blocks": []}, 503)
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
-        blocks = await asyncio.to_thread(thread.build, data, jobs, history["messages"])
+        card_list, _ = await asyncio.to_thread(read_cards, conversation_id)
+        events = await asyncio.to_thread(card_events, conversation_id, card_list)
+        items = interview.thread_items(card_list, events)
+        blocks = await asyncio.to_thread(thread.build, data, jobs, history["messages"], items)
         summary = await asyncio.to_thread(host.summary, conversation_id)
         latest = jobs[-1] if jobs else None
         return page(
@@ -292,6 +315,7 @@ def install(
         tab: str = "report",
         v: str | None = None,
         diff: str | None = None,
+        card: str | None = None,
     ) -> HTMLResponse:
         if conversation_id != artifacts.LOOSE:
             try:
@@ -303,7 +327,22 @@ def install(
         jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
         kinds = {"report": "analysis", "article": "rewrite"}
         context: dict[str, Any] = {"tab": tab, "conversation_id": conversation_id, "missing": False}
-        if tab == "cost":
+        # 分頁上的「決策」數字：要重確認的關數，每個分頁都要顯示，所以每次都讀編輯卡
+        card_list, cards_error = await asyncio.to_thread(read_cards, conversation_id)
+        context["reconfirm"] = interview.reconfirm_total(card_list)
+        if tab == "decisions":
+            options = interview.card_options(card_list)
+            context["cards_error"] = cards_error
+            context["card_choices"] = options
+            context["decision"] = None
+            if options:
+                # 網址上的 card 只拿來在這個對話的卡裡挑；對不上就給最新的，不拿它去拼路徑
+                wanted = next((o.card_id for o in options if o.card_id == card), options[0].card_id)
+                chosen_card = next(c for c in card_list if c["card_id"] == wanted)
+                labels = {j.job_id: j.label for j in jobs}
+                shown = persona.display_name(data, chosen_card["persona"]) if chosen_card.get("persona") else None
+                context["decision"] = interview.decision_view(chosen_card, labels, persona_name=shown)
+        elif tab == "cost":
             context["cost"] = await asyncio.to_thread(bills.conversation_cost, data, recipe_map, conversation_id)
             budget = context["cost"].budget_usd
             context["budget"] = format_usd(budget) if budget is not None else None
@@ -343,6 +382,30 @@ def install(
         if view.error is not None:
             return PlainTextResponse(view.error, status_code=404)
         return PlainTextResponse(view.text, media_type="text/markdown; charset=utf-8")
+
+    @app.get("/ui/c/{conversation_id}/write-confirm", response_class=HTMLResponse)
+    async def write_confirm_fragment(request: Request, conversation_id: str, card: str = "") -> HTMLResponse:
+        """寫稿前的最後確認卡。要寫的卡一定要六關都選好、沒有要重確認的：照 `cards.require_writable` 再查一次。"""
+        if conversation_id == artifacts.LOOSE:
+            return page(request, "_confirm.html", {"error": "不在對話裡的工單沒有編輯卡"}, 404)
+        try:
+            await asyncio.to_thread(host.summary, conversation_id)
+            state = await asyncio.to_thread(cards.require_writable, data, conversation_id, card)
+        except ConversationNotFound:
+            return page(request, "_confirm.html", {"error": "沒有這個對話"}, 404)
+        except ToolRejected as exc:
+            return page(request, "_confirm.html", {"error": exc.message}, exc.status)
+        jobs = await asyncio.to_thread(artifacts.conversation_jobs, data, recipe_map, conversation_id)
+        written = [j for j in jobs if j.kind == "rewrite" and j.job.status == "done"]
+        settings = (await asyncio.to_thread(cost_settings.effective, data, os.environ)).loaded.settings
+        confirm = interview.write_confirm(
+            state.model_dump(mode="json"),
+            # 這張編輯卡第 1 關選的角色（沒問就是 me）；顯示名稱沒設就用資料夾名
+            persona=persona.display_name(data, state.persona or "me") or state.persona or "me",
+            last_rewrite_usd=written[-1].spent_usd if written else None,
+            cap_usd=settings.rewrite_budget_usd,
+        )
+        return page(request, "_confirm.html", {"confirm": confirm, "error": None})
 
     async def nav_count(moment: datetime) -> int:
         """導覽列「有新結果」的數字；對話清單讀不到就當 0。"""

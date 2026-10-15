@@ -211,3 +211,157 @@ ins.ch-ins { text-decoration: none; background: var(--diff-insert); }
 
 /* 帳單的長條圖：s0.css 的 `.s0-app svg` 把所有 svg 壓成 16px，這裡讓長條圖照寬度放大 */
 .s0-app svg.s0-bars { width: 100%; height: auto; }
+
+/* ── 訪談：問題卡（propose_options，#108） ──
+   樣子仿 Claude Code CLI 的 AskUserQuestion：一關 1～4 張卡、一次一張、上面看得到第幾張；
+   每張 2～4 個選項加「其他」，選定後可以加備註；答過的收成一行摘要。
+   不加新顏色：現在這一張用墨色、選中的選項墨色粗框；「要重確認」用 --color-accent-action（要你判斷）。 */
+.ch-qset { margin-left: 38px; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: var(--color-bg-page); border: 1px solid var(--color-border-strong); box-shadow: var(--shadow-paper); overflow: hidden; }
+.ch-qset[data-answered] { box-shadow: none; border-color: var(--color-border-subtle); }
+.ch-qset__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 16px; border-bottom: 1px solid var(--color-border-subtle); background: var(--color-bg-surface); }
+.ch-qset__station { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.ch-qset__count { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-secondary); }
+.ch-qtabs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.ch-qtab { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--color-border-subtle); font-size: 12px; font-weight: 500; color: var(--color-text-secondary); background: var(--color-bg-page); }
+.ch-qtab svg { width: 12px; height: 12px; }
+.ch-qtab[data-state="done"] { color: var(--color-text-primary); border-color: var(--color-border-strong); }
+.ch-qtab[aria-current="step"] { color: var(--color-bg-page); background: var(--color-text-primary); border-color: transparent; font-weight: 600; }
+.ch-qtab[data-state="todo"] { border-style: dashed; color: var(--color-text-tertiary); }
+/* 答過的卡：一行摘要（問了什麼、答了什麼） */
+.ch-qdone { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ch-qdone > li { display: grid; grid-template-columns: 16px auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; padding: 8px 16px; border-bottom: 1px solid var(--color-border-subtle); font-size: 13px; }
+.ch-qset[data-answered] .ch-qdone > li:last-child { border-bottom: 0; }
+.ch-qdone > li > svg { width: 14px; height: 14px; align-self: center; }
+.ch-qdone__chip { font-weight: 600; }
+.ch-qdone__q { color: var(--color-text-secondary); min-width: 0; }
+.ch-qdone__a { grid-column: 2 / -1; font-size: 14px; }
+.ch-qdone__a b { font-weight: 600; }
+.ch-qdone__n { grid-column: 2 / -1; font-size: 13px; color: var(--color-text-secondary); }
+/* 現在這一張 */
+.ch-q { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 14px 16px 16px; border: 0; min-width: 0; }
+.ch-q__legend { display: flex; flex-direction: column; gap: 6px; padding: 0; margin-bottom: 2px; }
+.ch-q__chip { align-self: flex-start; display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px; background: var(--color-text-primary); color: var(--color-bg-page); font-size: 12px; font-weight: 600; }
+.ch-q__q { font-size: 16px; font-weight: 600; line-height: 1.55; }
+.ch-qopts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ch-qopt { display: grid; grid-template-columns: 18px 18px minmax(0, 1fr); gap: 2px 8px; align-items: baseline; min-height: 44px; padding: 9px 12px; border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); cursor: pointer; }
+.ch-qopt:hover { background: var(--color-bg-surface); }
+.ch-qopt input { margin: 0; align-self: center; accent-color: var(--color-text-primary); }
+.ch-qopt__n { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-tertiary); }
+.ch-qopt__t { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.ch-qopt__d { grid-column: 3; font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+.ch-qopt:has(input:checked) { border: 1.5px solid var(--color-text-primary); }
+.ch-qopt:has(input:focus-visible) { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; }
+.ch-qopt__other { grid-column: 3; margin-top: 6px; width: 100%; box-sizing: border-box; min-height: 36px; padding: 6px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); font: 400 14px/1.5 var(--font-ui); background: var(--color-bg-page); color: var(--color-text-primary); }
+.ch-qnote { display: flex; flex-direction: column; gap: 4px; }
+.ch-qnote label { font-size: 13px; font-weight: 600; }
+.ch-qnote textarea { min-height: 40px; resize: vertical; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); font: 400 14px/1.5 var(--font-ui); background: var(--color-bg-page); color: var(--color-text-primary); }
+.ch-qbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 4px; }
+.ch-qbar .lm-btn { height: 40px; }
+.ch-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--color-text-secondary); }
+.ch-keys kbd { font-family: var(--font-mono); font-size: 11px; padding: 0 5px; border: 1px solid var(--color-border-strong); border-bottom-width: 2px; border-radius: var(--radius-sm); background: var(--color-bg-page); color: var(--color-text-primary); }
+.ch-dec__note { margin: 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--color-bg-surface); font-size: 14px; line-height: 1.7; }
+.ch-dec__note strong { display: block; font-size: 12px; color: var(--color-text-secondary); margin-bottom: 2px; }
+
+/* ── 右側面板：決策分頁 ── */
+.ch-card-topic { display: flex; flex-direction: column; gap: 2px; }
+.ch-card-topic__k { font-size: 12px; color: var(--color-text-secondary); }
+.ch-card-topic__v { font-family: var(--font-reading-serif); font-size: 17px; font-weight: 600; line-height: 1.4; }
+.ch-dec { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ch-dec__item { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 0 14px; padding-bottom: 22px; }
+/* 時間軸的線：接在圓點下面 */
+.ch-dec__item::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: 2px; width: 2px; background: var(--color-border-subtle); }
+.ch-dec__item:last-child::before { content: none; }
+.ch-dec__dot { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font: 600 12px/1 var(--font-mono); border: 1.5px solid var(--color-text-primary); background: var(--color-bg-page); color: var(--color-text-primary); }
+.ch-dec__item[data-state="done"] .ch-dec__dot, .ch-dec__item[data-state="revised"] .ch-dec__dot, .ch-dec__item[data-state="reused"] .ch-dec__dot { background: var(--color-text-primary); color: var(--color-bg-page); }
+.ch-dec__item[data-state="reconfirm"] .ch-dec__dot { background: var(--color-accent-action); border-color: transparent; color: var(--color-on-action); }
+.ch-dec__item[data-state="todo"] .ch-dec__dot { border: 1.5px dashed var(--color-text-tertiary); color: var(--color-text-tertiary); }
+.ch-dec__body { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-top: 3px; }
+.ch-dec__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ch-dec__name { margin: 0; font-size: 15px; font-weight: 600; }
+.ch-dec__item[data-state="todo"] .ch-dec__name { color: var(--color-text-secondary); font-weight: 500; }
+.ch-dec__time { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+.ch-dec__pick { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--color-border-strong); }
+.ch-dec__pick b { font-size: 15px; line-height: 1.5; }
+.ch-dec__pick span { font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+.ch-dec__item[data-state="reconfirm"] .ch-dec__pick { border-style: dashed; }
+.ch-dec__was { margin: 0; font-size: 13px; color: var(--color-text-secondary); }
+.ch-dec__was del { color: var(--color-text-tertiary); }
+.ch-dec__more { font-size: 13px; color: var(--color-text-secondary); }
+.ch-dec__more summary { cursor: pointer; min-height: 28px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+.ch-dec__more ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.6; }
+.ch-dec__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ch-dec__actions .lm-btn { height: 32px; font-size: 13px; }
+.ch-dec__outline { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.6; }
+.ch-dec__fig { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; font-size: 12px; color: var(--color-text-secondary); }
+.ch-dec__fig svg { width: 12px; height: 12px; }
+/* 每一關問過的卡與答案 */
+.ch-dec__qa { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); }
+.ch-dec__qa > li { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-top: 1px solid var(--color-border-subtle); }
+.ch-dec__qa > li:first-child { border-top: 0; }
+.ch-dec__q { font-size: 12px; color: var(--color-text-secondary); }
+.ch-dec__q b { color: var(--color-text-primary); font-weight: 600; margin-right: 4px; }
+.ch-dec__a { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.ch-dec__d { font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+.ch-dec__qa .ch-dec__more { margin-top: 2px; }
+.ch-dec__item[data-state="reconfirm"] .ch-dec__qa { border-style: dashed; }
+/* 決策紀錄的來源：點選＝系統直接寫；從你打的字整理＝agent 判斷後寫（虛線框＋筆的圖示，不上色） */
+.ch-src { display: inline-flex; align-items: center; gap: 3px; min-height: 18px; padding: 0 6px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong); font-size: 11px; font-weight: 500; color: var(--color-text-secondary); white-space: nowrap; vertical-align: 1px; }
+.ch-src svg { width: 11px; height: 11px; }
+.ch-src[data-src="typed"] { border-style: dashed; }
+/* 系統事件：置中的一行小字，不是誰說的話 */
+.ch-event { align-self: center; display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--color-bg-page); border: 1px solid var(--color-border-subtle); font-size: 12px; color: var(--color-text-secondary); }
+.ch-event svg { width: 12px; height: 12px; }
+.s0-badge[data-tone="reconfirm"] { background: var(--color-accent-action); border-color: transparent; color: var(--color-on-action); font-weight: 600; }
+
+/* 訪談的補充（#108）：設計稿沒畫、但實作要用的小東西。一樣只用既有的 token。 */
+.ch-src[data-src="pick"] { border-style: dashed; }
+.ch-convo__side { display: inline-flex; align-items: center; gap: 8px; }
+/* 問題卡底部：進度標籤、按鈕列放在卡片裡，跟 fieldset 同樣的內縮 */
+.ch-qfoot { padding: 0 16px 16px; }
+.ch-qset .ch-qdone[hidden] { display: none; }
+.ch-qset .ch-error.ch-qerror { margin: 0; padding: 0 16px 8px; }
+.ch-qset[aria-busy="true"] { opacity: 0.7; }
+.ch-q:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; border-radius: var(--radius-md); }
+.ch-qbar .lm-btn[disabled] { cursor: progress; }
+/* 決策分頁 */
+.ch-dec__item[data-state="pending"] .ch-dec__qa { border-style: dashed; }
+.ch-dec__more summary { list-style: none; }
+.ch-dec__more summary::-webkit-details-marker { display: none; }
+.ch-dec__more[open] > summary svg { transform: rotate(90deg); }
+.ch-dec__error { margin: 0; }
+.ch-dec__error[hidden] { display: none; }
+.ch-dec__confirm { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--color-bg-surface); font-size: 13px; }
+.ch-dec__confirm p { margin: 0; }
+.ch-dec__confirm .ch-dec__confirm-title { font-weight: 600; }
+.ch-dec__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 12px; border-top: 1px solid var(--color-border-subtle); }
+.ch-dec__foot .lm-btn { height: 40px; }
+
+/* 「其他」的輸入框在選項那一列的外面（label 只包單選鈕與它的字）：接在那一列下面，縮進到文字的位置 */
+.ch-qopts > li { display: flex; flex-direction: column; gap: 6px; }
+.ch-qopts > li > .ch-qopt__other { margin: 0 0 0 44px; width: calc(100% - 44px); }
+.ch-qset:focus-visible, .ch-dec__item:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; border-radius: var(--radius-md); }
+.ch-card-topic__picks { display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: 13px; }
+/* 決策分頁：這一關問過的紀錄（舊的組與舊的答案） */
+.ch-dec__hist ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.ch-dec__hist ul { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.ch-dec__hist-h { margin: 0; }
+.ch-dec__hist li[data-current] > .ch-dec__hist-h b { text-decoration: underline; text-underline-offset: 3px; }
+/* 手機寬度才用的收合：寬螢幕一律展開，看不到開關與一行摘要 */
+.ch-dec__line { display: none; margin: 0; font-size: 13px; color: var(--color-text-secondary); }
+.ch-dec__fold-sum { display: none; list-style: none; cursor: pointer; }
+.ch-dec__fold-sum::-webkit-details-marker { display: none; }
+
+@media (max-width: 640px) {
+  /* 手機：沒有鍵盤提示；按鈕與選項整列至少 44px；問題卡貼齊對話的邊 */
+  .ch-keys { display: none; }
+  .ch-qset { margin-left: 0; }
+  .ch-qbar .lm-btn, .ch-dec__actions .lm-btn, .ch-dec__foot .lm-btn { height: 44px; }
+  .ch-qbar { flex-wrap: nowrap; }
+  .ch-qbar .s0-row { flex: 1 1 auto; justify-content: flex-end; }
+  .ch-qbar .s0-row .lm-btn[data-q-action="next"] { flex: 1 1 auto; }
+  .ch-qset__head { flex-direction: row; }
+  .ch-dec__line { display: block; }
+  .ch-dec__fold-sum { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
+  .ch-dec__fold[open] > .ch-dec__fold-sum svg { transform: rotate(90deg); }
+  .ch-dec__more summary { min-height: 44px; }
+}
