@@ -424,14 +424,14 @@ def test_帳單頁_月份亂填就用這個月_空的月份有說明(world: tupl
     assert "這個月還沒有花費" in empty.text
 
 
-def test_導覽只有聊天室_帳單_設定(world: tuple[str, ChatFolder, ConversationHost]) -> None:
+def test_導覽只有聊天室_角色_帳單_設定(world: tuple[str, ChatFolder, ConversationHost]) -> None:
     url, _, _ = world
 
     html = httpx.get(f"{url}/bills").text
     nav = re.search(r'<nav class="s0-nav".*?</nav>', html, re.S)
 
     assert nav is not None
-    assert re.findall(r'href="([^"]+)"', nav.group(0)) == ["/", "/bills", "/settings"]
+    assert re.findall(r'href="([^"]+)"', nav.group(0)) == ["/", "/personas", "/bills", "/settings"]
 
 
 # --- 上傳 -----------------------------------------------------------------------------

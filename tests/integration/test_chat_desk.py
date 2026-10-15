@@ -192,6 +192,37 @@ def test_列出角色_不含範本與備份_附預設文體與寫過的文體(da
     }
 
 
+def test_列出角色_符號連結的資料夾與檔案不讀_外面檔案的內容不會出現在回應裡(data: DataDir, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    (outside / "genres").mkdir(parents=True)
+    # 外面的檔案寫著舊的文類 id：讀進來就會被寫成 note 洩漏出去
+    (outside / "voice.md").write_text("---\ndefault_genre: 暗號-外面的文類\n---\n聲音", encoding="utf-8")
+    (outside / "genres" / "essay.md").write_text("---\ncalibrated: true\n---\n風格", encoding="utf-8")
+    # 1. 角色資料夾本身是連結
+    data.authors.mkdir(parents=True, exist_ok=True)
+    (data.authors / "linked").symlink_to(outside, target_is_directory=True)
+    # 2. 資料夾是真的，voice.md 與風格檔是連結（指到外面，或指到裡面別的檔都一樣不跟隨）
+    real = data.authors / "real"
+    (real / "genres").mkdir(parents=True)
+    (real / "voice.md").symlink_to(outside / "voice.md")
+    (real / "genres" / "essay.md").symlink_to(outside / "genres" / "essay.md")
+    (real / "genres" / "trend.md").symlink_to(real / "voice.md")
+    # 3. genres 資料夾是連結
+    sneaky = data.authors / "sneaky"
+    sneaky.mkdir()
+    (sneaky / "genres").symlink_to(outside / "genres", target_is_directory=True)
+
+    result = _desk(data).personas()
+
+    assert result == {
+        "personas": [
+            {"name": name, "default_genre": None, "written_genres": [], "calibrated_genres": []}
+            for name in ("linked", "real", "sneaky")
+        ]
+    }
+    assert "暗號" not in repr(result)
+
+
 # --- 重構 ---------------------------------------------------------------------
 
 

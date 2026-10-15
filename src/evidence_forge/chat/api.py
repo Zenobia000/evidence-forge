@@ -64,6 +64,32 @@ def _hostname(netloc: str) -> str | None:
     return urlsplit(f"//{netloc}").hostname
 
 
+_DEFAULT_PORT = {"http": 80, "https": 443}
+
+
+def _same_origin(origin: str, request: Request) -> bool:
+    """`Origin` 標頭跟這個請求自己的來源（協定、主機、埠）完全一樣，而且主機是本機。
+
+    只比主機名稱不夠：本機另一個埠上跑著的別的網頁（例如別的開發伺服器）也是 127.0.0.1，
+    它送來的請求不是這個畫面送的。
+    """
+    parts = urlsplit(origin)
+    host = urlsplit(f"//{request.headers.get('host', '')}")
+    scheme = request.url.scheme
+    try:
+        # 明寫的埠照字比對：`:0` 是 0，不是預設埠（所以不能用 `or`）
+        origin_port = parts.port if parts.port is not None else _DEFAULT_PORT.get(parts.scheme)
+        own_port = host.port if host.port is not None else _DEFAULT_PORT.get(scheme)
+    except ValueError:  # 埠不是數字
+        return False
+    return (
+        parts.hostname in LOCAL_HOSTS
+        and parts.scheme == scheme
+        and parts.hostname == host.hostname
+        and origin_port == own_port
+    )
+
+
 def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
@@ -103,7 +129,7 @@ def create_app(
         if _hostname(request.headers.get("host", "")) not in LOCAL_HOSTS:
             return _error(403, "只接受本機的請求")
         origin = request.headers.get("origin")
-        if origin is not None and urlsplit(origin).hostname not in LOCAL_HOSTS:
+        if origin is not None and not _same_origin(origin, request):
             return _error(403, "只接受本機網頁送來的請求")
         # 別的網站放一張 <img> 指到這裡，瀏覽器不帶 Origin 但會帶 Sec-Fetch-Site。
         # 讀紀錄也會開 Pi、補送通知（打模型），所以 GET 一樣擋

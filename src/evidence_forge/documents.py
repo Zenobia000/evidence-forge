@@ -111,6 +111,11 @@ def read_frontmatter(path: Path) -> dict[str, Any]:
     return data
 
 
+def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """文字拆成（frontmatter 對應表，內文）；沒有 frontmatter 時丟 `FrontmatterError`（給畫面顯示角色檔用）。"""
+    return _split(text.removeprefix("\ufeff").replace("\r\n", "\n"))
+
+
 def write_job(path: Path, doc: JobDocument) -> None:
     """寫入（或改寫）`job.md`。
 

@@ -198,6 +198,19 @@ def test_作家的預設文類從_voice_md_的_frontmatter_讀(tmp_path: Path) -
     assert default_genre(DataDir(tmp_path / "empty")) is None
 
 
+def test_預設文類_voice_md_或角色資料夾是連結_不讀連結指到的檔(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "voice.md").write_text("---\ndefault_genre: essay\n---\n外面的", encoding="utf-8")
+    data = DataDir(tmp_path / "data")
+    (data.authors / "a").mkdir(parents=True)
+    (data.authors / "a" / "voice.md").symlink_to(outside / "voice.md")
+    (data.authors / "b").symlink_to(outside, target_is_directory=True)
+
+    assert default_genre(data, "a") is None
+    assert default_genre(data, "b") is None
+
+
 # --- 角色、標題與金句規則、從上一張單接著做（#79、ADR-0019 §3.6） -----------------
 
 NOW = datetime(2026, 10, 13, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
