@@ -44,3 +44,9 @@ def test_訪談不叫_rewrite_寫新文章() -> None:
     assert "Do not call `rewrite` for an interview card" in writing
     # 舊的「寫第 N 個 → rewrite」規則拿掉了（ADR-0025 §3.5）
     assert "suggested_genre` to the topic" not in PROMPT
+
+
+def test_打字說沒有例子_記成_no_example_閘道才擋得到() -> None:
+    # 記成 other_text 的話閘道當成作者給了內容，要作者經驗的文體就漏過第 3 關（cards._example_problem）
+    typed = PROMPT[PROMPT.index("### Answers typed in the chat") : PROMPT.index("### The six stations")]
+    assert "`no_example: true`, never as `other_text`" in typed
