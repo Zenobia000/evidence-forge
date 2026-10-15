@@ -1,0 +1,8 @@
+{% from "_icons.html" import icon %}
+{% from "_interview.html" import write_confirm %}
+{# 寫稿前的最後確認卡（票 108）：由 app.js 放進對話串流；卡不能寫稿就是一行說明 #}
+{% if error %}
+<div class="ch-error" role="alert" data-confirm-error>{{ icon("warn") }}<span>現在不能照這張編輯卡寫稿。<span class="ch-error__help">{{ error }}</span></span></div>
+{% else %}
+{{ write_confirm(confirm) }}
+{% endif %}

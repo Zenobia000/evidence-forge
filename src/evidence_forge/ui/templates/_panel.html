@@ -1,4 +1,5 @@
 {% from "_icons.html" import icon %}
+{% from "_interview.html" import decisions %}
 {%- macro rate(value) -%}{{ ("%.1f" % value).rstrip("0").rstrip(".") }}{%- endmacro -%}
 {%- macro mark(verdict, label) -%}
 <span class="ch-vmark" data-verdict="{{ verdict }}">{{ icon(verdict) }}{{ label }}</span>
@@ -13,6 +14,7 @@
 <div class="ch-panel__head">
 <div class="s0-tabs" role="tablist" aria-label="面板內容">
 <button class="s0-tab" role="tab" type="button" data-tab="report" aria-selected="{{ 'true' if tab == 'report' else 'false' }}">報告</button>
+<button class="s0-tab" role="tab" type="button" data-tab="decisions" aria-selected="{{ 'true' if tab == 'decisions' else 'false' }}"{% if reconfirm %} aria-label="決策，{{ reconfirm }} 關要重確認"{% endif %}>決策{% if reconfirm %} <span class="s0-tab__n">{{ reconfirm }}</span>{% endif %}</button>
 <button class="s0-tab" role="tab" type="button" data-tab="article" aria-selected="{{ 'true' if tab == 'article' else 'false' }}">文章</button>
 <button class="s0-tab" role="tab" type="button" data-tab="cost" aria-selected="{{ 'true' if tab == 'cost' else 'false' }}">花費</button>
 </div>
@@ -80,6 +82,23 @@
 </details>
 </article>
 {% endif %}
+</div>
+{% endif %}
+
+{% elif tab == "decisions" %}
+{# 決策分頁（票 108）：每一關問過的每張卡與答案；點選、沿用、重問都由系統直接寫進決策紀錄，這裡照紀錄長出來 #}
+{% if cards_error %}
+<div class="ch-panel__body"><div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到這張編輯卡的決策紀錄</p><p class="s0-small" style="margin: 0">原因：{{ cards_error }}</p></div></div></div>
+{% elif not decision %}
+<div class="ch-panel__body"><div class="s0-state" style="border: 0; padding: 0"><p style="margin: 0; font-weight: 600">這個對話還沒有編輯卡</p><p class="s0-small" style="margin: 0">跟它說「寫報告的第 1 個題材」或「我想寫……」，就會一關一關問你，答過的會出現在這裡。</p></div></div>
+{% else %}
+<div class="ch-panel__bar">
+<label class="s0-small ch-verlabel" for="ch-card">編輯卡
+<select id="ch-card" data-card-select>{% for o in card_choices %}<option value="{{ o.card_id }}"{% if o.card_id == decision.card_id %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select></label>
+<span class="s0-small"><span class="s0-mono">{{ decision.progress }}</span>{% if decision.reconfirm %}・<span class="s0-mono">{{ decision.reconfirm }}</span> 關要重確認{% endif %}</span>
+</div>
+<div class="ch-panel__body">
+{{ decisions(decision) }}
 </div>
 {% endif %}
 
