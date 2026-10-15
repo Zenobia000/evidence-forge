@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from evidence_forge.checks.analysis import brief_checks, report_checks
-from evidence_forge.checks.article import article_checks, genre_skeleton
+from evidence_forge.checks.article import ArticleRules, article_checks, genre_skeleton
 from evidence_forge.checks.format import SchemaError
 from evidence_forge.checks.overlap import OverlapThresholds
 from evidence_forge.checks.report import CheckEntry, CheckId, Location
@@ -172,13 +172,16 @@ def run_article_checks(
     output: Path,
     schema: Path,
     original_url: str | None,
-    original_title: str,
+    original_title: str | None,
     original_author: str | None,
     texts: Mapping[str, str],
     thresholds: OverlapThresholds,
+    rules: ArticleRules | None = None,
 ) -> list[CheckEntry]:
     """重構段某次嘗試的產出：`article.md` 的格式與原文出處、`article.json` 符合 schema（擋），
-    文章跟 `texts` 裡每一份文字的逐字重疊（只顯示）。路徑都相對於 `job_dir`。"""
+    文章跟 `texts` 裡每一份文字的逐字重疊（只顯示）。路徑都相對於 `job_dir`。
+
+    `original_title` 是 None：沒有原文。`rules`：照編輯卡寫的文章多查的幾條（執行器讀好傳進來）。"""
     schema_doc = _load_schema(schema)
     read = _read_document(job_dir, article, output)
     if isinstance(read, list):
@@ -199,4 +202,5 @@ def run_article_checks(
         texts=texts,
         thresholds=thresholds,
         skeleton=skeleton,
+        rules=rules,
     )

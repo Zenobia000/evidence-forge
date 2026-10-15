@@ -8,6 +8,7 @@
 // - 沒有輪詢工單：清單每 15 秒與視窗重新取得焦點時重抓一次，因為別的分頁、別的入口也會改清單。
 
 import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
+import { writeOutcome, writeRequest } from "./interview.js";
 import { initInterview } from "./interview-ui.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
@@ -713,11 +714,41 @@ setInterval(refreshList, 15000);
 
 // ── 訪談：問題卡、決策分頁的按鈕、寫稿前的最後確認（interview-ui.js） ──────
 
-// 「照這張編輯卡寫稿」的預留位置：寫稿本身（開 rewrite 工單、帶編輯卡的快照）是 票 110 的事。
-// 最後確認卡按下「照這張寫」會走到這裡；票 110 接上之前只說明還沒接上，編輯卡照舊留著，不開工單、不花錢。
-function startWritingFromCard(cardId) {
-  showNote("info", `「照這張編輯卡寫稿」還沒接上（票 110）。編輯卡 ${cardId} 先留著，什麼都沒開、沒花錢。`);
-  setTimeout(() => showNote("info", ""), 10000);
+// 「照這張編輯卡寫稿」（票 110）：最後確認卡按下「照這張寫」走到這裡，帶著確認卡上的事件筆數開寫稿工單。
+// 伺服器說卡在確認之後又改過、或還不能寫（409）：說原因、照現在的卡重開確認卡；其他錯誤只說原因（沒開單、沒花錢）。
+async function startWritingFromCard(cardId, events) {
+  let request;
+  try {
+    request = writeRequest(conversationId, cardId, events);
+  } catch (error) {
+    showNote("error", `沒有開始寫稿：${error.message}。再按一次「照這張編輯卡寫稿」。`);
+    return;
+  }
+  let status = 0;
+  let data = null;
+  try {
+    const response = await fetch(request.url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request.body),
+    });
+    status = response.status;
+    data = await response.json().catch(() => null);
+  } catch (error) {
+    data = { error: `連不上伺服器（${error.message}）` };
+  }
+  const outcome = writeOutcome(status, data);
+  if (outcome.ok) {
+    showNote("error", "");
+    showNote("info", outcome.text);
+    setTimeout(() => showNote("info", ""), 10000);
+    // 新的工單：對話串流（進度卡）與清單重抓
+    clearTimeout(threadTimer);
+    await Promise.all([loadThread(), refreshList()]);
+    return;
+  }
+  showNote("error", outcome.text);
+  if (outcome.reopen) await interview.openWriteConfirm(cardId);
 }
 
 const interview = initInterview({

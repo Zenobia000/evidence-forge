@@ -1,6 +1,7 @@
 // 編輯卡的對話工具（ADR-0025 §3.3、FR-IW-03、#107）：跟對話的工具一起註冊（chat.ts）。
 //
 // - propose_questions：提出一關的 1～4 張問題卡（沒給 card 就開一張新卡，只能從第 1 關開始）。只記錄、不花錢。
+//   第 6 關一定有一張圖文分鏡卡（kind storyboard，每個選項帶 figures）與主張清單（claims，1～5 條，#110）。
 // - record_interpreted_answers：創作者在主輸入框打字回答（附原話 quote）、或說「你幫我選」（pick_for_me）時才用。
 //   事件標 source: agent，畫面上看得出是 agent 解讀的。
 // - add_material：記一份作者素材（創作者自己的筆記、數據、草稿、逐字稿），編號 M1、M2…
@@ -48,6 +49,15 @@ export function describeCard(card: Row): string {
   if (card.genre) lines.push(`genre: ${String(card.genre)}`);
   if (card.theme) lines.push(`theme: ${String(card.theme)}`);
   if (card.persona) lines.push(`persona: ${String(card.persona)}`);
+  const claims = (card.claims ?? []) as Row[];
+  if (claims.length > 0) {
+    lines.push(`claims: ${claims.map((c, i) => `${i + 1}. ${String(c.claim)} (wrong if: ${String(c.wrong_if)})`).join(" ")}`);
+  }
+  const storyboard = card.storyboard as Row[] | null | undefined;
+  if (Array.isArray(storyboard)) {
+    const figures = storyboard.map((f) => `${String(f.section)}: ${String(f.kind)}`);
+    lines.push(`storyboard: ${figures.length > 0 ? figures.join("; ") : "no figures"}`);
+  }
   const origin = card.origin as Row | null | undefined;
   if (origin) {
     const from = origin.job_id ? ` job ${String(origin.job_id)} topic ${String(origin.topic)}` : "";
@@ -68,9 +78,12 @@ export function describeCard(card: Row): string {
         const yours = latest.source === "agent" ? ` [recorded by you: ${String(latest.mode)}]` : "";
         lines.push(`${head} -> ${describeAnswer(answer)}${yours}`);
       } else {
-        const options = ((question.options ?? []) as Row[]).map(
-          (o) => `${String(o.label)}${o.value ? ` [${String(o.value)}]` : ""} (${String(o.description)})`,
-        );
+        const options = ((question.options ?? []) as Row[]).map((o) => {
+          const figures = Array.isArray(o.figures)
+            ? ` {${(o.figures as Row[]).map((f) => `${String(f.section)}: ${String(f.kind)}`).join("; ") || "no figures"}}`
+            : "";
+          return `${String(o.label)}${o.value ? ` [${String(o.value)}]` : ""} (${String(o.description)})${figures}`;
+        });
         const always = station.station === 3 ? ["其他", "沒有例子"] : ["其他"];
         lines.push(`${head} options: ${[...options, ...always].join(" | ")}`);
       }
@@ -103,7 +116,7 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "propose_questions",
       label: "Propose questions",
       description:
-        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card (kind genre) whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend) and exactly one theme card (kind theme, values from worldview, builder-method, startup, tech-selection, adoption, education, tools, open-source); it may also have one persona card (kind persona, values are persona names from list_personas). Labels on those cards can be plain Chinese names; the value is what gets recorded. On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
+        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card (kind genre) whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend) and exactly one theme card (kind theme, values from worldview, builder-method, startup, tech-selection, adoption, education, tools, open-source); it may also have one persona card (kind persona, values are persona names from list_personas). Labels on those cards can be plain Chinese names; the value is what gets recorded. On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Station 6 must have exactly one storyboard card (kind storyboard) whose every option has figures: the figures of that plan in article order, each with section, kind (concept, chart or table) and optionally shows; an empty list means no figures. Station 6 must also carry claims: 1-5 factual claims the article will make, each with wrong_if (how it could be proven wrong). Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
       parameters: Type.Object({
         card: Type.Optional(CardParam),
         station: StationParam,
@@ -111,9 +124,13 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
           Type.Object({
             header: Type.String({ description: "Short label of what this card asks, e.g. 文體 or 主題 (at most 24 characters)" }),
             kind: Type.Optional(
-              Type.Union([Type.Literal("genre"), Type.Literal("theme"), Type.Literal("persona")], {
-                description: "Station 1 only: the genre, theme or persona card. Every option of such a card carries value",
-              }),
+              Type.Union(
+                [Type.Literal("genre"), Type.Literal("theme"), Type.Literal("persona"), Type.Literal("storyboard")],
+                {
+                  description:
+                    "Station 1: the genre, theme or persona card, every option carries value. Station 6: the storyboard card, every option carries figures",
+                },
+              ),
             ),
             question: Type.String({ description: "The question" }),
             options: Type.Array(
@@ -123,11 +140,32 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
                 value: Type.Optional(
                   Type.String({ description: "Station 1 genre, theme or persona card only: the genre slug, theme slug or persona name this option stands for" }),
                 ),
+                figures: Type.Optional(
+                  Type.Array(
+                    Type.Object({
+                      section: Type.String({ description: "The section this figure goes in, by what the section says" }),
+                      kind: Type.Union([Type.Literal("concept"), Type.Literal("chart"), Type.Literal("table")], {
+                        description: "concept: a concept figure; chart: a data chart; table: a Markdown table written in the text (not a figure)",
+                      }),
+                      shows: Type.Optional(Type.String({ description: "What the reader should see there" })),
+                    }),
+                    { maxItems: 12, description: "Station 6 storyboard card only: this plan's figures in article order; empty for no figures" },
+                  ),
+                ),
               }),
               { minItems: 2, maxItems: 4 },
             ),
           }),
           { minItems: 1, maxItems: 4 },
+        ),
+        claims: Type.Optional(
+          Type.Array(
+            Type.Object({
+              claim: Type.String({ description: "A factual claim the article will make" }),
+              wrong_if: Type.String({ description: "How it could be proven wrong" }),
+            }),
+            { minItems: 1, maxItems: 5, description: "Station 6 only, required there: the claims the creator checks before writing" },
+          ),
         ),
         origin: Type.Optional(
           Type.Object(
@@ -145,6 +183,7 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
         const body: Record<string, unknown> = { station: params.station, questions: params.questions };
         if (params.card !== undefined) body.card = params.card;
         if (params.origin !== undefined) body.origin = params.origin;
+        if (params.claims !== undefined) body.claims = params.claims;
         const data = await callGateway("propose_questions", body);
         return text(
           `card_id: ${String(data.card_id)}\nProposed. The creator answers on screen; wait for the [ef-card] notice.\n\n${describeCard(data.card as Row)}`,

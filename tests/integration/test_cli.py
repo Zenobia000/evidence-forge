@@ -36,6 +36,7 @@ def test_ef_new_沒指定配方就開分析_寫素材項目並開一張排隊中
     assert (job.status, job.recipe, job.goal) == ("queued", "analyze", "一段話說明重點")
     # 分析配方的查證段有搜尋額度：沒指定 credits 就用配方各段的總和
     assert job.budget.tavily_credits == 24
+    assert job.feed is not None
     item_dir = ef_data / job.feed.item
     assert item_dir.parent == ef_data / "inbox" / "manual"
     assert (item_dir / "content.md").read_text(encoding="utf-8") == text
@@ -60,6 +61,7 @@ def test_ef_new_上傳檔案_沒填目標用配方的預設目標(
     job_id = capsys.readouterr().out.strip()
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
     assert job.goal == "用兩三句話說明這篇文章在講什麼"
+    assert job.feed is not None
     assert (ef_data / job.feed.item / "raw" / "a.md").is_file()
 
 

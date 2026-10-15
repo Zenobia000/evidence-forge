@@ -84,7 +84,7 @@ export function targetKind(node) {
 //   fragment(url)       抓 HTML 片段 → {status, html}
 //   afterWrite()        寫進決策紀錄之後：重抓對話串流、決策分頁、清單；回傳的 Promise 在都換好之後才結束
 //   announce(text)      給螢幕閱讀器念一句（放進 #ch-live）
-//   startWriting(cardId)  最後確認之後開始寫稿（票 110 接；現在是預留的位置）
+//   startWriting(cardId, events)  最後確認之後開始寫稿（票 110）；events 是確認卡上的事件筆數
 //   revealChat()        窄螢幕時把蓋住對話的面板收起來
 //   confirmHost         放最後確認卡的容器
 //   panel               右側面板
@@ -339,7 +339,8 @@ export function initInterview(env) {
     if (qset.hasAttribute("data-confirm")) {
       const { go } = resolveWriteConfirm(store, keyOf(qset), station);
       qset.remove();
-      if (go) env.startWriting(qset.dataset.card);
+      // 帶著確認卡上的事件筆數：伺服器據此知道創作者看到的是不是現在的卡（票 110）
+      if (go) env.startWriting(qset.dataset.card, qset.dataset.events);
       return;
     }
     submit(qset, outcome.payload);
@@ -537,5 +538,7 @@ export function initInterview(env) {
     restoreFocus,
     clearConfirm,
     dropStaleConfirm,
+    // 寫稿被拒（卡在確認之後又改過）時，照現在的卡重開確認卡
+    openWriteConfirm,
   };
 }

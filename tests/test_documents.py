@@ -42,6 +42,7 @@ def test_hand_written_job_md_is_read_into_typed_fields() -> None:
     doc = parse_job(HAND_WRITTEN_JOB)
     job = doc.job
     assert job.id == "2026-10-10-substack-abc123"
+    assert job.feed is not None
     assert job.feed.connector == "rss"
     assert job.feed.item == "inbox/some-newsletter/abc123"
     assert job.target_genre == "opinion"

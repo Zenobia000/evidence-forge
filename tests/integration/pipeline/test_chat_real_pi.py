@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 from chat_world import wait_until
-from fake_anthropic import FakeAnthropic, station_questions
+from fake_anthropic import STATION_6_CLAIMS, FakeAnthropic, station_questions
 
 from evidence_forge import cards, conversations
 from evidence_forge.chat.desk import Desk
@@ -541,7 +541,13 @@ def _decided_card(chat: Chat, cid: str) -> str:
     for station in range(1, 7):
         if station > 1:
             cards.propose_questions(
-                chat.data, cid, card_id, station, station_questions(station, "idea"), now=NOW
+                chat.data,
+                cid,
+                card_id,
+                station,
+                station_questions(station, "idea"),
+                now=NOW,
+                claims=STATION_6_CLAIMS if station == 6 else None,
             )
         card = cards.read_card(chat.data, cid, card_id)
         answers: list[dict[str, Any]] = [

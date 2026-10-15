@@ -30,6 +30,8 @@
   （Pi 沒開就先開）。ef-tools 放一則 `ef-card` 通知、觸發一輪，agent 讀編輯卡接著往下；同一筆照紀錄去重。
   沒送成只推一則 `ef_error`，不重試：點選已經記下了，創作者在聊天裡說一句 agent 一樣讀得到。
 - 不管誰寫的（畫面，或閘道替 agent 寫完叫 `card_changed`），都推一則 `ef_card` 給畫面。
+- 「照這張編輯卡寫稿」（#110）也是畫面按的：交給工作台的 `write_from_card` 開寫稿單（`use_desk` 接上），
+  開了的單照一般工單推進度、結束時送 `/ef-job-done`。對話的 agent 叫不到它。
 
 **進度**
 - 每次工單有變，算一次 `ef_job` 事件（`progress.py`），跟上次不一樣才推給訂閱這個對話的畫面。
@@ -60,7 +62,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from evidence_forge import cards, conversations
 from evidence_forge.budget import micros_to_usd
@@ -102,6 +104,14 @@ Event = dict[str, Any]
 
 class ConversationNotFound(LookupError):
     pass
+
+
+class WritingDesk(Protocol):
+    """開寫稿工單的那一層（`chat/desk.py` 的 `Desk`）。"""
+
+    def write_from_card(
+        self, conversation_id: str, card_id: str, confirmed_events: object
+    ) -> dict[str, Any]: ...
 
 
 class PromptRejected(RuntimeError):
@@ -246,6 +256,12 @@ class ConversationHost:
         self._reaper_wake = threading.Event()
         self._closing = threading.Event()
         self._threads: list[threading.Thread] = []
+        # 「照這張編輯卡寫稿」交給它開單；`ef serve` 建好工作台之後接上（工作台要拿主機的回呼，所以晚一步）
+        self._desk: WritingDesk | None = None
+
+    def use_desk(self, desk: WritingDesk) -> None:
+        """接上開寫稿單的工作台（`ef serve` 啟動時）。"""
+        self._desk = desk
 
     # --- 生命週期 ---------------------------------------------------------------
 
@@ -480,6 +496,18 @@ class ConversationHost:
         self._read(conversation_id)
         written = cards.reask_station(self._data, conversation_id, card_id, station, now=self._clock())
         return self._clicked(conversation_id, written, "reask", station)
+
+    def write_from_card(
+        self, conversation_id: str, card_id: str, confirmed_events: object
+    ) -> dict[str, Any]:
+        """畫面的「照這張編輯卡寫稿」（`confirmed_events` 是確認時看到的事件筆數）。錯誤丟 `ToolRejected`。
+
+        開了單由工作台記進 `jobs.jsonl` 並通知這裡（`job_opened`），之後照一般工單推進度。
+        """
+        self._read(conversation_id)
+        if self._desk is None:
+            raise ToolRejected(503, "這個 ef serve 沒有接上寫稿的工作台")
+        return self._desk.write_from_card(conversation_id, card_id, confirmed_events)
 
     def card_changed(
         self, conversation_id: str, card_id: str, events: list[dict[str, Any]]
@@ -919,7 +947,10 @@ class ConversationHost:
         except (OSError, ValueError):
             return None
         root = self._data.root.resolve()
-        for path in (job_dir / "input" / "item.json", self._data.root / job.feed.item / "item.json"):
+        candidates = [job_dir / "input" / "item.json"]
+        if job.feed is not None:
+            candidates.append(self._data.root / job.feed.item / "item.json")
+        for path in candidates:
             # feed.item 是 job.md 裡的字串：跳出資料目錄的不讀
             if not path.resolve().is_relative_to(root) or not path.is_file():
                 continue

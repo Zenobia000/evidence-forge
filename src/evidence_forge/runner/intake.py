@@ -18,6 +18,11 @@
 新工單沿用上一張的素材項目，不放原文全文；上一張的產出由執行器開工前放進 `input/`
 （`stage_inputs.carried_files`）。每一版都是一張新工單，不走去重。
 
+照編輯卡寫稿（`open_job_from_card`，ADR-0025 §3.4、#110）：開單當下把編輯卡的快照（`cards.snapshot`）
+連同作者素材複製進新工單的 `input/card/`，工單只讀這一份，之後再改編輯卡不影響已經開出去的單。
+從報告的題材開始時接著那張分析工單做（報告與來源由執行器帶過來，素材項目沿用它的）；
+從創作者自己的想法或作者素材開始時沒有上一張單，也沒有原文（`feed` 是 None）。
+
 工單的 `job.md` 與 `events.jsonl` 只有執行器寫，所以開單放在 runner。
 """
 
@@ -34,14 +39,19 @@ from pathlib import Path, PurePath
 
 from pydantic import ValidationError
 
+from evidence_forge import cards
 from evidence_forge.documents import FrontmatterError, JobDocument, read_job, write_job
 from evidence_forge.extract import pdf_to_text
 from evidence_forge.gateway.fetch import Fetcher, cache_key, fetch_for_intake
+from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Budget, Event, FeedRef, Item, Job, Recipe
 from evidence_forge.paths import DataDir
 from evidence_forge.runner import events
 from evidence_forge.runner.stage_inputs import (
     AUTHOR,
+    CARD_BRIEF,
+    CARD_EVENTS,
+    CARD_JSON,
     PREVIOUS_ARTICLE,
     carried_files,
     default_genre,
@@ -53,6 +63,8 @@ from evidence_forge.runner.stage_inputs import (
 from evidence_forge.write_once import write_once
 
 MANUAL_FEED = "manual"
+# 照編輯卡寫的工單的目標：要寫什麼都在編輯卡上，目標只指過去
+CARD_GOAL = "照編輯卡（input/card/card.md）寫一篇新文章"
 _TEXT_SUFFIXES = (".md", ".markdown", ".txt")
 
 
@@ -75,6 +87,13 @@ class WebPage:
 
 
 Source = PastedText | UploadedFile | WebPage
+
+
+class CardChanged(ValueError):
+    """改稿碰到編輯卡的事（#110）：卡在這篇寫好之後又改過，或改稿要換掉卡定的文體。
+
+    工作台把它換成 409：這不是重試修得好的錯，要創作者看過編輯卡、改卡、再按「照這張編輯卡寫稿」。
+    """
 
 
 class SourceUnreadable(Exception):
@@ -226,7 +245,8 @@ def _open_job_for(
         except (OSError, FrontmatterError, ValidationError):
             continue  # 正在建立或壞掉的工單不算
         if (
-            job.feed.item == item_path
+            job.feed is not None
+            and job.feed.item == item_path
             and job.recipe == recipe
             and _reusable(job)
             and job.goal.strip() == goal
@@ -252,7 +272,10 @@ def same_source(data: DataDir, job: Job, source: Source) -> bool:
 
     閘道在對話已有單在跑時，先用它判斷這次會不會只是去重拿回那一張，不會的話抓之前就擋下。
     貼的文字比內容 hash；網址比素材項目記的網址（同一個網址內容變了，就等真的抓了再說）。
+    沒有素材項目的單（照自己的想法寫的稿，#110）一定不是。
     """
+    if job.feed is None:
+        return False
     match source:
         case PastedText(text=text):
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -412,6 +435,9 @@ def open_job_from(
     - `allowed_genres`（文體 slug → 中文名）：給了就檢查最後定下的文體，包括沿用上一張的、
       角色的預設文體；不在裡面（例：舊工單的 12 種文類 id）就不開單，訊息列出有哪些（ADR-0026 §3.4）。
       「上一張單是不是這個對話的」由閘道檢查，這裡不管。
+    - 再改照編輯卡寫的文章（#110、ADR-0025 §3.4「改稿也是新工單、新快照」）：拿著卡的鎖讀一份**新的**快照
+      放進新工單。卡在上一版寫好之後又改過（事件筆數不一樣）就不開，丟 `CardChanged`，請創作者看過編輯卡、
+      按「照這張編輯卡寫稿」寫新的一篇；沒改過，新快照跟上一版的一樣。文體與角色由第 1 關定，改稿要換也丟 `CardChanged`。
 
     錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
     """
@@ -428,7 +454,10 @@ def open_job_from(
             f"工單 {parent_id} 還沒跑完（{parent.status}），等它結束再接著做"
         )
     carried = {Path(target).name for target in carried_files(parent_dir)}
-    wanted = list(recipe.needs)
+    same = parent.recipe == recipe.name
+    # 再改照創作者自己的想法或作者素材寫的稿（#110）：從來沒有報告，配方的 needs 對它不適用
+    without_report = same and parent.card is not None and parent.feed is None
+    wanted = [] if without_report else list(recipe.needs)
     if feedback is not None and feedback.strip():
         wanted.append(Path(PREVIOUS_ARTICLE).name)
     missing = [name for name in wanted if name not in carried]
@@ -437,7 +466,21 @@ def open_job_from(
             f"工單 {parent_id} 交不出 {'、'.join(missing)}（要過了程式檢查的產出），沒辦法接著做"
         )
 
-    same = parent.recipe == recipe.name
+    taken: cards.Snapshot | None = None
+    materials: dict[str, bytes] = {}
+    if same and parent.card is not None:
+        # 文體與角色都是第 1 關的決定（ADR-0025 §3.2）：改稿不能悄悄換掉
+        if genre is not None and genre != parent.target_genre:
+            raise CardChanged(
+                f"這篇照編輯卡寫，文體由第 1 關定（{parent.target_genre}）：要換成 {genre}，"
+                "改編輯卡第 1 關，再按照這張編輯卡寫稿"
+            )
+        if persona is not None and persona != (parent.persona or AUTHOR):
+            raise CardChanged(
+                f"這篇照編輯卡寫，角色由第 1 關定（{parent.persona or AUTHOR}）：要換成 {persona}，"
+                "改編輯卡第 1 關，再按照這張編輯卡寫稿"
+            )
+        taken, materials = _fresh_snapshot(data, parent_dir, parent)
     chosen_persona = persona or (parent.persona if same else None) or AUTHOR
     _check_persona(data, chosen_persona)
     chosen_goal = (
@@ -453,17 +496,15 @@ def open_job_from(
     if allowed_genres is not None and chosen_genre is not None and chosen_genre not in allowed_genres:
         listed = "、".join(f"{key}（{name}）" for key, name in allowed_genres.items())
         raise ValueError(f"文體 {chosen_genre} 不是現在的文體之一（有：{listed}）")
-    item = Item.model_validate_json(
-        (data.root / parent.feed.item / "item.json").read_bytes()
-    )
-    assert item.content_hash is not None  # 開得出工單的素材項目一定讀得到
     budget = Budget(
         usd=budget_usd,
         tavily_credits=(
             recipe_credits(recipe) if budget_credits is None else budget_credits
         ),
     )
-    job_id, job_dir = _new_job_dir(data, f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}")
+    job_id, job_dir = _new_job_dir(data, _job_base(data, now, parent.feed, parent.card))
+    if taken is not None:
+        _put_card(job_dir, taken, materials)
     job = Job(
         id=job_id,
         recipe=recipe.name,
@@ -474,6 +515,8 @@ def open_job_from(
         parent=parent_id,
         feedback=feedback.strip() if feedback and feedback.strip() else None,
         conversation=conversation,
+        # 再改照編輯卡寫的文章：同一張卡，開單時放了一份新的快照（#110）
+        card=parent.card if same else None,
         budget=budget,
         status="queued",
     )
@@ -487,6 +530,146 @@ def open_job_from(
             to_status="queued",
             message=f"開單（接著工單 {parent_id} 做）",
         ),
+    )
+    write_job(job_dir / "job.md", JobDocument(job=job))
+    return job
+
+
+def _fresh_snapshot(data: DataDir, parent_dir: Path, parent: Job) -> tuple[cards.Snapshot, dict[str, bytes]]:
+    """再改照編輯卡寫的文章：現在這張卡的新快照與作者素材；卡在上一版寫好之後改過就丟 `CardChanged`。"""
+    assert parent.card is not None
+    if parent.conversation is None:
+        raise ValueError(f"工單 {parent.id} 照編輯卡寫，卻沒有記是哪個對話開的：沒辦法讀那張卡")
+    try:
+        taken = cards.snapshot(data, parent.conversation, parent.card)
+    except ToolRejected as exc:
+        raise ValueError(f"讀不到這篇的編輯卡 {parent.card}：{exc.message}") from None
+    try:
+        before = cards.CardState.model_validate_json((parent_dir / CARD_JSON).read_bytes()).events
+    except (OSError, ValidationError):
+        before = None
+    if before != taken.card.events:
+        raise CardChanged(
+            f"編輯卡在這篇寫好之後又改過（寫的時候 {before} 筆，現在 {taken.card.events} 筆）："
+            "改稿只照當時那張卡改；請看過編輯卡，按「照這張編輯卡寫稿」照現在的卡寫新的一篇"
+        )
+    return taken, _read_materials(data, parent.conversation, taken.card)
+
+
+def _read_materials(data: DataDir, conversation: str, card: cards.CardState) -> dict[str, bytes]:
+    """快照列的作者素材，照 sha256 一份一份讀出來驗過（存的檔不見或被改過就丟 `ValueError`）。"""
+    found: dict[str, bytes] = {}
+    for material in card.materials:
+        try:
+            content = cards.material_file(data, conversation, card.card_id, material.sha256).read_bytes()
+        except OSError:
+            raise ValueError(f"作者素材 {material.id} 存的檔不見了，先重新貼一次") from None
+        if hashlib.sha256(content).hexdigest() != material.sha256:
+            raise ValueError(f"作者素材 {material.id} 存的檔跟記下的內容對不上（被改過或沒寫完），先重新貼一次")
+        found[material.sha256] = content
+    return found
+
+
+def _put_card(job_dir: Path, taken: cards.Snapshot, materials: dict[str, bytes]) -> None:
+    """快照放進工單的 `input/card/`（ADR-0025 §3.4）：寫稿讀的摘要、留底的編輯卡與決策紀錄、作者素材。"""
+    write_once(job_dir / CARD_JSON, taken.card.model_dump_json(indent=2))
+    write_once(
+        job_dir / CARD_EVENTS,
+        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in taken.events),
+    )
+    write_once(job_dir / CARD_BRIEF, cards.writing_brief(taken.card))
+    for digest, content in materials.items():
+        write_once(job_dir / cards.SNAPSHOT_MATERIALS / digest, content)
+
+
+def _job_base(data: DataDir, now: datetime, feed: FeedRef | None, card: str | None) -> str:
+    """工單 id 的前段：開單時間加素材的內容 hash 前 8 碼；沒有素材項目（照自己的想法寫）用卡 id 的 hash。"""
+    if feed is not None:
+        item = Item.model_validate_json((data.root / feed.item / "item.json").read_bytes())
+        assert item.content_hash is not None  # 開得出工單的素材項目一定讀得到
+        return f"{now:%Y%m%d-%H%M%S}-{item.content_hash[:8]}"
+    digest = hashlib.sha256((card or "").encode("utf-8")).hexdigest()
+    return f"{now:%Y%m%d-%H%M%S}-{digest[:8]}"
+
+
+def open_job_from_card(
+    data: DataDir,
+    recipe: Recipe,
+    snapshot: cards.Snapshot,
+    *,
+    now: datetime,
+    budget_usd: float = 0.5,
+    budget_credits: int | None = None,
+    conversation: str,
+    allowed_genres: Mapping[str, str] | None = None,
+) -> Job:
+    """照一張編輯卡的快照開一張排隊中的寫稿工單（ADR-0025 §3.4）。
+
+    - 卡要六關都有決定（`writable`）；文體、主題要有（ADR-0026 §3.2：front matter 一定有這兩欄）。
+    - 角色是第 1 關選的（沒問角色卡就是 `me`），一定要有資料夾。文體在 `allowed_genres` 裡。
+    - 從報告的題材開始：上一張單是那張分析，要跑完、交得出配方的 `needs`（報告）；素材項目沿用它的。
+    - 作者素材照快照裡的 sha256 一份一份複製，內容對不上就不開（存的檔被改過）。
+    - 先把要複製的全部讀好、驗好才建工單資料夾：擋下的不留半張單。`job.md` 最後寫。
+    - 「這張卡是不是這個對話的」「創作者確認時看到的是不是這一版」由呼叫的人（工作台）查。
+
+    錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
+    """
+    card = snapshot.card
+    if not card.writable:
+        raise ValueError(
+            "還不能照這張編輯卡寫稿："
+            + "；".join(f"第 {b.station} 關（{cards.STATIONS[b.station]}）{b.status}" for b in card.blocking)
+        )
+    if card.genre is None or card.theme is None:
+        raise ValueError("編輯卡第 1 關沒有選好文體與主題：重問第 1 關，文體卡與主題卡都要選")
+    if allowed_genres is not None and card.genre not in allowed_genres:
+        listed = "、".join(f"{key}（{name}）" for key, name in allowed_genres.items())
+        raise ValueError(f"文體 {card.genre} 不是現在的文體之一（有：{listed}）")
+    persona = card.persona or AUTHOR
+    _check_persona(data, persona)
+    parent_id: str | None = None
+    feed: FeedRef | None = None
+    origin = card.origin
+    if origin is not None and origin.kind == "report_topic" and origin.job_id is not None:
+        parent_id = origin.job_id
+        parent_dir = stage_parent_dir(data, parent_id)
+        try:
+            parent = read_job(parent_dir / "job.md").job
+        except (OSError, FrontmatterError, ValidationError):
+            raise ValueError(f"找不到這張卡的分析工單 {parent_id}") from None
+        if parent.status in ("queued", "running"):
+            raise ValueError(f"分析工單 {parent_id} 還沒跑完（{parent.status}），等它結束再寫")
+        carried = {Path(target).name for target in carried_files(parent_dir)}
+        missing = [name for name in recipe.needs if name not in carried]
+        if missing:
+            raise ValueError(
+                f"分析工單 {parent_id} 交不出 {'、'.join(missing)}（要過了程式檢查的產出），沒辦法照報告寫"
+            )
+        feed = parent.feed
+    materials = _read_materials(data, conversation, card)
+    budget = Budget(
+        usd=budget_usd,
+        tavily_credits=recipe_credits(recipe) if budget_credits is None else budget_credits,
+    )
+    job_id, job_dir = _new_job_dir(data, _job_base(data, now, feed, card.card_id))
+    _put_card(job_dir, snapshot, materials)
+    job = Job(
+        id=job_id,
+        recipe=recipe.name,
+        feed=feed,
+        goal=CARD_GOAL,
+        target_genre=card.genre,
+        persona=persona,
+        parent=parent_id,
+        conversation=conversation,
+        card=card.card_id,
+        budget=budget,
+        status="queued",
+    )
+    # 跟 `_create_job` 一樣：先寫開單事件、最後寫 job.md
+    events.append(
+        job_dir,
+        Event(ts=now, kind="status", from_status=None, to_status="queued", message="開單（照編輯卡寫稿）"),
     )
     write_job(job_dir / "job.md", JobDocument(job=job))
     return job

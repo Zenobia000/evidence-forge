@@ -369,7 +369,9 @@ def finished_at(data: DataDir, info: JobInfo) -> datetime | None:
 
 
 def original_item(data: DataDir, job: Job) -> Item | None:
-    """這張單的素材項目（原文的標題與網址）；讀不到是 None。"""
+    """這張單的素材項目（原文的標題與網址）；讀不到、或沒有素材項目（照自己的想法寫的稿）是 None。"""
+    if job.feed is None:
+        return None
     text = read_text(data.root, data.root / job.feed.item / "item.json")
     if text is None:
         return None
@@ -855,9 +857,18 @@ class ArticleView:
     previous_words: int | None = None
 
 
+# 照編輯卡寫的文章開頭的 front matter（title、description、genre、theme，#110）
+_FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n+", re.DOTALL)
+
+
+def without_front_matter(article: str) -> str:
+    """去掉開頭的 front matter：面板與對照只顯示文章本身，字數也不算它。"""
+    return _FRONT_MATTER.sub("", article, count=1)
+
+
 def _body(article: str) -> str:
-    """正文：參考來源那一節不算字數（它本來就是照抄出處）。"""
-    lines = article.splitlines()
+    """正文：front matter 與參考來源那一節不算字數（參考來源本來就是照抄出處）。"""
+    lines = without_front_matter(article).splitlines()
     for index in range(len(lines) - 1, -1, -1):
         if re.match(r"#{1,6}\s*參考來源", lines[index]):
             return "\n".join(lines[:index])
@@ -944,14 +955,14 @@ def article_view(data: DataDir, info: JobInfo, previous: JobInfo | None) -> Arti
             else None
         )
         if prev_text is not None:
-            diff_html = diff_articles(prev_text, text)
+            diff_html = diff_articles(without_front_matter(prev_text), without_front_matter(text))
             previous_words = count_words(prev_text)
             previous_label = previous.label
     return ArticleView(
         error=None,
         title=title.strip(),
         text=text,
-        html=markdown.render(text),
+        html=markdown.render(without_front_matter(text)),
         words=count_words(text),
         persona=info.job.persona or DEFAULT_PERSONA,
         genre=genre_name(info.job.target_genre),

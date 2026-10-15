@@ -19,27 +19,40 @@
 結果寫成 `checks/checks.vN.json`，只看執行器自己算的；agent 在輸出目錄寫的任何
 `checks.json` 都不讀。檢查本身跑不動（原文是空的、schema 壞掉、路徑跑出工單資料夾）時丟
 `ChecksUnavailable`：重跑模型修不好，執行器直接帶著原因結束這張單。
+
+照編輯卡寫的文章（工單裡有 `input/card/card.json`，#110）多查幾條（`checks.ArticleRules`），
+規則從工單裡的快照讀，不讀活的編輯卡或角色資料夾：編輯卡定的文體與主題、分鏡的圖位、
+`input/author/voice.md` 的句型規則、參考來源准列的網址（原文、放好的來源、編輯卡與作者素材裡寫的）。
+沒有原文（從創作者自己的想法或作者素材開始，工單沒有素材項目）時原文出處與「不提原文」不查；
+文體是 essay 而且從報告開始時，內文可以回應原文（ADR-0025 §3.4）。句型規則寫錯也是 `ChecksUnavailable`：
+要創作者改角色資料，重寫文章修不好。
 """
 
 import json
+import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from evidence_forge import cards
 from evidence_forge.checks import (
+    ArticleRules,
     ChecksReport,
     load_check_settings,
+    parse_sentence_patterns,
     run_article_checks,
     run_brief_checks,
     run_report_checks,
     write_checks_report,
 )
 from evidence_forge.checks.text import normalize_url
-from evidence_forge.models import RecipeStage
+from evidence_forge.documents import FrontmatterError, split_frontmatter
+from evidence_forge.models import Job, RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
+from evidence_forge.runner.stage_inputs import CARD_BRIEF, CARD_DIR, CARD_JSON, VOICE
 
 # 產出檔名 → 檢查；順序就是一段宣告好幾種時的優先順序（見上表）
 REPORT_OUTPUT = "report.md"
@@ -87,12 +100,14 @@ def run_hard_checks(
     clock: Callable[[], datetime],
     original: sources.Original | None = None,
     upstream: Sequence[str] = (),
+    job: Job | None = None,
 ) -> ChecksReport | None:
     """跑這一段這一次的硬檢查並寫成 `checks.vN.json`；這一段沒有硬檢查就回傳 None。
 
     `original` 是原文的出處與正文（`sources.original`）：分析報告的來源清單可以列它的網址，
     重構段用它檢查結尾的出處、算重疊率。`upstream` 是前面各段合格那一次的產出
     （`runner.upstream_outputs`）：分析報告從裡面的 `brief.json` 拿關鍵主張，檢查每條剛好一筆查證。
+    `job` 是這張單（`job.md`）：沒有素材項目（照自己的想法寫的稿）時，沒有原文不算檢查跑不動。
     """
     checked = checked_output(stage)
     if checked is None:
@@ -103,9 +118,10 @@ def run_hard_checks(
     files: tuple[Path, ...] = (document, output)
     try:
         if checked == ARTICLE_OUTPUT:
-            if original is None:
+            without_original = job is not None and job.feed is None
+            if original is None and not without_original:
                 raise ChecksUnavailable("讀不到原文（素材項目），沒辦法檢查出處與重疊率")
-            texts = {"原文": original.text}
+            texts = {"原文": original.text} if original is not None else {}
             for sid, source in sources.placed_sources(job_dir).items():
                 texts[sid] = sources.source_body(job_dir / source.path)
             entries = run_article_checks(
@@ -113,11 +129,12 @@ def run_hard_checks(
                 document,
                 output=output,
                 schema=schema,
-                original_url=original.url,
-                original_title=original.title,
-                original_author=original.author,
+                original_url=original.url if original is not None else None,
+                original_title=original.title if original is not None else None,
+                original_author=original.author if original is not None else None,
                 texts=texts,
                 thresholds=load_check_settings(data).c3,
+                rules=article_rules(job_dir, original, job.feedback if job is not None else None),
             )
         elif checked == REPORT_OUTPUT:
             # 報告的來源清單只能列這一段這一次真的抓成功的網頁，或原文的網址
@@ -149,6 +166,62 @@ def run_hard_checks(
     )
     write_checks_report(job_dir, report)
     return report
+
+
+# 作者素材照 sha256 放在這裡（`cards.SNAPSHOT_MATERIALS`）
+CARD_MATERIALS = CARD_DIR + "materials/"
+# 編輯卡摘要、作者素材與改稿意見裡寫的網址（創作者自己給的連結也算這篇的來源）
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\]）】」，。、；)\"']+")
+
+
+def article_rules(
+    job_dir: Path, original: sources.Original | None, feedback: str | None = None
+) -> ArticleRules | None:
+    """照編輯卡寫的文章多查的幾條；不是照編輯卡寫的單（沒有 `input/card/card.json`）是 None。
+
+    全部從工單裡的快照讀。快照或句型規則讀不懂丟 `ValueError`（呼叫的人換成 `ChecksUnavailable`）。
+    文章裡准出現的網址：原文、放進來的來源、編輯卡摘要 `card.md`（只有現在的決定，含創作者自己寫的回答與補充）、
+    作者素材、這次改稿創作者的意見（`feedback`）。決策紀錄與 `card.json` 不算：裡面有被換掉的提案與 agent 寫的選項。
+    """
+    path = job_dir / CARD_JSON
+    if not path.is_file():
+        return None
+    card = cards.CardState.model_validate_json(path.read_bytes())
+    voice = job_dir / VOICE
+    meta: dict[str, object] = {}
+    if voice.is_file():
+        try:
+            meta = split_frontmatter(voice.read_text(encoding="utf-8"))[0]
+        except FrontmatterError:
+            meta = {}
+    known: set[str] = set()
+    if original is not None and original.url:
+        known.add(normalize_url(original.url))
+    placed = sources.placed_sources(job_dir)
+    for source in placed.values():
+        if source.url:
+            known.add(normalize_url(source.url))
+    texts = [feedback or ""]
+    for written in [job_dir / CARD_BRIEF, *sorted((job_dir / CARD_MATERIALS).glob("*"))]:
+        if written.is_file() and not written.is_symlink():
+            texts.append(written.read_text(encoding="utf-8", errors="replace"))
+    for text in texts:
+        known.update(normalize_url(url.rstrip(".,")) for url in _URL_IN_TEXT.findall(text))
+    origin = card.origin
+    from_report = origin is not None and origin.kind == "report_topic" and original is not None
+    return ArticleRules(
+        genres=cards.GENRES,
+        themes=cards.THEMES,
+        genre=card.genre,
+        theme=card.theme,
+        figures=None if card.storyboard is None else tuple(n for n, _ in cards.figure_slots(card)),
+        patterns=parse_sentence_patterns(meta),
+        known_urls=frozenset(known),
+        # 隨筆可以引用並回應觸發它的原文（ADR-0025 §3.4）
+        answers_original=from_report and card.genre == "essay",
+        # 沒有原文也沒有來源（照作者自己的經驗寫）才可以只寫一句說明，不列清單
+        list_required=original is not None or bool(placed),
+    )
 
 
 def failures(report: ChecksReport) -> list[str]:

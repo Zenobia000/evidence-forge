@@ -152,7 +152,8 @@ class Job(_Contract):
 
     id: str
     recipe: str
-    feed: FeedRef
+    # 素材從哪個素材項目來。照編輯卡寫、而且起點是創作者自己的想法或作者素材時沒有原文，是 None（#110）
+    feed: FeedRef | None = None
     goal: str
     # 目標文類（ADR-0015）；沒指定時由執行器依訂閱源或作家設定的預設補上。
     target_genre: str | None = None
@@ -165,6 +166,8 @@ class Job(_Contract):
     parent: str | None = None
     # 再改時創作者對上一版的一句意見（FR-RW-03）；寫進任務說明
     feedback: str | None = None
+    # 照哪一張編輯卡寫的（ADR-0025 §3.4、#110）：快照在工單的 `input/card/`，這一欄只是記號
+    card: str | None = None
     budget: Budget
     status: JobStatus
     stage: StageProgress | None = None

@@ -22,7 +22,8 @@ RECORDED_STAGES: dict[str, dict[str, str]] = {
         "investigate": "  - { id: investigate, skill: investigate, tier: fast, "
         "output: [report.md, sources.json], tavily_credits: 12 }",
     },
-    # 2026-10-15 錄的 rewrite-library（#106 重錄）：重構段直接用 fast
+    # 2026-10-16 錄的 rewrite-library（#110 T3 重錄：照編輯卡寫稿）：只用 fast。錄的時候 Windows 的 commit
+    # 餘量只剩 4.7 GB（遠低於 23 GB），不碰本機模型
     "rewrite.md": {
         "rewrite": "  - { id: rewrite, skill: rewrite, tier: fast, "
         "output: [article.md, article.json] }",

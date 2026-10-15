@@ -373,3 +373,22 @@ def test_查證段的建議文體列出新的_7_種_寫法是中文名加_slug()
     for skill in ("brief", "investigate", "rewrite"):
         body = (HARNESS.skill_dir(skill) / "SKILL.md").read_text(encoding="utf-8")
         assert not [name for name in _OLD_GENRE_NAMES if name in body], skill
+
+
+@pytest.mark.promise("FR-RW-01", "FR-RW-02")
+def test_重構的_SKILL_md_照編輯卡寫_讀角色的_craft_主題與_lessons_句型規則不寫死() -> None:
+    text = (HARNESS.skill_dir("rewrite") / "SKILL.md").read_text(encoding="utf-8")
+    for path in (
+        "input/card/card.md",
+        "input/card/materials/",
+        "input/author/craft/",
+        "input/author/lessons.md",
+        "input/author/theme.md",
+    ):
+        assert path in text
+    # front matter 四欄、照分鏡留圖位、句型照角色資料（ADR-0025 §3.7：規則內容不寫進 repo）
+    for word in ("title:", "description:", "genre:", "theme:", "![caption](./images/fig-N.webp)", "sentence_patterns"):
+        assert word in text
+    assert "不是 A，而是 B" not in text
+    # 不替作者編經歷；essay 從報告開始才可以回應原文（ADR-0025 §3.4）
+    assert "Never invent an experience" in text and "`essay`" in text
