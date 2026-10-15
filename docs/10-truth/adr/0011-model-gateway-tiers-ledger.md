@@ -4,6 +4,7 @@
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **修正 ADR-0002**（模型分工）。**修正 ADR-0004** 的實作：冪等改由閘道的請求 hash 快取保證。
 > **後續修正：ADR-0022**——§3.1 多一個等級 `fast`（Claude Haiku 5.5），由低到高 `local` < `fast` < `strong` < `max`；§3.2 配方只用 `local`、`fast`、`strong`，`max` 只留給舊紀錄與手動指定；§3.3 的升級改成升級鏈：本級試滿 `max_attempts` 次，再照 `escalate_to` 的順序一級各試一次。
+> **後續修正：ADR-0027**——閘道多一個會花錢的供應商（OpenAI 生圖），跟 Anthropic 用同一套預估、預留、結算與記帳，金鑰一樣只有閘道讀；§4 負面「只支援 Anthropic Messages 格式」的轉換就是在這裡加的。
 
 ## 1. 背景與問題
 
