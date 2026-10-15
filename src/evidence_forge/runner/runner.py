@@ -327,6 +327,10 @@ class Runner:
     progress_interval_s: float = 1.0
     # 模型對照表；每份段產出記下它的內容（NFR-RUN-06）
     models_file: Path = MODELS_YAML
+    # 每次改寫 job.md（換狀態、進下一段、在等什麼變了）之後呼叫，參數是工單 id。
+    # 對話主機靠它推進度、在工單結束時通知對話，不用輪詢 job.md（#85）。
+    # 在執行器的執行緒上呼叫，要快；丟例外只記 log，不影響工單
+    on_job_change: Callable[[str], None] | None = None
 
     _lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False
@@ -357,6 +361,7 @@ class Runner:
         job = doc.job.model_copy(update={"status": target, "waiting": None, **changes})
         updated = JobDocument(job=Job.model_validate(job.model_dump()), notes=doc.notes)
         write_job(job_dir / "job.md", updated)
+        self._changed(job_dir.name)
         events.append(
             job_dir,
             Event(
@@ -973,7 +978,16 @@ class Runner:
             job=doc.job.model_copy(update={"waiting": waiting}), notes=doc.notes
         )
         write_job(job_dir / "job.md", updated)
+        self._changed(job_dir.name)
         return updated
+
+    def _changed(self, job_id: str) -> None:
+        if self.on_job_change is None:
+            return
+        try:
+            self.on_job_change(job_id)
+        except Exception:
+            _log.warning("工單 %s 的變動通知失敗", job_id, exc_info=True)
 
     def _fix(self, job_dir: Path, stage: RecipeStage, progress: StageProgress) -> str:
         """自動修的那幾次，任務說明要帶上一次沒過的檢查；從 `checks/` 讀回來，

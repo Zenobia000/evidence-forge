@@ -72,7 +72,7 @@ class GatewayConfig:
 def config_from_env(
     data: DataDir, env: Mapping[str, str] | None = None
 ) -> GatewayConfig:
-    """`ef serve` 用：從環境變數讀模式、錄音位置、Ollama 與 Tavily 的位址。"""
+    """`ef serve` 用：從環境變數讀模式、錄音位置、Ollama、Anthropic 與 Tavily 的位址。"""
     environ = os.environ if env is None else env
     mode = environ.get("EF_GATEWAY_MODE", "live").strip() or "live"
     if mode not in ("live", "replay"):
@@ -92,7 +92,12 @@ def config_from_env(
         mode="replay" if mode == "replay" else "live",
         replay_dir=Path(replay) if replay else None,
         ollama_url=environ.get("EF_OLLAMA_URL", "").strip() or "http://127.0.0.1:11434",
-        tavily_url=_tavily_url(environ.get("EF_TAVILY_URL", "")),
+        anthropic_url=_cloud_url(
+            "EF_ANTHROPIC_URL", environ.get("EF_ANTHROPIC_URL", ""), "https://api.anthropic.com"
+        ),
+        tavily_url=_cloud_url(
+            "EF_TAVILY_URL", environ.get("EF_TAVILY_URL", ""), "https://api.tavily.com"
+        ),
         secrets_dir=resolve_secrets_dir(environ),
         monthly_cap_usd=_monthly_cap(cap) if cap else 10.0,
         fault=cast(Fault, fault) if fault else None,
@@ -102,23 +107,24 @@ def config_from_env(
     )
 
 
-# 金鑰可以用沒加密的 http 送去的主機：只有這台機器自己（錄重播 fixture 的假 Tavily）
+# 金鑰可以用沒加密的 http 送去的主機：只有這台機器自己（錄重播 fixture 的假 Tavily、假 Anthropic）
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
-def _tavily_url(value: str) -> str:
-    """Tavily 的位址。平常不設；錄重播 fixture 時換成本機的假 Tavily（tests/fixtures/web/）。
+def _cloud_url(name: str, value: str, default: str) -> str:
+    """雲端後端（Anthropic、Tavily）的位址。平常不設；測試與不花錢的端到端檢查換成本機的假後端
+    （`tests/fixtures/web/`、`tests/fake_anthropic.py`）。
 
-    每個搜尋請求都帶著 Tavily 金鑰，所以只准 https，或這台機器自己的 http；其他的啟動時就報錯。
+    每個請求都帶著金鑰，所以只准 https，或這台機器自己的 http；其他的啟動時就報錯。
     """
     url = value.strip().rstrip("/")
     if not url:
-        return "https://api.tavily.com"
+        return default
     parts = urlsplit(url)
     local_http = parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS
     if not parts.hostname or not (parts.scheme == "https" or local_http):
         raise ValueError(
-            f"EF_TAVILY_URL 只能是 https，或本機（127.0.0.1、localhost）的 http：{url}"
+            f"{name} 只能是 https，或本機（127.0.0.1、localhost）的 http：{url}"
         )
     return url
 
