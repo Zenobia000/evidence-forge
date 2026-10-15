@@ -3,9 +3,10 @@
 閘道的 `chat_tools` 只管鑰匙、範圍與記帳；開單與讀結果在這裡，因為這裡知道配方與資料目錄。
 開單照舊走 `runner.intake.open_job`：同一個對話裡同一份素材、同樣的目標已有工單就拿回那一張（ADR-0021 §3.6）。
 重構照舊走 `runner.intake.open_job_from`（等同 `ef new --from`，#102）：每一版都是新工單，不走去重。
-文類可以給 id（`opinion`）或中文名（`觀點文`，報告的「建議文類」寫的是中文名）。報告的建議文類是模型寫的
+文類可以給 id（`opinion`）或中文名（`觀點文`，報告的「建議文類」寫的是中文名）。
+創作者明說的文類（`genre`）對不上就不開單、列出有哪些；報告的建議文類（`suggested_genre`）是模型寫的
 自由文字（「評論」「深度報導」），對不上就照沒給文類開單（角色的預設文類），結果附一句 `note` 讓對話的 agent
-跟創作者說；不把不認得的文類寫進工單，免得執行器放參考資料時才失敗。
+跟創作者說。不認得的文類都不寫進工單，免得執行器放參考資料時才失敗。
 開不了單的原因會交給對話的模型：裡面資料目錄的絕對路徑換成相對路徑（`authors/<角色>/`）。
 開出來的單是「排隊中」，由同一個 `ef serve` 裡的執行器照配方跑（ADR-0019 §3.3）。
 
@@ -124,13 +125,17 @@ class Desk:
         from_job: str,
         persona: str | None,
         genre: str | None,
+        suggested_genre: str | None,
         goal: str | None,
         feedback: str | None,
     ) -> dict[str, Any]:
         """從 `from_job` 接著開一張重構工單。`from_job` 是不是這個對話的，閘道已經查過。
 
         角色、文類、目標沒給的照 `open_job_from`：再改沿用上一版，從分析開是 `me`、角色的預設文類、
-        配方的預設目標。文類對不上當成沒給，結果附 `note`。
+        配方的預設目標。文類有兩個來源，對不上時處理不同：
+        - `genre`：創作者明說的文類。對不上就不開單、列出有哪些，不能默默改寫成別的文類。
+        - `suggested_genre`：報告「可以寫的題材」的建議文類，是模型寫的自由文字。對不上就當成沒給，
+          結果附 `note`，「寫第 N 個」不會因此開不了。兩個都給時以 `genre` 為準。
         開不了（角色不存在、上一張還沒跑完或交不出報告）回 `rejected` 與原因。
         """
         recipe = self._recipes.get(self._rewrite_recipe)
@@ -143,8 +148,13 @@ class Desk:
         if genre is not None:
             known = _genre_id(genre)
             if known is None:
-                unknown_genre = genre
+                listed = "、".join(f"{key}（{name}）" for key, name in GENRE_NAME.items())
+                return {"status": "rejected", "reason": f"沒有文類 {genre}（有：{listed}）"}
             genre = known
+        elif suggested_genre is not None:
+            genre = _genre_id(suggested_genre)
+            if genre is None:
+                unknown_genre = suggested_genre
         try:
             job = open_job_from(
                 self._data,

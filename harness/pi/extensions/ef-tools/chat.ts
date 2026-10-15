@@ -5,7 +5,8 @@
 // - job_status：一張工單現在跑到哪。
 // - list_personas：現有的角色與它們寫過的文類；創作者說「用 me 寫」時才聽得懂。
 // - rewrite：從這個對話的一張分析（或上一版重構）開一張重構工單，開了就回，跟 analyze 一樣（#102）。
-//   創作者說「寫第 N 個」時，goal 帶那個題材的標題與角度；再改時 feedback 帶創作者的話。
+//   創作者說「寫第 N 個」時，goal 帶那個題材的標題與角度、suggested_genre 帶報告的建議文類；
+//   genre 只放創作者明說的文類（對不上就不開單）；再改時 feedback 帶創作者的話。
 // - /ef-job-done <工單 id>：對話主機在工單結束時送進來的指令（不是模型能叫的工具）。
 //   它向閘道問那張單的狀態，用 sendMessage 把一則 ef-job 通知放進對話並叫模型接著回答。
 //   同一張單已經通知過（對話紀錄裡已有那則 ef-job）就什麼都不做，所以主機可以放心重送：
@@ -149,7 +150,16 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         }),
         persona: Type.Optional(Type.String({ description: "Persona name from list_personas; leave out for the creator's own voice (me), or to keep the previous version's persona" })),
         genre: Type.Optional(
-          Type.String({ description: "Target genre, as an id (opinion) or its Chinese name (觀點文); the topic's 建議文類 when the creator picked a topic" }),
+          Type.String({
+            description:
+              "Only a genre the creator explicitly asked for, as an id (opinion) or its Chinese name (觀點文). An unknown genre is refused with the list of genres",
+          }),
+        ),
+        suggested_genre: Type.Optional(
+          Type.String({
+            description:
+              "The picked topic's 建議文類, copied from the report. If it matches no genre, the default genre is used and a note says so. Ignored when genre is given",
+          }),
         ),
         goal: Type.Optional(
           Type.String({
@@ -163,6 +173,7 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         const body: Record<string, unknown> = { from_job: params.from_job };
         if (params.persona !== undefined) body.persona = params.persona;
         if (params.genre !== undefined) body.genre = params.genre;
+        if (params.suggested_genre !== undefined) body.suggested_genre = params.suggested_genre;
         if (params.goal !== undefined) body.goal = params.goal;
         if (params.feedback !== undefined) body.feedback = params.feedback;
         const data = await callGateway("rewrite", body);

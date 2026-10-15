@@ -135,10 +135,18 @@ class IntakeDesk:
         from_job: str,
         persona: str | None,
         genre: str | None,
+        suggested_genre: str | None,
         goal: str | None,
         feedback: str | None,
     ) -> dict[str, Any]:
-        self.rewrites.append({"conversation_id": conversation_id, "from_job": from_job})
+        self.rewrites.append(
+            {
+                "conversation_id": conversation_id,
+                "from_job": from_job,
+                "genre": genre,
+                "suggested_genre": suggested_genre,
+            }
+        )
         try:
             job = open_job_from(
                 self.data,
@@ -478,6 +486,13 @@ def test_rewrite_拿別的對話的工單當_from_job_被拒_不說那張單存�
     assert conversations.jobs(env.data, env.mine.conversation_id) == []
 
 
+def test_rewrite_創作者指定的文類與報告建議的文類分開交給工作台(env: Env) -> None:
+    analysis = _analysed(env)
+    _opened(env.call("rewrite", env.mine, from_job=analysis, genre="opinion", suggested_genre="評論"))
+    assert env.desk.rewrites[-1]["genre"] == "opinion"
+    assert env.desk.rewrites[-1]["suggested_genre"] == "評論"
+
+
 def test_rewrite_帶意見再改_同一個角色接在同一條鏈上(env: Env) -> None:
     analysis = _analysed(env)
     first = _written(env, analysis)
@@ -514,8 +529,16 @@ def test_rewrite_工作台不開單_原因交回對話(env: Env) -> None:
 
 @pytest.mark.parametrize(
     "body",
-    [{"from_job": None}, {"from_job": 3}, {"persona": 1}, {"genre": ["opinion"]}, {"goal": 2}, {"feedback": True}],
-    ids=["沒有_from_job", "from_job_不是字串", "persona", "genre", "goal", "feedback"],
+    [
+        {"from_job": None},
+        {"from_job": 3},
+        {"persona": 1},
+        {"genre": ["opinion"]},
+        {"suggested_genre": 5},
+        {"goal": 2},
+        {"feedback": True},
+    ],
+    ids=["沒有_from_job", "from_job_不是字串", "persona", "genre", "suggested_genre", "goal", "feedback"],
 )
 def test_rewrite_欄位不對_400_不開單(env: Env, body: dict[str, object]) -> None:
     analysis = _analysed(env)

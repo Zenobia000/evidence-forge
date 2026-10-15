@@ -82,10 +82,12 @@ class Desk(Protocol):
         from_job: str,
         persona: str | None,
         genre: str | None,
+        suggested_genre: str | None,
         goal: str | None,
         feedback: str | None,
     ) -> dict[str, Any]:
-        """從 `from_job` 接著開一張重構工單；回 `{"job_id", "created": True, "status", …}`。
+        """從 `from_job` 接著開一張重構工單；`genre` 是創作者明說的文類（對不上就不開），
+        `suggested_genre` 是報告建議的文類（對不上用預設文類、附 `note`）；回 `{"job_id", "created": True, "status", …}`。
         開不了（角色不存在、上一張交不出報告…）回 `{"status": "rejected", "reason"}`。
         `from_job` 是不是這個對話的，閘道呼叫之前已經查過。"""
         ...
@@ -213,6 +215,7 @@ class ChatTools:
         from_job = self._owned_job(key, body, "from_job")
         persona = _optional(body, "persona")
         genre = _optional(body, "genre")
+        suggested_genre = _optional(body, "suggested_genre")
         goal = _optional(body, "goal")
         feedback = _optional(body, "feedback")
         data = self._config.data
@@ -228,6 +231,7 @@ class ChatTools:
                 from_job=from_job,
                 persona=persona,
                 genre=genre,
+                suggested_genre=suggested_genre,
                 goal=goal,
                 feedback=feedback,
             )

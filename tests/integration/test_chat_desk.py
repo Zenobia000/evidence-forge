@@ -193,7 +193,13 @@ def _analysed(data: DataDir, desk: Desk) -> str:
 
 
 def _rewrite(desk: Desk, from_job: str, **options: str) -> dict[str, object]:
-    fields: dict[str, str | None] = {"persona": None, "genre": None, "goal": None, "feedback": None}
+    fields: dict[str, str | None] = {
+        "persona": None,
+        "genre": None,
+        "suggested_genre": None,
+        "goal": None,
+        "feedback": None,
+    }
     fields.update(options)
     return desk.open_rewrite(conversation_id="c1", from_job=from_job, **fields)
 
@@ -235,15 +241,38 @@ def test_重構的文類可以給中文名_記成文類_id(me: DataDir) -> None:
 
 
 @pytest.mark.parametrize("written", ["評論", "深度報導", "觀點文章"])
-def test_報告寫的文類對不上_照樣開單_用預設文類_附一句說明(me: DataDir, written: str) -> None:
+def test_報告建議的文類對不上_照樣開單_用預設文類_附一句說明(me: DataDir, written: str) -> None:
     # 報告的「建議文類」是模型寫的自由文字；對不上就用角色的預設文類，不要讓「寫第 N 個」開不了
     desk = _desk(me)
-    result = _rewrite(desk, _analysed(me, desk), genre=written)
+    result = _rewrite(desk, _analysed(me, desk), suggested_genre=written)
     job_id = result["job_id"]
     assert isinstance(job_id, str)
     assert read_job(me.job_dir(job_id) / "job.md").job.target_genre == "opinion"
     assert result["genre"] == "opinion"
     assert result["note"] == f"文類「{written}」對不上，改用預設的觀點文（opinion）"
+
+
+def test_報告建議的文類對得上_就用它(me: DataDir) -> None:
+    desk = _desk(me)
+    result = _rewrite(desk, _analysed(me, desk), suggested_genre="解說文")
+    assert result["genre"] == "explainer" and "note" not in result
+
+
+def test_創作者指定的文類不認得_不開單_列出有哪些(me: DataDir) -> None:
+    # 創作者明說「寫成打油詩」：不能默默改成別的文類，要問回去
+    desk = _desk(me)
+    analysis = _analysed(me, desk)
+    result = _rewrite(desk, analysis, genre="打油詩", suggested_genre="觀點文")
+    assert result["status"] == "rejected"
+    reason = str(result["reason"])
+    assert "沒有文類 打油詩" in reason and "opinion（觀點文）" in reason
+    assert [p.name for p in me.jobs.iterdir()] == [analysis]
+
+
+def test_創作者指定的文類勝過報告建議的(me: DataDir) -> None:
+    desk = _desk(me)
+    result = _rewrite(desk, _analysed(me, desk), genre="教學文", suggested_genre="觀點文")
+    assert result["genre"] == "tutorial" and "note" not in result
 
 
 def test_角色不存在_原因不帶資料目錄的完整路徑(me: DataDir) -> None:
