@@ -37,6 +37,7 @@ from evidence_forge.models import Recipe, RecipeStage
 from evidence_forge.persona_spec import genre_file
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import (
+    CardChanged,
     PastedText,
     Source,
     SourceUnreadable,
@@ -172,6 +173,7 @@ class Desk:
         - `suggested_genre`：報告「可以寫的題材」的建議文體，是模型寫的自由文字。對不上就當成沒給，
           結果附 `note`，「寫第 N 個」不會因此開不了。兩個都給時以 `genre` 為準。
         開不了（角色不存在、上一張還沒跑完或交不出報告）回 `rejected` 與原因。
+        照編輯卡寫的文章：卡在寫好之後又改過、或改稿要換文體，丟 `ToolRejected(409)`（`CardChanged`，#110）。
         """
         recipe = self._recipes.get(self._rewrite_recipe)
         if recipe is None:
@@ -205,6 +207,9 @@ class Desk:
                 # 沿用來的文體（上一張單的、角色的預設）也要是 7 種之一，不然開了只會在執行器失敗
                 allowed_genres=GENRE_NAME,
             )
+        except CardChanged as exc:
+            # 照編輯卡寫的文章：卡改過、或要換文體（#110）。不是重試修得好的，要創作者改卡、再按寫稿
+            raise ToolRejected(409, self._tidy(str(exc))) from None
         except ValueError as exc:
             return {"status": "rejected", "reason": self._tidy(str(exc))}
         opened: dict[str, Any] = {

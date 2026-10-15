@@ -558,3 +558,96 @@ def test_主題的主張_挑出這個主題那一節與表格那一列() -> None
     assert "導入先算維運的人" in found and "導入現場" in found
     assert "挑工具先看退場成本" not in found
     assert theme_stance(THEMES_MD, "startup") is None
+
+
+# --- 本機 32K 塞得下：只帶這個題材的來源、不帶 brief、沒有圖就不帶圖文編排（#110 T3）--------------
+
+
+def _card_from_report(data: DataDir, topic: int, storyboard: list[dict[str, str]] | None = None) -> Path:
+    """從分析工單第 `topic` 個題材開的寫稿工單（開單時放好的 `input/card/`）。"""
+    parent = _analysis(data)
+    # 查證段合格那一次的來源清單：題材 1 用 S2，題材 2 用 S3
+    _checked(
+        parent,
+        "investigate",
+        3,
+        {
+            "report.md": "合格的報告",
+            "sources.json": json.dumps({"topics": [{"title": "一", "sources": ["S2"]}, {"title": "二", "sources": ["S3"]}]}),
+        },
+        passed=True,
+    )
+    job_dir = _rewrite_job_dir(data)
+    card = job_dir / "input" / "card"
+    card.mkdir(parents=True)
+    state: dict[str, object] = {
+        "card_id": "card-1",
+        "conversation_id": "c-1",
+        "theme": "tools",
+        "stations": [],
+        "origin": {"kind": "report_topic", "job_id": "analysis", "topic": topic},
+    }
+    if storyboard is not None:
+        state["storyboard"] = storyboard
+    (card / "card.json").write_text(json.dumps(state), encoding="utf-8")
+    (card / "card.md").write_text("# 編輯卡\n", encoding="utf-8")
+    return job_dir
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_從報告的題材寫稿_只帶那個題材的來源_不帶_brief(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    job_dir = _card_from_report(data, topic=2)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
+
+    inputs = job_dir / "input"
+    assert sorted(p.name for p in (inputs / "sources").iterdir()) == ["S3.md"]
+    assert (inputs / "report.md").read_text(encoding="utf-8") == "合格的報告"
+    assert not (inputs / "brief.md").exists() and not (inputs / "brief.json").exists()
+
+
+def test_報告沒有題材的來源清單_照舊帶全部的來源(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _analysis(data)
+    job_dir = _rewrite_job_dir(data)
+    card = job_dir / "input" / "card"
+    card.mkdir(parents=True)
+    (card / "card.json").write_text(
+        json.dumps({"card_id": "c", "conversation_id": "c-1", "theme": "tools", "stations": [],
+                    "origin": {"kind": "report_topic", "job_id": "analysis", "topic": 1}}),
+        encoding="utf-8",
+    )
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
+
+    assert sorted(p.name for p in (job_dir / "input" / "sources").iterdir()) == ["S2.md", "S3.md"]
+
+
+def test_分鏡整篇不配圖_不帶圖文編排的手藝(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _persona_parts(data)
+    job_dir = _card_from_report(data, topic=1, storyboard=[])
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="analysis"))
+
+    assert sorted(p.name for p in (job_dir / "input" / "author" / "craft").iterdir()) == [
+        "golden-lines-and-endings.md",
+        "openings.md",
+        "titles.md",
+    ]
+
+
+def test_改稿開單時放了新的快照_不拿上一版的蓋過去(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    v1 = _card_job_dir(data, job_id="v1")
+    prepare_inputs(HARNESS, data, v1, _job("essay"))
+    _checked(v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True)
+    v2 = _card_job_dir(data, job_id="v2")
+    (v2 / "input" / "card" / "card.md").write_text("# 新的快照\n", encoding="utf-8")
+
+    prepare_inputs(HARNESS, data, v2, _job("essay", parent="v1", feedback="改短"))
+
+    assert (v2 / "input" / "card" / "card.md").read_text(encoding="utf-8") == "# 新的快照\n"
+    placed = json.loads((v2 / "input" / ".prepared.json").read_text(encoding="utf-8"))["files"]
+    assert not [f for f in placed if f.startswith("input/card/")]

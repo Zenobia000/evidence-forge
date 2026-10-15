@@ -18,7 +18,7 @@ from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.harness import default_harness
 from evidence_forge.models import TIER_ORDER, JobResult
 from evidence_forge.paths import DataDir
-from evidence_forge.runner.intake import PastedText, open_job, open_job_from, open_job_from_card
+from evidence_forge.runner.intake import CardChanged, PastedText, open_job, open_job_from, open_job_from_card
 from evidence_forge.runner.recipes import load_recipes
 from evidence_forge.ui.format import GENRE_NAME
 
@@ -141,9 +141,8 @@ def test_角色不存在_不開單(data: DataDir, cid: str) -> None:
     assert list(data.jobs.iterdir()) == []
 
 
-@pytest.mark.promise("FR-RW-03")
-def test_再改照自己的想法寫的文章_沒有素材項目也開得出來_同一張卡(data: DataDir, cid: str) -> None:
-    card_id = decided_card(data, cid)
+def _written(data: DataDir, cid: str, card_id: str) -> str:
+    """照卡開一張寫稿單，當成寫好了（過了檢查的文章、結束）。"""
     first = _open(data, cid, card_id)
     job_dir = data.job_dir(first)
     base = job_dir / "stages" / "rewrite" / "1"
@@ -157,10 +156,45 @@ def test_再改照自己的想法寫的文章_沒有素材項目也開得出來_
     doc = read_job(job_dir / "job.md")
     done = doc.job.model_copy(update={"status": "done", "result": JobResult(outcome="complete")})
     write_job(job_dir / "job.md", JobDocument(job=done, notes=doc.notes))
+    return first
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_再改照自己的想法寫的文章_沒有素材項目也開得出來_拿一份新的快照(data: DataDir, cid: str) -> None:
+    card_id = decided_card(data, cid, material=NOTES)
+    first = _written(data, cid, card_id)
 
     again = open_job_from(data, REWRITE, first, now=NOW, feedback="開頭改短", conversation=cid)
 
     assert (again.parent, again.feed, again.card, again.feedback) == (first, None, card_id, "開頭改短")
+    # ADR-0025 §3.4：改稿也是新工單、新快照（卡沒變，內容跟上一版的一樣）
+    card_dir = data.job_dir(again.id) / "input" / "card"
+    assert (card_dir / "card.md").read_text(encoding="utf-8") == cards.writing_brief(cards.read_card(data, cid, card_id))
+    digest = hashlib.sha256(NOTES.encode()).hexdigest()
+    assert (card_dir / "materials" / digest).read_text(encoding="utf-8") == NOTES
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_文章寫好之後編輯卡又改過_改稿不開_請創作者照新的卡再寫(data: DataDir, cid: str) -> None:
+    card_id = decided_card(data, cid)
+    first = _written(data, cid, card_id)
+    cards.reask_station(data, cid, card_id, 2, now=NOW)
+    before = sorted(p.name for p in data.jobs.iterdir())
+
+    with pytest.raises(CardChanged, match="照這張編輯卡寫稿"):
+        open_job_from(data, REWRITE, first, now=NOW, feedback="開頭改短", conversation=cid)
+    assert sorted(p.name for p in data.jobs.iterdir()) == before
+
+
+def test_照編輯卡寫的文章改稿不能換文體_要改編輯卡第_1_關(data: DataDir, cid: str) -> None:
+    card_id = decided_card(data, cid, genre="research-review")
+    first = _written(data, cid, card_id)
+
+    with pytest.raises(CardChanged, match="改編輯卡第 1 關"):
+        open_job_from(data, REWRITE, first, now=NOW, genre="explainer", feedback="改成教學", conversation=cid)
+    # 文體一樣不算換
+    same = open_job_from(data, REWRITE, first, now=NOW, genre="research-review", feedback="改短", conversation=cid)
+    assert same.target_genre == "research-review"
 
 
 def test_作者素材的檔不見了_不開單_說是哪一份(data: DataDir, cid: str) -> None:

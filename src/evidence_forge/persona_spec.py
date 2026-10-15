@@ -100,6 +100,8 @@ GENRE_SLUGS: tuple[str, ...] = tuple(GENRE_NAME)
 # 寫稿用得到的手藝（ADR-0026 §3.3「只送這一篇用得到的」）：開場、標題、金句與收尾、圖文編排。
 # 配圖的 figures、charts 這類是配圖工單的事（ADR-0027），寫稿不送
 WRITING_CRAFT: tuple[str, ...] = ("openings.md", "titles.md", "golden-lines-and-endings.md", "layout.md")
+# 圖文編排：分鏡整篇不配圖時寫稿用不到
+LAYOUT_CRAFT = "layout.md"
 # 角色有其中一份就不再讀共用的標題與金句規則（`style/headline-punchline-system.md`，ADR-0026 §3.3）
 HEADLINE_CRAFT: tuple[str, ...] = ("titles.md", "golden-lines-and-endings.md")
 

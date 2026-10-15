@@ -17,11 +17,14 @@ agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（
   （`input/report.md`、`input/brief.md`、`input/brief.json`、上一版文章 `input/article.md`）
   與它的來源正文 `input/sources/S<n>.md`。上一張單自己也是接著做的，它帶來的也一起帶過來。
   原文全文（`input/content.md`）不帶：重構不讀原文全文（FR-RW-01）。
-- 照編輯卡寫稿（#110）：編輯卡快照 `input/card/` 是開單時放的（`intake.open_job_from_card`）；
-  再改時從上一版整份帶過來。這種單另外只放這一篇用得到的角色資料（ADR-0026 §3.3），本機的上下文才塞得下：
-  寫稿用的 craft（`input/author/craft/`，`persona_spec.WRITING_CRAFT`）、這篇的主題在角色 `themes.md` 裡的那一節
-  （`input/author/theme.md`）、最近十筆 lessons（`input/author/lessons.md`）。角色有自己的標題或金句 craft 時
-  不再放共用的標題與金句規則。角色資料一律不跟隨符號連結讀（`confined`）。
+- 照編輯卡寫稿（#110）：編輯卡快照 `input/card/` 是開單時放的（`intake.open_job_from_card`；改稿也是開單時
+  拿一份新的，上一版的不再帶過來，只在新工單沒有快照時當備援）。這種單只放這一篇用得到的（ADR-0026 §3.3），
+  本機的上下文才塞得下：
+  - 從報告的題材開始：報告，與報告「可以寫的題材」那一個題材列的來源（分析的 `sources.json` 的 `topics`）；
+    找不到那份清單就照舊帶全部。brief 不帶（報告已經講了寫稿要的）。
+  - 角色：寫稿用的 craft（`persona_spec.WRITING_CRAFT`；分鏡整篇不配圖時不帶圖文編排 `layout.md`）、
+    這篇的主題在角色 `themes.md` 裡的那一節（`input/author/theme.md`）、最近十筆 lessons（`input/author/lessons.md`）。
+    角色有自己的標題或金句 craft 時不再放共用的標題與金句規則。角色資料一律不跟隨符號連結讀（`confined`）。
 
 查證段找到的來源正文（`input/sources/`）在分析工單裡不在這裡放：那一段結束後才知道有哪些，見 `sources.py`。
 
@@ -36,6 +39,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -49,6 +53,7 @@ from evidence_forge.paths import DataDir
 from evidence_forge.persona_spec import (
     CRAFT_DIR,
     HEADLINE_CRAFT,
+    LAYOUT_CRAFT,
     THEMES_FILE,
     VOICE_FILE,
     WRITING_CRAFT,
@@ -246,16 +251,44 @@ def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _card_theme(job_dir: Path) -> str | None:
-    """照編輯卡寫的單（有 `input/card/card.json`）這一篇的主題；不是這種單、或讀不懂是 None。"""
+def _card_meta(job_dir: Path) -> dict[str, Any] | None:
+    """照編輯卡寫的單（有 `input/card/card.json`）的編輯卡快照；不是這種單、或讀不懂是 None。"""
     path = job_dir / CARD_JSON
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        theme = json.loads(path.read_text(encoding="utf-8")).get("theme")
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def _topic_sources(parent: Path, card: dict[str, Any]) -> set[str] | None:
+    """從報告第 N 個題材開始的卡：分析 `sources.json` 的 `topics` 裡那個題材列的來源編號。
+
+    不是從報告開始、或上一張單沒有過了檢查的來源清單、或題材編號對不上：None（照舊帶全部的來源）。
+    """
+    origin = card.get("origin")
+    topic = origin.get("topic") if isinstance(origin, dict) and origin.get("kind") == "report_topic" else None
+    if isinstance(topic, bool) or not isinstance(topic, int) or topic < 1:
+        return None
+    listed: Path | None = None
+    for report in _passed_reports(parent):
+        for relative in report.files:
+            if Path(relative).name == "sources.json":
+                listed = parent / relative
+    if listed is None or not listed.is_file() or listed.is_symlink():
+        return None
+    try:
+        topics = json.loads(listed.read_text(encoding="utf-8")).get("topics")
     except (OSError, ValueError, AttributeError):
         return None
-    return theme if isinstance(theme, str) and theme else None
+    if not isinstance(topics, list) or topic > len(topics) or not isinstance(topics[topic - 1], dict):
+        return None
+    ids = topics[topic - 1].get("sources")
+    if not isinstance(ids, list):
+        return None
+    return {i for i in ids if isinstance(i, str)}
 
 
 def _latest_lessons(data: DataDir, persona: str) -> list[str]:
@@ -352,13 +385,27 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
             raise InputError(f"目標文體 {target} 不在 harness/genres/ 的 7 種裡")
         put(TARGET_GENRE, definition.read_bytes())
 
+    # 開單時放的編輯卡快照（照編輯卡寫稿、或改這種稿）
+    own_card = _card_meta(job_dir)
     if job.parent is not None:
         parent = parent_dir(data, job.parent)
         if not parent.is_dir():
             raise InputError(f"找不到上一張工單 {job.parent}")
-        for relative, source in carried_files(parent).items():
+        carried = carried_files(parent)
+        card_job = own_card is not None or CARD_JSON in carried
+        topic = _topic_sources(parent, own_card) if own_card is not None else None
+        for relative, source in carried.items():
             if relative == PREVIOUS_ARTICLE and not job.feedback:
                 # 沒有意見就不是再改（例：換角色重寫）：不放上一版，免得照著上一版抄
+                continue
+            if own_card is not None and relative.startswith(CARD_DIR):
+                # 新工單開單時拿了自己的快照：上一版的不蓋過去（ADR-0025 §3.4）
+                continue
+            if card_job and relative in (BRIEF, BRIEF_JSON):
+                # 照編輯卡寫只讀報告：brief 的內容報告裡都有，省下本機的上下文
+                continue
+            if topic is not None and relative.startswith(SOURCES_DIR) and Path(relative).stem not in topic:
+                # 只帶這個題材的來源（報告「可以寫的題材」列的）
                 continue
             put(relative, source.read_bytes())
 
@@ -372,11 +419,16 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
         style = confined.text(author, genre_file(target))
         if style is not None:
             put(GENRE_STYLE, style)
-    theme = _card_theme(job_dir)
+    meta = _card_meta(job_dir)
+    theme = meta.get("theme") if meta is not None else None
     headline_craft = False
-    if theme is not None:
-        # 照編輯卡寫稿：只送這一篇用得到的（ADR-0026 §3.3）
+    if isinstance(theme, str) and theme:
+        # 照編輯卡寫稿：只送這一篇用得到的（ADR-0026 §3.3）；整篇不配圖就不用圖文編排
+        assert meta is not None
+        no_figures = meta.get("storyboard") == []
         for name in WRITING_CRAFT:
+            if no_figures and name == LAYOUT_CRAFT:
+                continue
             craft = confined.text(author, f"{CRAFT_DIR}/{name}")
             if craft is not None:
                 put(AUTHOR_CRAFT + name, craft)

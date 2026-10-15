@@ -165,3 +165,46 @@ def test_分析交不出報告_不開單_原因不帶資料目錄的完整路徑
 
     assert caught.value.status == 409 and "report.md" in caught.value.message
     assert str(data.root) not in caught.value.message
+
+
+def _finish_article(data: DataDir, job_id: str) -> None:
+    job_dir = data.job_dir(job_id)
+    base = job_dir / "stages" / "rewrite" / "1"
+    base.mkdir(parents=True)
+    (base / "article.md").write_text("# 第一版", encoding="utf-8")
+    write_checks_report(
+        job_dir,
+        ChecksReport(stage="rewrite", attempt=1, files=("stages/rewrite/1/article.md",), created_at=NOW,
+                     entries=(CheckEntry(check="C5", status="pass", reason="測試"),)),
+    )
+    doc = read_job(job_dir / "job.md")
+    done = doc.job.model_copy(update={"status": "done", "result": JobResult(outcome="complete")})
+    write_job(job_dir / "job.md", JobDocument(job=done, notes=doc.notes))
+
+
+def _revise(desk: Desk, cid: str, job_id: str, genre: str | None = None) -> dict[str, object]:
+    return desk.open_rewrite(
+        conversation_id=cid, from_job=job_id, persona=None, genre=genre, suggested_genre=None,
+        goal=None, feedback="開頭改短",
+    )
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_照編輯卡寫的文章改稿_卡沒改就開_換文體或卡改過都_409(data: DataDir, cid: str) -> None:
+    desk = _desk(data)
+    card_id = decided_card(data, cid, genre="explainer", theme="tools")
+    job_id = desk.write_from_card(cid, card_id, _events(data, cid, card_id))["job_id"]
+    assert isinstance(job_id, str)
+    _finish_article(data, job_id)
+
+    with pytest.raises(ToolRejected) as genre_change:
+        _revise(desk, cid, job_id, genre="trend")
+    assert genre_change.value.status == 409 and "改編輯卡第 1 關" in genre_change.value.message
+
+    revised = _revise(desk, cid, job_id)
+    assert revised["status"] == "queued" and revised["genre"] == "explainer"
+
+    cards.reask_station(data, cid, card_id, 2, now=NOW)
+    with pytest.raises(ToolRejected) as changed:
+        _revise(desk, cid, job_id)
+    assert changed.value.status == 409 and "照這張編輯卡寫稿" in changed.value.message

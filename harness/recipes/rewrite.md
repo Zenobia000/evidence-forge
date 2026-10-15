@@ -24,11 +24,11 @@ Claude Haiku 5.5、Sonnet 5.5 各試一次。輸入大到本機模型的上下�
 - `input/card/`：編輯卡快照（開單時放，之後再改編輯卡不影響這張單）：寫稿讀的 `card.md`（只有現在的決定、
   主張清單、圖位）、留底的 `card.json` 與 `decisions.jsonl`、作者素材 `materials/<sha256>`；
 - 從報告的題材開始時接著那張分析工單做（`needs: [report.md]` 是對那張單說的）：執行器開工前把
-  `input/report.md`、`input/brief.md`、`input/sources/S<n>.md` 帶過來，原文出處寫進任務說明。
+  `input/report.md` 與那個題材在報告裡列的來源 `input/sources/S<n>.md` 帶過來（brief 不帶），原文出處寫進任務說明。
   從創作者自己的想法或作者素材開始時沒有上一張單，也沒有原文；
 - 角色資料只送這一篇用得到的（ADR-0026 §3.3，`runner/stage_inputs.py`）：`input/author/voice.md`、
   這個文體的 `input/author/genre-style.md`（沒有就是未校準）、寫稿用的 `input/author/craft/`
-  （開場、標題、金句與收尾、圖文編排）、這個主題在角色 `themes.md` 裡的那一節 `input/author/theme.md`、
+  （開場、標題、金句與收尾，有配圖或表格時加圖文編排）、這個主題在角色 `themes.md` 裡的那一節 `input/author/theme.md`、
   最近十筆 lessons `input/author/lessons.md`；角色沒有自己的標題或金句手藝時才放共用的 `input/headline-punchline.md`；
 - `input/target-genre.md`：文體的通用定義（ADR-0026 的 7 種之一）。
 
@@ -44,7 +44,9 @@ Claude Haiku 5.5、Sonnet 5.5 各試一次。輸入大到本機模型的上下�
 
 再改（FR-RW-03）：對話的 `rewrite` 從上一版的寫稿工單帶一句意見開新單（命令列是
 `ef new --from <上一版的寫稿工單> --feedback "開頭太長，直接講結論"`）。每一版都是一張新工單（ADR-0019 §3.6）：
-上一版文章放在 `input/article.md`，編輯卡快照、報告與來源跟著帶過來，意見寫進任務說明；角色、文體、目標沿用上一版。
+上一版文章放在 `input/article.md`，報告與來源跟著帶過來，意見寫進任務說明；角色、文體、目標沿用上一版。
+照編輯卡寫的文章，改稿開單時拿一份新的編輯卡快照；卡在上一版寫好之後又改過、或改稿要換文體，就不開（409），
+請創作者改卡、再按「照這張編輯卡寫稿」寫新的一篇。
 分析不重跑，上一版不動。
 
 命令列的 `ef new --from <分析工單>`（沒有編輯卡）照舊開得出來，給手動測試用；`default_goal` 只在這種單用。
