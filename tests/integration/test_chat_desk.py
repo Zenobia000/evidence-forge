@@ -10,9 +10,11 @@ import pytest
 
 from evidence_forge.chat.desk import MAX_FILE_CHARS, Desk
 from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
-from evidence_forge.documents import JobDocument, read_job, write_job
+from evidence_forge.documents import JobDocument, read_frontmatter, read_job, write_job
+from evidence_forge.harness import default_harness
 from evidence_forge.models import JobResult, Recipe, RecipeStage
 from evidence_forge.paths import DataDir
+from evidence_forge.ui.format import GENRE_NAME
 
 NOW = datetime(2026, 10, 13, 5, 0, tzinfo=UTC)
 ANALYZE = Recipe(
@@ -252,3 +254,12 @@ def test_沒有重構配方_不開單_說清楚原因(me: DataDir) -> None:
     result = _rewrite(desk, analysis)
     assert result["status"] == "rejected"
     assert "沒有重構配方 rewrite" in str(result["reason"])
+
+
+def test_工作台認得的文類跟_harness_genres_同一份() -> None:
+    # 工作台拿畫面的文類表擋不認得的文類；兩邊飄開，就會擋掉執行器其實接受的文類，或放過一個開了才失敗的
+    defined = {
+        str(read_frontmatter(path)["id"]): str(read_frontmatter(path)["name"])
+        for path in sorted(default_harness().genres.glob("*.md"))
+    }
+    assert defined == GENRE_NAME
