@@ -627,7 +627,7 @@ def _station_view(station: dict[str, Any], card: dict[str, Any]) -> DecisionStat
     return shown
 
 
-def _picks(card: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+def _picks(card: dict[str, Any], persona_name: str | None) -> tuple[tuple[str, str], ...]:
     found: list[tuple[str, str]] = []
     if card.get("genre"):
         found.append(("文體", _named(genre_name(card["genre"]), card["genre"])))
@@ -635,8 +635,8 @@ def _picks(card: dict[str, Any]) -> tuple[tuple[str, str], ...]:
         label = default_harness().theme_labels().get(card["theme"], "")
         found.append(("主題", _named(label, card["theme"])))
     if card.get("persona"):
-        # 角色目前只有資料夾名；之後有顯示名稱（角色管理）再換
-        found.append(("角色", card["persona"]))
+        # 角色的顯示名稱（角色管理，`persona.display_name`）；沒設就是資料夾名
+        found.append(("角色", _named(persona_name or "", card["persona"])))
     return tuple(found)
 
 
@@ -644,7 +644,9 @@ def _named(name: str, slug: str) -> str:
     return f"{name}（{slug}）" if name and name != slug else slug
 
 
-def decision_view(card: dict[str, Any], job_labels: dict[str, str]) -> DecisionView:
+def decision_view(
+    card: dict[str, Any], job_labels: dict[str, str], *, persona_name: str | None = None
+) -> DecisionView:
     stations = tuple(_station_view(s, card) for s in card["stations"])
     current = card.get("current_station")
     writable = bool(card.get("writable"))
@@ -661,7 +663,7 @@ def decision_view(card: dict[str, Any], job_labels: dict[str, str]) -> DecisionV
         reconfirm=sum(1 for s in stations if s.status == "reconfirm"),
         writable=writable,
         stations=stations,
-        picks=_picks(card),
+        picks=_picks(card, persona_name),
     )
 
 

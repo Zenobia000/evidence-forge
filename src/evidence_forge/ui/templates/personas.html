@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{# 角色清單（票 116）：每個角色一列，唯讀；新增角色的表單在最下面，由 /static/js/persona.js 送 JSON 到 /api/personas。
+   清單來自對話的 list_personas（chat/desk.py），這頁只多加顯示名稱、寫過幾篇、缺哪些部分。 #}
+{% block head %}<link rel="stylesheet" href="/static/css/persona.css">{% endblock %}
+{% block content %}
+<main class="s0-main" style="max-width: 1000px; margin: 0 auto">
+<div class="s0-pagehead">
+<div>
+<h1 class="s0-h1">角色</h1>
+<p class="s0-sub">每個角色是資料目錄裡的一個資料夾 <span class="s0-mono">authors/&lt;名稱&gt;/</span>，放它的聲音、文體、手藝與規則。這一頁只能看，不能改檔案；要改檔案，直接改資料夾裡的檔。</p>
+</div>
+</div>
+
+{% if rows %}
+<ul class="pr-list" aria-label="角色清單">
+{% for r in rows %}
+<li class="s0-panel pr-card" data-persona="{{ r.name }}">
+<div class="pr-card__head">
+<h2 class="s0-h2" style="margin: 0">{% if r.openable %}<a href="/personas/{{ r.name }}">{{ r.shown }}</a>{% else %}{{ r.shown }}{% endif %}</h2>
+{% if r.display_name %}<span class="s0-mono s0-small">{{ r.name }}</span>{% endif %}
+</div>
+{% if r.problem %}<p class="s0-small pr-problem" role="alert">{{ icon("warn") }}{{ r.problem }}</p>{% endif %}
+<dl class="pr-facts">
+<div><dt>寫過</dt><dd>{{ r.articles }} 篇<span class="s0-small">（{{ r.versions }} 版）</span></dd></div>
+<div><dt>寫過風格的文體</dt><dd>{{ r.written }} / 7<span class="s0-small">，校準過 {{ r.calibrated }} 種</span></dd></div>
+<div><dt>預設文體</dt><dd>{% if r.default_genre %}<span class="s0-mono">{{ r.default_genre }}</span>{% else %}<span class="s0-small">沒有</span>{% endif %}</dd></div>
+</dl>
+{% if r.openable %}
+<p class="pr-missing">
+{% if r.missing %}<span class="s0-small">缺：</span>{% for m in r.missing %}<span class="s0-badge" data-tone="{{ 'failed' if m.required else 'pending' }}" title="{{ m.fallback }}">{{ m.label }}（<span class="s0-mono">{{ m.path }}</span>）</span>{% endfor %}
+{% else %}<span class="s0-small">每一部分都有</span>{% endif %}
+</p>
+{% endif %}
+{% if r.note %}<p class="s0-small" style="margin: 0">{{ r.note }}</p>{% endif %}
+</li>
+{% endfor %}
+</ul>
+{% else %}
+<div class="s0-state" role="status" style="margin-bottom: 24px">
+<p style="margin: 0; font-weight: 600">還沒有角色</p>
+<p class="s0-small" style="margin: 0">資料目錄的 <span class="s0-mono">authors/</span> 底下還沒有資料夾。從下面的表單用範本建一個，或用匯入腳本把現有的寫作系統拆進來。</p>
+</div>
+{% endif %}
+
+<form class="s0-panel" id="persona-create" aria-labelledby="create-h" novalidate style="margin-top: 24px">
+<h2 class="s0-h2" id="create-h">新增角色</h2>
+<div class="pr-form">
+<div class="s0-field">
+<label for="f-name">資料夾名稱</label>
+<input id="f-name" type="text" name="name" autocomplete="off" spellcheck="false" maxlength="128" required style="max-width: 280px">
+<span class="s0-field__hint">英數字開頭，之後可以用英數字、點、底線、連字號。建了就不改：工單、帳本、對話都用它認這個角色。</span>
+</div>
+<div class="s0-field">
+<label for="f-display">顯示名稱（選填）</label>
+<input id="f-display" type="text" name="display_name" autocomplete="off" maxlength="40" style="max-width: 280px">
+<span class="s0-field__hint">畫面上顯示的名字，之後可以改。不填就顯示資料夾名稱。</span>
+</div>
+<div class="s0-field">
+<label for="f-from">從哪裡開始</label>
+<select id="f-from" name="from" style="max-width: 280px">
+<option value="">範本（只有一份空的聲音檔）</option>
+{% for r in rows if r.openable %}<option value="{{ r.name }}">複製 {{ r.shown }}（{{ r.name }}）</option>{% endfor %}
+</select>
+<span class="s0-field__hint">複製會帶走對方所有的檔（符號連結不帶），建好之後兩邊各自獨立；名字已經有人用就不建，絕不覆蓋。</span>
+</div>
+</div>
+<div class="s0-row">
+<button class="lm-btn" data-variant="primary" type="submit">建立</button>
+<span class="s0-small" role="status" aria-live="polite" data-result></span>
+</div>
+</form>
+</main>
+<script type="module" src="/static/js/persona.js"></script>
+{% endblock %}

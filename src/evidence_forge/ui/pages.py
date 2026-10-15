@@ -6,6 +6,7 @@
 | `GET /bills?month=2026-10` | 帳單：伺服器整頁產生，沒有前端狀態；頂部寫每月上限（未設，或還剩多少） |
 | `GET /settings` | 費用設定（#115）：這個月花了多少、各供應商後台的連結、每月上限與預設預算的表單 |
 | `POST /api/settings/costs` | 存費用設定：`{"monthly_cap_usd": 數字或 null, "analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd"}`，只給要改的也行 → `{"settings", "changes", "log_failed", "log_error"}`（設定生效了、改動紀錄沒寫成時 `log_failed` 是 true）；不合法 400 |
+| `GET /personas`、`GET /personas/<角色>`、`/api/personas…` | 角色頁（#116）：路由在 `ui/personas.py` |
 | `GET /ui/list?current=<id>` | 對話清單（HTML 片段） |
 | `GET /ui/c/<id>/thread` | 對話串流（HTML 片段）：Pi 的完整紀錄加工單；Pi 接不回來回 503 的錯誤片段 |
 | `GET /ui/c/<id>/panel?tab=report｜decisions｜article｜cost&v=<工單 id>&card=<卡 id>&diff=1` | 右側面板（HTML 片段）。決策分頁列每一關問過的每張卡（#108） |
@@ -33,15 +34,16 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from evidence_forge import cards, cost_settings
+from evidence_forge import cards, cost_settings, persona
 from evidence_forge.chat.desk import MAX_FILE_CHARS
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.extract import ExtractError, pdf_to_text
 from evidence_forge.gateway.scope import ToolRejected
+from evidence_forge.harness import default_harness
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, bills, costs, interview, thread
+from evidence_forge.ui import artifacts, bills, costs, interview, personas, thread
 from evidence_forge.ui.format import clock as format_clock
 from evidence_forge.ui.format import format_usd, month_day_clock, relative_day
 
@@ -338,7 +340,8 @@ def install(
                 wanted = next((o.card_id for o in options if o.card_id == card), options[0].card_id)
                 chosen_card = next(c for c in card_list if c["card_id"] == wanted)
                 labels = {j.job_id: j.label for j in jobs}
-                context["decision"] = interview.decision_view(chosen_card, labels)
+                shown = persona.display_name(data, chosen_card["persona"]) if chosen_card.get("persona") else None
+                context["decision"] = interview.decision_view(chosen_card, labels, persona_name=shown)
         elif tab == "cost":
             context["cost"] = await asyncio.to_thread(bills.conversation_cost, data, recipe_map, conversation_id)
             budget = context["cost"].budget_usd
@@ -397,7 +400,8 @@ def install(
         settings = (await asyncio.to_thread(cost_settings.effective, data, os.environ)).loaded.settings
         confirm = interview.write_confirm(
             state.model_dump(mode="json"),
-            persona=first_persona(data),
+            # 這張編輯卡第 1 關選的角色（沒問就是 me）；顯示名稱沒設就用資料夾名
+            persona=persona.display_name(data, state.persona or "me") or state.persona or "me",
             last_rewrite_usd=written[-1].spent_usd if written else None,
             cap_usd=settings.rewrite_budget_usd,
         )
@@ -410,6 +414,16 @@ def install(
         except OSError:
             found = []
         return new_count(list_rows(found, None, moment))
+
+    personas.install(
+        app,
+        templates=templates,
+        data=data,
+        recipes=recipe_map,
+        harness=default_harness(),
+        clock=clock,
+        nav_count=nav_count,
+    )
 
     @app.get("/bills", response_class=HTMLResponse)
     async def bills_page(request: Request, month: str | None = None) -> HTMLResponse:
