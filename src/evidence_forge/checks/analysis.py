@@ -21,7 +21,7 @@ from typing import Any
 
 from evidence_forge.checks.format import check_markdown, check_schema
 from evidence_forge.checks.report import CheckEntry, Location, json_pointer
-from evidence_forge.checks.text import line_column, mask_code, normalize_url
+from evidence_forge.checks.text import line_column, mask_code, normalize_for_match, normalize_url
 
 # brief.md 規定的幾節（FR-AN-01）；`harness/skills/brief/SKILL.md` 照這幾個標題寫
 BRIEF_SECTIONS = (
@@ -172,21 +172,50 @@ _ANY_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
 _INTERNAL_ID = re.compile(r"(?<![A-Za-z0-9_])([KS][0-9]+)(?![A-Za-z0-9_])")
 
 
-def check_lead(report: str, *, file: str) -> list[CheckEntry]:
-    """第一個 `##` 標題之前要有一句話（不算標題的一行字），講這篇在講什麼（ADR-0024 §3.1）。"""
-    for line in mask_code(report).split("\n"):
+# 「▶ 下一步：下面有 3 個可以寫的題材…」那一行
+_NEXT_STEP = re.compile(r"^(?:▶\s*)?下一步")
+_NEXT_STEP_COUNT = re.compile(r"([0-9]+|[一二兩三四五六七八九十])\s*個")
+_CHINESE_DIGITS = {c: n for n, c in enumerate("一二三四五六七八九十", start=1)} | {"兩": 2}
+
+
+def _opening_lines(report: str) -> list[tuple[int, str]]:
+    """第一個 `##` 之前、不是空行也不是標題的每一行：（行號, 去掉前後空白的字）。"""
+    found: list[tuple[int, str]] = []
+    for number, line in enumerate(mask_code(report).split("\n"), start=1):
         if _HEADING.match(line):
             break
         if line.strip() and not _ANY_HEADING.match(line):
-            return [CheckEntry(check="C5", status="pass", reason="第一個標題之前有一句話")]
-    return [
-        CheckEntry(
-            check="C5",
-            status="fail",
-            reason="第一個「##」標題之前要先有一句話，講這篇在講什麼",
-            location=Location(file=file, line=1),
+            found.append((number, line.strip()))
+    return found
+
+
+def check_lead(report: str, *, file: str) -> list[CheckEntry]:
+    """第一個 `##` 之前（ADR-0024 §3.1）：第一行是一句話講這篇在講什麼；另有一行「▶ 下一步」，
+    裡面寫的題材數要跟「可以寫的題材」實際的數目一樣。"""
+    lines = _opening_lines(report)
+    failures: list[CheckEntry] = []
+
+    def fail(reason: str, line: int = 1) -> None:
+        failures.append(
+            CheckEntry(check="C5", status="fail", reason=reason, location=Location(file=file, line=line))
         )
-    ]
+
+    if not lines:
+        fail("第一個「##」標題之前要先有一句話，講這篇在講什麼")
+    elif _NEXT_STEP.match(lines[0][1]):
+        fail("第一個「##」標題之前的第一行要是一句話講這篇在講什麼，不是下一步", lines[0][0])
+    step = next(((n, text) for n, text in lines if _NEXT_STEP.match(text)), None)
+    if step is None:
+        fail("第一個「##」標題之前要有一行「▶ 下一步：下面有 N 個可以寫的題材…」")
+    else:
+        topics = len(topic_entries(report))
+        match = _NEXT_STEP_COUNT.search(step[1])
+        said = None if match is None else _CHINESE_DIGITS.get(match.group(1)) or int(match.group(1))
+        if said != topics:
+            fail(f"下一步那一行說有 {said if said is not None else '幾'} 個題材，「{TOPICS_SECTION}」實際有 {topics} 個", step[0])
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="第一個標題之前有一句話與下一步，題材數對得上")]
 
 
 def check_internal_ids(
@@ -221,20 +250,74 @@ def check_internal_ids(
     return [CheckEntry(check="C5", status="pass", reason="報告裡沒有裸露的內部編號")]
 
 
-# 題材的編號：`### 1. 標題`，或一行開頭不縮排的有編號清單 `1. 標題`
-_TOPIC_HEADING = re.compile(r"^ {0,3}###[ \t]+(?:\*\*)?(\d+)[.)、]")
-_TOPIC_ITEM = re.compile(r"^(\d+)[.)][ \t]+")
+# 可以寫的題材一個：`### 1. 暫定標題`（標題可以加粗）。畫面與檢查都只認這一種寫法
+TOPIC_HEADING = re.compile(r"^ {0,3}###[ \t]+(?:\*\*)?(\d+)[.)、][ \t]*(.*?)(?:\*\*)?[ \t#]*$")
+# 查證一條開頭的標記（ADR-0023 的四種）
+MARK = re.compile(r"^(?:\*\*)?【(有爭議|過時|查不到|有佐證)】(?:\*\*)?\s*")
+# sources.json 的 verdict → 報告裡的標記
+VERDICT_MARKS = {"disputed": "有爭議", "outdated": "過時", "not_found": "查不到", "supported": "有佐證"}
+# 一節裡不縮排的清單項目（縮排的是它的續行或子項目）
+_TOP_ITEM = re.compile(r"^ {0,1}(?:[-*+]|\d+[.)])[ \t]+(.*)$")
+
+
+def topic_entries(report: str) -> list[tuple[int, int, str, str]]:
+    """「可以寫的題材」裡的每個題材：（行號, 編號, 暫定標題, 底下的內文）。程式碼區塊裡的不算。"""
+    masked = dict(_section_lines(mask_code(report), TOPICS_SECTION))
+    original = dict(_section_lines(report, TOPICS_SECTION))
+    found: list[tuple[int, int, str, list[str]]] = []
+    for number, line in masked.items():
+        match = TOPIC_HEADING.match(line)
+        if match is not None:
+            found.append((number, int(match.group(1)), match.group(2).replace("**", "").strip(), []))
+        elif found:
+            found[-1][3].append(original[number])
+    return [(line, n, title, "\n".join(body).strip()) for line, n, title, body in found]
+
+
+def section_items(report: str, title: str) -> list[tuple[int, str]]:
+    """一節裡不縮排的清單項目：（行號, 項目的字，縮排的續行與子項目接在後面）。"""
+    found: list[tuple[int, list[str]]] = []
+    masked = _section_lines(mask_code(report), title)
+    original = dict(_section_lines(report, title))
+    for number, line in masked:
+        match = _TOP_ITEM.match(line)
+        if match is not None:
+            found.append((number, [original[number][match.start(1) :]]))
+        elif found and line.strip() and line[:1] in " \t":
+            found[-1][1].append(original[number].strip())
+        elif found and not line.strip():
+            continue
+        elif line.strip():
+            # 不在清單裡的段落：之後的行不再算前一條的續行
+            found.append((number, [original[number].strip()]))
+    return [(number, "\n".join(lines)) for number, lines in found]
+
+
+def verify_marks(report: str) -> list[str | None]:
+    """「查證」一節每一條開頭的標記（有爭議、過時、查不到、有佐證）；沒有標記的是 None。"""
+    marks: list[str | None] = []
+    for _, text in section_items(report, "查證"):
+        match = MARK.match(text)
+        marks.append(match.group(1) if match else None)
+    return marks
+
+
+def fact_check_marks(output: object) -> list[str] | None:
+    """sources.json 的 fact_checks 照順序換成報告的標記；格式不對（交給 schema 報）是 None。"""
+    entries = output.get("fact_checks") if isinstance(output, Mapping) else None
+    if not isinstance(entries, list):
+        return None
+    return [
+        VERDICT_MARKS.get(str(entry.get("verdict")), "?") if isinstance(entry, Mapping) else "?"
+        for entry in entries
+    ]
 
 
 def check_topics_numbered(report: str, *, file: str) -> list[CheckEntry]:
-    """「可以寫的題材」至少 `MIN_TOPICS` 個、從 1 起連續編號（ADR-0024）。
-
-    認兩種寫法：`### 1. 暫定標題` 的三級標題，沒有的話再看不縮排的有編號清單。少了這一節由五節的檢查報。
-    """
-    lines = _section_lines(mask_code(report), TOPICS_SECTION)
-    numbers = [int(m.group(1)) for _, text in lines if (m := _TOPIC_HEADING.match(text))]
-    if not numbers:
-        numbers = [int(m.group(1)) for _, text in lines if (m := _TOPIC_ITEM.match(text))]
+    """「可以寫的題材」至少 `MIN_TOPICS` 個、從 1 起連續編號（ADR-0024）。只認 `### 1. 暫定標題`。"""
+    entries = topic_entries(report)
+    numbers = [number for _, number, _, _ in entries]
+    lines = _section_lines(report, TOPICS_SECTION)
     where = Location(file=file, line=lines[0][0] - 1 if lines else None)
     if len(numbers) < MIN_TOPICS:
         return [
@@ -260,6 +343,66 @@ def check_topics_numbered(report: str, *, file: str) -> list[CheckEntry]:
     return [
         CheckEntry(check="C5", status="pass", reason=f"可以寫的題材有 {len(numbers)} 個，編號連續")
     ]
+
+
+def check_fact_alignment(report: str, output: object, *, file: str) -> list[CheckEntry]:
+    """「查證」一條一條的標記，要跟 sources.json 的 fact_checks 同樣多、每個位置同一種結果。
+
+    報告沒有編號了，畫面靠這個順序把每一條的來源接回去；對不上就算這一次不合格（重試）。
+    """
+    expected = fact_check_marks(output)
+    if expected is None:
+        return []
+    marks = verify_marks(report)
+    if marks == expected:
+        return [CheckEntry(check="C5", status="pass", reason="查證的標記跟 fact_checks 一條一條對得上")]
+
+    def show(found: Sequence[str | None]) -> str:
+        return "、".join(mark or "沒有標記" for mark in found) or "（沒有）"
+
+    return [
+        CheckEntry(
+            check="C5",
+            status="fail",
+            reason=(
+                "查證一節的標記要跟 sources.json 的 fact_checks 一條一條對上："
+                f"報告是 {show(marks)}，sources.json 是 {show(expected)}"
+            ),
+            location=Location(file=file),
+        )
+    ]
+
+
+def topic_titles(output: object) -> list[str] | None:
+    """sources.json 的 topics 的標題；格式不對（交給 schema 報）是 None。"""
+    entries = output.get("topics") if isinstance(output, Mapping) else None
+    if not isinstance(entries, list):
+        return None
+    return [str(entry.get("title", "")) if isinstance(entry, Mapping) else "" for entry in entries]
+
+
+def check_topic_alignment(report: str, output: object, *, file: str) -> list[CheckEntry]:
+    """「可以寫的題材」要跟 sources.json 的 topics 一樣多、標題一樣（正規化後比）、順序一樣。"""
+    expected = topic_titles(output)
+    if expected is None:
+        return []
+    found = [title for _, _, title, _ in topic_entries(report)]
+    prefix = "可以寫的題材要跟 sources.json 的 topics 一樣多、標題一樣、順序一樣："
+    if len(found) != len(expected):
+        reason = f"{prefix}報告有 {len(found)} 個，sources.json 有 {len(expected)} 個"
+    else:
+        wrong = next(
+            (
+                i
+                for i, (a, b) in enumerate(zip(found, expected, strict=True))
+                if normalize_for_match(a) != normalize_for_match(b)
+            ),
+            None,
+        )
+        if wrong is None:
+            return [CheckEntry(check="C5", status="pass", reason="可以寫的題材跟 topics 對得上")]
+        reason = f"{prefix}第 {wrong + 1} 個報告是「{found[wrong]}」，sources.json 是「{expected[wrong]}」"
+    return [CheckEntry(check="C5", status="fail", reason=reason, location=Location(file=file))]
 
 
 def _section_lines(markdown: str, title: str) -> list[tuple[int, str]]:
@@ -435,6 +578,8 @@ def report_checks(
         *check_sections(report, REPORT_SECTIONS, file=report_file, ordered=True),
         *check_internal_ids(report, file=report_file, known=_known_ids(output, key_claims)),
         *check_topics_numbered(report, file=report_file),
+        *check_fact_alignment(report, output, file=report_file),
+        *check_topic_alignment(report, output, file=report_file),
         *check_source_list_urls(report, allowed_urls, file=report_file),
         *check_schema(output, schema, file=output_file),
         *check_source_refs(output, file=output_file),

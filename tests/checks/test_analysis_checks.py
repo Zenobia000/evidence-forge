@@ -10,11 +10,13 @@ from evidence_forge.checks import (
     REPORT_SECTIONS,
     brief_checks,
     check_claim_coverage,
+    check_fact_alignment,
     check_internal_ids,
     check_lead,
     check_sections,
     check_source_list_urls,
     check_source_refs,
+    check_topic_alignment,
     check_topics_numbered,
     check_verdict_order,
     report_checks,
@@ -53,7 +55,7 @@ OUTPUT: dict[str, Any] = {
     "queries": ["q"],
     "sources": [{"id": "S2", "url": "https://a.example/", "title": "t", "why": "w"}],
     "fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2"]}],
-    "topics": [{"title": "題材", "sources": ["S2"]}],
+    "topics": [{"title": "題材一", "sources": ["S2"]}, {"title": "題材二", "sources": ["S2"]}],
 }
 SCHEMA: dict[str, Any] = {"type": "object", "required": ["sources"]}
 
@@ -331,7 +333,7 @@ def test_來源清單的網址帶括號_只抓過前綴不能放行(line: str) -
 # --- ADR-0024：第一個標題前的一句話、沒有裸露編號、可以寫的題材有編號 ---------------
 
 
-def test_第一個標題前有一句話_通過() -> None:
+def test_第一個標題前有一句話與下一步_題材數對得上_通過() -> None:
     assert _failed(check_lead(REPORT, file="report.md")) == []
 
 
@@ -344,9 +346,36 @@ def test_第一個標題前有一句話_通過() -> None:
     ids=["直接從第一節開始", "只有一個一級標題"],
 )
 def test_第一個標題前沒有那一句話_擋(report: str) -> None:
+    assert "第一個「##」標題之前要先有一句話，講這篇在講什麼" in _failed(
+        check_lead(report, file="report.md")
+    )
+
+
+def test_第一行就是下一步_沒有那一句話_擋() -> None:
+    report = REPORT[REPORT.index("▶ 下一步") :]
     assert _failed(check_lead(report, file="report.md")) == [
-        "第一個「##」標題之前要先有一句話，講這篇在講什麼"
+        "第一個「##」標題之前的第一行要是一句話講這篇在講什麼，不是下一步"
     ]
+
+
+def test_沒有下一步那一行_擋() -> None:
+    report = REPORT.replace("▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。\n", "")
+    assert _failed(check_lead(report, file="report.md")) == [
+        "第一個「##」標題之前要有一行「▶ 下一步：下面有 N 個可以寫的題材…」"
+    ]
+
+
+@pytest.mark.parametrize("count", ["3", "三"])
+def test_下一步寫的題材數跟題材對不上_擋(count: str) -> None:
+    report = REPORT.replace("下面有 2 個", f"下面有 {count} 個")
+    assert _failed(check_lead(report, file="report.md")) == [
+        f"下一步那一行說有 {3} 個題材，「可以寫的題材」實際有 2 個"
+    ]
+
+
+def test_下一步寫中文數字也認得() -> None:
+    report = REPORT.replace("下面有 2 個", "下面有兩個")
+    assert _failed(check_lead(report, file="report.md")) == []
 
 
 def test_報告沒有裸露的編號_通過() -> None:
@@ -411,10 +440,19 @@ def test_可以寫的題材兩個以上而且有編號_通過() -> None:
     assert _failed(check_topics_numbered(REPORT, file="report.md")) == []
 
 
-def test_可以寫的題材用有編號的清單也算() -> None:
+def test_可以寫的題材寫成有編號的清單_不算_只認三級標題() -> None:
+    # 畫面只認 `### 1.`；檢查跟畫面認同一種寫法，不然畫面上的編號會不見
     listed = REPORT.replace("### 1. 題材一\n- 角度：一句話。", "1. **題材一**\n   - 角度：一句話。")
     listed = listed.replace("### 2. 題材二\n- 角度：一句話。", "2. **題材二**\n   - 角度：一句話。")
-    assert _failed(check_topics_numbered(listed, file="report.md")) == []
+    assert _failed(check_topics_numbered(listed, file="report.md")) == [
+        "「可以寫的題材」要至少 2 個有編號的題材（### 1. 暫定標題），現在有 0 個"
+    ]
+
+
+def test_題材標題加粗也認得() -> None:
+    bold = REPORT.replace("### 1. 題材一", "### 1. **題材一**")
+    assert _failed(check_topics_numbered(bold, file="report.md")) == []
+    assert _failed(check_topic_alignment(bold, OUTPUT, file="report.md")) == []
 
 
 def test_可以寫的題材只有一個_擋() -> None:
@@ -449,3 +487,86 @@ def test_報告的檢查合起來_露出編號就不過() -> None:
         key_claims=["K1"],
     )
     assert any("S2" in reason for reason in _failed(entries))
+
+
+# --- T3 第一輪：報告的查證、題材要跟 sources.json 對得上 --------------------------------
+
+
+def _verdicts(*verdicts: str) -> dict[str, Any]:
+    return {
+        **OUTPUT,
+        "fact_checks": [
+            {"claim": f"K{i}", "verdict": v, "sources": ["S2"]} for i, v in enumerate(verdicts, 1)
+        ],
+    }
+
+
+VERIFY_TWO = REPORT.replace(
+    "- 【有爭議】一條事實：價目表與廠商部落格的算法對不上。",
+    "- 【有爭議】一條事實：價目表與廠商部落格的算法對不上。\n  - 補一句說明\n- 【有佐證】另一條：延遲說明寫了。",
+)
+
+
+def test_查證的標記跟_fact_checks_一條一條對得上_通過() -> None:
+    output = _verdicts("disputed", "supported")
+    assert _failed(check_fact_alignment(VERIFY_TWO, output, file="report.md")) == []
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "reason"),
+    [
+        (("supported", "disputed"), "報告是 有爭議、有佐證，sources.json 是 有佐證、有爭議"),
+        (("disputed",), "報告是 有爭議、有佐證，sources.json 是 有爭議"),
+        (("disputed", "supported", "not_found"), "報告是 有爭議、有佐證，sources.json 是 有爭議、有佐證、查不到"),
+    ],
+    ids=["順序不同", "報告多一條", "報告少一條"],
+)
+def test_查證的標記跟_fact_checks_對不上_擋(verdicts: tuple[str, ...], reason: str) -> None:
+    [failure] = _failed(check_fact_alignment(VERIFY_TWO, _verdicts(*verdicts), file="report.md"))
+    assert failure == "查證一節的標記要跟 sources.json 的 fact_checks 一條一條對上：" + reason
+
+
+def test_查證有一條沒有標記_擋() -> None:
+    text = VERIFY_TWO.replace("- 【有佐證】另一條", "- 另一條")
+    [failure] = _failed(check_fact_alignment(text, _verdicts("disputed", "supported"), file="report.md"))
+    assert "有爭議、沒有標記" in failure
+
+
+def test_查證一個標記都沒有_擋() -> None:
+    text = REPORT.replace("- 【有爭議】一條事實：", "一條事實有爭議：")
+    [failure] = _failed(check_fact_alignment(text, OUTPUT, file="report.md"))
+    assert "報告是 沒有標記，" in failure
+    empty = REPORT.replace("- 【有爭議】一條事實：價目表與廠商部落格的算法對不上。\n", "")
+    [failure] = _failed(check_fact_alignment(empty, OUTPUT, file="report.md"))
+    assert "報告是 （沒有）" in failure
+
+
+def test_題材的數目與標題跟_topics_對得上_通過() -> None:
+    assert _failed(check_topic_alignment(REPORT, OUTPUT, file="report.md")) == []
+
+
+def test_題材標題跟_topics_不一樣_擋() -> None:
+    output = {**OUTPUT, "topics": [{"title": "題材一", "sources": ["S2"]}, {"title": "別的", "sources": ["S2"]}]}
+    assert _failed(check_topic_alignment(REPORT, output, file="report.md")) == [
+        "可以寫的題材要跟 sources.json 的 topics 一樣多、標題一樣、順序一樣：第 2 個報告是「題材二」，sources.json 是「別的」"
+    ]
+
+
+def test_題材數目跟_topics_不一樣_擋() -> None:
+    output = {**OUTPUT, "topics": [*OUTPUT["topics"], {"title": "題材三", "sources": ["S2"]}]}
+    assert _failed(check_topic_alignment(REPORT, output, file="report.md")) == [
+        "可以寫的題材要跟 sources.json 的 topics 一樣多、標題一樣、順序一樣：報告有 2 個，sources.json 有 3 個"
+    ]
+
+
+def test_報告的檢查合起來_查證或題材對不上就不過() -> None:
+    entries = report_checks(
+        report=REPORT,
+        report_file="report.md",
+        output=_verdicts("supported"),
+        output_file="sources.json",
+        schema=SCHEMA,
+        allowed_urls=FETCHED,
+        key_claims=["K1"],
+    )
+    assert any("fact_checks" in reason for reason in _failed(entries))

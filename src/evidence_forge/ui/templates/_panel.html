@@ -33,7 +33,7 @@
 <div class="s0-alert">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">讀不到報告 {{ chosen.label }} 的檔案</p><p class="s0-small" style="margin: 0">{{ report.error }}</p></div></div>
 {% else %}
 <article class="ch-report">
-{% if report.next_step %}<div class="ch-sec ch-nextstep">{% if report.lead %}<p class="ch-nextstep__lead">{{ report.lead }}</p>{% endif %}<p class="ch-nextstep__step">{{ report.next_step }}</p></div>{% endif %}
+{% if report.summary or report.next_step %}<div class="ch-sec ch-nextstep">{% if report.summary %}<p class="ch-nextstep__lead">{{ report.summary }}</p>{% endif %}{% if report.next_step %}<p class="ch-nextstep__step">{{ report.next_step }}</p>{% endif %}</div>{% endif %}
 <section class="ch-sec" aria-labelledby="sec1">
 <h2 class="ch-sec__h" id="sec1"><span class="ch-sec__n">1</span>作者在說什麼</h2>
 <div class="ch-md">{{ report.intro_html }}</div>

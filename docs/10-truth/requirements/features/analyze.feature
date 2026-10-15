@@ -43,6 +43,14 @@ Feature: 分析：brief、查證與找題材，交出分析報告
     And 作者的意見放在「作者的看法」，標明不是事實
 
   @sad-path
+  Scenario: 報告的查證或題材跟 sources.json 對不上就重來
+    Given sources.json 的 fact_checks 是有爭議、有佐證兩條
+    And report.md 的查證只寫了一條【有佐證】
+    When 執行器跑程式檢查
+    Then 這一次算失敗，依配方重試
+    And 畫面遇到對不上的舊報告，照報告原文顯示查證，不把來源接到別條上
+
+  @sad-path
   Scenario: 報告裡露出內部編號就重來
     Given 查證與找題材段的 report.md 寫了「見 S2」
     When 執行器跑程式檢查

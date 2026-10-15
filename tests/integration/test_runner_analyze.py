@@ -410,12 +410,35 @@ DISPUTED_FIRST: list[dict[str, Any]] = [
 def test_有爭議與有佐證並存_有爭議的排前面而且附兩邊的來源_合格(
     world_for: Callable[[str], World],
 ) -> None:
-    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=DISPUTED_FIRST))
+    # 報告的查證一條一條跟 fact_checks 對得上：先有爭議、再有佐證（T3 第一輪）
+    report = REPORT_MD.replace(
+        "- 【有佐證】",
+        "- 【有爭議】多數客人願意提前一天預約：兩篇說法不同（預約制麵包店一年後、烘焙業的剩食）。\n- 【有佐證】",
+    )
+    world = world_for(
+        _script(
+            brief_json=TWO_CLAIMS,
+            fact_checks=DISPUTED_FIRST,
+            report_by_attempt=_every_attempt(report),
+        )
+    )
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_報告的查證跟_fact_checks_對不上_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    # sources.json 有兩條，報告只寫了一條：畫面接不回來源，算這一次不合格
+    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=DISPUTED_FIRST))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "fact_checks 一條一條對上" in _failed_reason(world, job_id)
 
 
 @pytest.mark.promise("FR-IV-01")
