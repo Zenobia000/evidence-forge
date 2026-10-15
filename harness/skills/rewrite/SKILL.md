@@ -13,7 +13,7 @@ Do not call `fetch_url` or `web_search`: everything you may use is already in th
 
 1. The task. It gives the goal and, when the card started from an analysis report, the original's credit line (starting with 原文出處). When this is a revision, it also gives the creator's note on the previous version (starting with 創作者對上一版的意見).
 2. `input/card/card.md`: where the card started, the genre, the theme and the persona, then the decision of each station: 2 the core viewpoint, 3 the author's own example, 4 when the viewpoint holds and when it fails, 5 the working title, 6 the framework, the outline and the figure storyboard; then the claims the creator checked, the figure slots, and the author materials with their paths under `input/card/materials/`. Read every author material listed there.
-3. **Only when the task has a 原文出處 line** (the card started from a report): `input/report.md`, the analysis report (查證 marks each fact 【有爭議】, 【過時】, 【查不到】 or 【有佐證】), and every file in `input/sources/` (call `list_files` on it). Each source starts with header lines (來源編號, 標題, 網址, 作者 when known, 抓取時間), then `---`, then the text. Read `input/brief.md` too if it is there.
+3. **Only when the task has a 原文出處 line** (the card started from a report): `input/report.md`, the analysis report (查證 marks each fact 【有爭議】, 【過時】, 【查不到】 or 【有佐證】), and every file in `input/sources/` (call `list_files` on it). These are the sources for the card's topic. Each starts with header lines (來源編號, 標題, 網址, 作者 when known, 抓取時間), then `---`, then the text.
 4. `input/target-genre.md`: the genre's required content and main evidence. Its skeleton and recommended formula are the order of your thinking, never your headings.
 5. `input/author/voice.md`: how this persona talks, including its front matter.
 6. Call `list_files` on `input/author/` and read what is there: `input/author/genre-style.md` (how this persona writes this genre; if it is missing, write with the genre definition and the voice only), `input/author/theme.md` (the persona's stance on this theme), `input/author/lessons.md` (rules the creator gave after earlier articles; follow every one), and the files in `input/author/craft/` (the persona's craft for openings, titles, punchlines and endings, layout).
@@ -22,7 +22,7 @@ Do not call `fetch_url` or `web_search`: everything you may use is already in th
 
 Read only the files named above. Do not list or read anything else in the job folder.
 
-If there is no `input/card/card.md` (an older job), the goal names one of the numbered topics in `input/report.md`: write about that topic in the target genre and skip what this file says about the card.
+If there is no `input/card/card.md` (an older job), the goal names one of the numbered topics in `input/report.md`: write about that topic in the target genre, read `input/brief.md` if it is there, and skip what this file says about the card.
 
 ## What the article may use
 
@@ -77,7 +77,7 @@ If there is no `input/card/card.md` (an older job), the goal names one of the nu
 - **End with a level-2 heading `## 參考來源`**, the last heading, followed by a list:
   1. When the task has a 原文出處 line: the original first, copied from it (title, author when given, URL when given).
   2. Then every source from `input/sources/` you drew on: its 標題 and 網址 from the file header, and any link from the author materials you drew on.
-  Every item has its URL. Only use URLs from the task, the source headers, the card and the author materials; never make one up. If the article draws on no outside source at all, write one plain sentence under the heading instead of a list, saying it rests on the author's own experience and notes.
+  Every item has its URL. **Every URL anywhere in the article** (front matter, links in the text, references) comes from the task (原文出處 or the creator's note), the source headers, `input/card/card.md` or the author materials; never make one up. Only when the task has no 原文出處 line and there is no `input/sources/` folder may you write one plain sentence under the heading instead of a list, saying the article rests on the author's own experience and notes.
 - Standard Markdown only: headings, paragraphs, lists, tables and the figure lines. No HTML, no code fence around the whole article.
 - If nothing sets the length, aim for 1,500 to 2,500 Chinese characters.
 

@@ -79,7 +79,9 @@ def test_front_matter_的文體與主題要跟編輯卡定的一樣() -> None:
     assert len(failed) == 2 and "explainer" in failed[0] and "tools" in failed[1]
 
 
-def _urls(article: str, *, original: bool = True, known: frozenset[str] | None = None) -> list[str]:
+def _urls(
+    article: str, *, original: bool = True, known: frozenset[str] | None = None, list_required: bool = True
+) -> list[str]:
     return _failed(
         check_reference_urls(
             article,
@@ -87,6 +89,7 @@ def _urls(article: str, *, original: bool = True, known: frozenset[str] | None =
             original_url=URL if original else None,
             original_title=TITLE if original else None,
             known_urls=frozenset({URL, SOURCE}) if known is None else known,
+            list_required=list_required,
         )
     )
 
@@ -111,13 +114,40 @@ def test_沒有參考來源一節_擋() -> None:
 
 def test_從自己的想法寫的_沒有用到外面的來源_參考來源可以只寫一句說明() -> None:
     article = FRONT + BODY + "## 參考來源\n\n本文只根據作者自己的經驗與筆記。\n"
-    assert _urls(article, original=False, known=frozenset()) == []
+    assert _urls(article, original=False, known=frozenset(), list_required=False) == []
+
+
+def test_有原文或有來源時_參考來源只寫一句說明_擋_要列清單() -> None:
+    article = FRONT + BODY + "## 參考來源\n\n本文只根據作者自己的經驗與筆記。\n"
+    assert any("清單" in reason for reason in _urls(article))
+
+
+def test_參考來源只寫一段文字_裡面編的網址照樣擋() -> None:
+    article = FRONT + BODY + "## 參考來源\n\n本文參考 https://invented.example/x 的說法。\n"
+    failed = _urls(article, original=False, known=frozenset(), list_required=False)
+    assert any("invented.example" in reason for reason in failed)
+
+
+def test_內文的連結也要是這張單有的網址() -> None:
+    article = FRONT + "# 標題\n\n詳見[這份報告](https://invented.example/report)。\n\n" + REFERENCES
+    assert any("invented.example" in reason for reason in _urls(article))
+
+
+def test_原文那一筆後面再接一個編的網址_照樣擋() -> None:
+    article = FRONT + BODY + f"## 參考來源\n\n- 王小明，〈{TITLE}〉，{URL} 另見 https://invented.example/y\n- 〈加班的成本〉，{SOURCE}\n"
+    assert any("invented.example" in reason for reason in _urls(article))
+
+
+def test_front_matter_裡的網址也算() -> None:
+    article = FRONT.replace("description: 延長開放的成本在人", "description: 見 https://invented.example/z") + BODY + REFERENCES
+    assert any("invented.example" in reason for reason in _urls(article))
 
 
 def test_原文是貼上的文字沒有網址_原文那一筆不用網址() -> None:
     article = FRONT + BODY + f"## 參考來源\n\n- 〈{TITLE}〉（創作者貼上的文字）\n- 〈加班的成本〉，{SOURCE}\n"
     entries = check_reference_urls(
-        article, file=FILE, original_url=None, original_title=TITLE, known_urls=frozenset({SOURCE})
+        article, file=FILE, original_url=None, original_title=TITLE, known_urls=frozenset({SOURCE}),
+        list_required=True,
     )
     assert _failed(entries) == []
 

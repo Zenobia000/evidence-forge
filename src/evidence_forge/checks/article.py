@@ -401,7 +401,8 @@ class ArticleRules:
 
     - `genres`、`themes`：合法的文體與主題 slug；`genre`、`theme`：編輯卡定的（None 就只查合法）。
     - `figures`：分鏡裡要有圖位的編號（`cards.figure_slots`）；None 是沒有結構化的分鏡，圖位不查。
-    - `patterns`：角色的句型規則。`known_urls`：參考來源准列的網址（正規化過）；None 就不查。
+    - `patterns`：角色的句型規則。`known_urls`：文章裡准出現的網址（正規化過）；None 就不查。
+    - `list_required`：參考來源要不要列成清單（有原文或有來源時要）。
     - `answers_original`：文體是 essay 而且從報告開始，內文可以引用並回應原文。
     """
 
@@ -413,6 +414,8 @@ class ArticleRules:
     patterns: tuple[SentencePattern, ...] = ()
     known_urls: frozenset[str] | None = None
     answers_original: bool = False
+    # 有原文或有放進來的來源：參考來源要列成清單（沒有的話可以只寫一句說明）
+    list_required: bool = True
 
 
 # 角色資料的句型規則：一條的 pattern 最長幾個字（是創作者自己寫的正規表示式，長了就是寫錯）
@@ -514,42 +517,55 @@ def check_reference_urls(
     original_url: str | None,
     original_title: str | None,
     known_urls: frozenset[str] | None,
+    list_required: bool,
 ) -> list[CheckEntry]:
-    """參考來源一節要有；清單的每一筆有網址，而且網址是這張單真的有的（不能自己編來源）。
+    """參考來源一節要有、清單的每一筆有網址；**文章裡每一個網址**都要是這張單真的有的（不能自己編來源）。
 
-    原文是貼上的文字（沒有網址）時，原文那一筆不用網址。沒有原文、也沒用到外面的來源（照作者自己的經驗寫）時，
-    這一節可以只有一句說明、沒有清單。`known_urls` 是正規化過的網址；None 就只查有沒有網址。
+    - 網址照整篇查：front matter、內文的連結、參考來源（清單或一段文字都一樣），程式碼區塊以外的每一個。
+    - 原文是貼上的文字（沒有網址）時，原文那一筆不用網址。
+    - `list_required`：這篇有原文或有放進來的來源，參考來源就要是清單；沒有原文也沒有來源
+      （照作者自己的經驗寫）時，這一節可以只有一句說明。
+    - `known_urls` 是正規化過的網址；None 就只查有沒有網址與清單。
     """
     _, references, line = split_references(article)
     if references is None:
         return [_fail(f"文章結尾沒有「{REFERENCES_HEADING}」一節", file)]
     lines = [text for text in references.split("\n") if text.strip()]
-    entries = _entries(references) if any(_ITEM.match(text) for text in lines) else []
+    listed = any(_ITEM.match(text) for text in lines)
     failures: list[CheckEntry] = []
-    for entry in entries:
-        urls = [found.rstrip(").,") for found in _URL.findall(entry)]
-        if not urls:
-            if original_url is None and _is_original(entry, None, original_title):
-                continue
-            failures.append(
-                _fail(f"「{REFERENCES_HEADING}」的這一筆沒有網址：{entry.strip()[:60]}", file, line)
+    if list_required and not listed:
+        failures.append(
+            _fail(
+                f"「{REFERENCES_HEADING}」要列成清單，一筆一個來源、附網址（這篇有原文或分析抓過的來源）",
+                file,
+                line,
             )
+        )
+    for entry in _entries(references) if listed else []:
+        if _URL.findall(entry):
             continue
-        if known_urls is None:
+        if original_url is None and _is_original(entry, None, original_title):
             continue
-        for url in urls:
-            if normalize_url(url) not in known_urls:
-                failures.append(
-                    _fail(
-                        f"「{REFERENCES_HEADING}」列的 {url} 不是這篇的來源（原文、分析抓過的來源、作者素材裡都沒有）："
-                        "只列真的有的來源，不要自己編",
-                        file,
-                        line,
-                    )
+        failures.append(_fail(f"「{REFERENCES_HEADING}」的這一筆沒有網址：{entry.strip()[:60]}", file, line))
+    if known_urls is not None:
+        reported: set[str] = set()
+        for found in _URL.findall(mask_code(article)):
+            url = found.rstrip(").,")
+            normalized = normalize_url(url)
+            if normalized in known_urls or normalized in reported:
+                continue
+            reported.add(normalized)
+            failures.append(
+                _fail(
+                    f"文章裡的 {url} 不是這篇的來源（原文、分析抓過的來源、編輯卡、作者素材、創作者的意見裡都沒有）："
+                    "只寫真的有的來源，不要自己編",
+                    file,
+                    _first_line_with(article, normalize_for_match(url)),
                 )
+            )
     if failures:
         return failures
-    return [CheckEntry(check="C5", status="pass", reason="參考來源每一筆都有網址，而且都是這篇真的有的來源")]
+    return [CheckEntry(check="C5", status="pass", reason="參考來源每一筆都有網址，文章裡的網址都是這篇真的有的來源")]
 
 
 def check_sentence_patterns(
@@ -674,6 +690,7 @@ def article_checks(
             *check_reference_urls(
                 article, file=article_file, original_url=original_url,
                 original_title=original_title, known_urls=rules.known_urls,
+                list_required=rules.list_required,
             ),
             *check_sentence_patterns(article, file=article_file, patterns=rules.patterns),
             *check_figure_slots(article, file=article_file, slots=rules.figures),

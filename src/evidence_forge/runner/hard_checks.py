@@ -52,7 +52,7 @@ from evidence_forge.documents import FrontmatterError, split_frontmatter
 from evidence_forge.models import Job, RecipeStage
 from evidence_forge.paths import DataDir, JobDir
 from evidence_forge.runner import sources
-from evidence_forge.runner.stage_inputs import CARD_DIR, CARD_JSON, VOICE
+from evidence_forge.runner.stage_inputs import CARD_BRIEF, CARD_DIR, CARD_JSON, VOICE
 
 # 產出檔名 → 檢查；順序就是一段宣告好幾種時的優先順序（見上表）
 REPORT_OUTPUT = "report.md"
@@ -134,7 +134,7 @@ def run_hard_checks(
                 original_author=original.author if original is not None else None,
                 texts=texts,
                 thresholds=load_check_settings(data).c3,
-                rules=article_rules(job_dir, original),
+                rules=article_rules(job_dir, original, job.feedback if job is not None else None),
             )
         elif checked == REPORT_OUTPUT:
             # 報告的來源清單只能列這一段這一次真的抓成功的網頁，或原文的網址
@@ -168,14 +168,20 @@ def run_hard_checks(
     return report
 
 
-# 編輯卡與作者素材裡寫的網址（創作者自己貼的連結也算這篇的來源）
+# 作者素材照 sha256 放在這裡（`cards.SNAPSHOT_MATERIALS`）
+CARD_MATERIALS = CARD_DIR + "materials/"
+# 編輯卡摘要、作者素材與改稿意見裡寫的網址（創作者自己給的連結也算這篇的來源）
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\]）】」，。、；)\"']+")
 
 
-def article_rules(job_dir: Path, original: sources.Original | None) -> ArticleRules | None:
+def article_rules(
+    job_dir: Path, original: sources.Original | None, feedback: str | None = None
+) -> ArticleRules | None:
     """照編輯卡寫的文章多查的幾條；不是照編輯卡寫的單（沒有 `input/card/card.json`）是 None。
 
     全部從工單裡的快照讀。快照或句型規則讀不懂丟 `ValueError`（呼叫的人換成 `ChecksUnavailable`）。
+    文章裡准出現的網址：原文、放進來的來源、編輯卡摘要 `card.md`（只有現在的決定，含創作者自己寫的回答與補充）、
+    作者素材、這次改稿創作者的意見（`feedback`）。決策紀錄與 `card.json` 不算：裡面有被換掉的提案與 agent 寫的選項。
     """
     path = job_dir / CARD_JSON
     if not path.is_file():
@@ -191,14 +197,16 @@ def article_rules(job_dir: Path, original: sources.Original | None) -> ArticleRu
     known: set[str] = set()
     if original is not None and original.url:
         known.add(normalize_url(original.url))
-    for source in sources.placed_sources(job_dir).values():
+    placed = sources.placed_sources(job_dir)
+    for source in placed.values():
         if source.url:
             known.add(normalize_url(source.url))
-    card_dir = job_dir / CARD_DIR
-    for written in sorted(card_dir.rglob("*")) if card_dir.is_dir() else []:
-        if written.is_file() and not written.is_symlink() and written.name != "card.json":
-            text = written.read_text(encoding="utf-8", errors="replace")
-            known.update(normalize_url(url.rstrip(".,")) for url in _URL_IN_TEXT.findall(text))
+    texts = [feedback or ""]
+    for written in [job_dir / CARD_BRIEF, *sorted((job_dir / CARD_MATERIALS).glob("*"))]:
+        if written.is_file() and not written.is_symlink():
+            texts.append(written.read_text(encoding="utf-8", errors="replace"))
+    for text in texts:
+        known.update(normalize_url(url.rstrip(".,")) for url in _URL_IN_TEXT.findall(text))
     origin = card.origin
     from_report = origin is not None and origin.kind == "report_topic" and original is not None
     return ArticleRules(
@@ -211,6 +219,8 @@ def article_rules(job_dir: Path, original: sources.Original | None) -> ArticleRu
         known_urls=frozenset(known),
         # 隨筆可以引用並回應觸發它的原文（ADR-0025 §3.4）
         answers_original=from_report and card.genre == "essay",
+        # 沒有原文也沒有來源（照作者自己的經驗寫）才可以只寫一句說明，不列清單
+        list_required=original is not None or bool(placed),
     )
 
 
