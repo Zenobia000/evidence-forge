@@ -524,6 +524,60 @@ def test_摘要卡與每一關都能收焦點_送出後焦點才移得過去(wor
     assert 'class="ch-dec__item" tabindex="-1"' in world.panel(cid).text
 
 
+PERSONA_CARD = {
+    "kind": "persona",
+    "header": "角色",
+    "question": "用哪個角色寫？",
+    "options": [
+        {"label": "Sunny 本人", "description": "用他的聲音。", "value": "sunny"},
+        {"label": "我自己", "description": "用我的聲音。", "value": "me"},
+    ],
+}
+
+
+def _picks(html: str) -> str:
+    return html.split("ch-card-topic__picks")[1].split("</span></span>\n")[0]
+
+
+def test_第_1_關選好之後_標題底下寫文體_主題_角色的中文名(world: World) -> None:
+    cid = world.conversation()
+    (world.folder.data.authors / "sunny").mkdir(parents=True)
+    (world.folder.data.authors / "me").mkdir(parents=True)
+    (world.folder.data.authors / "sunny" / "persona.json").write_text('{"display_name": "Sunny"}', encoding="utf-8")
+    card_id = world.propose(cid, None, 1, [GENRE_CARD, THEME_CARD, PERSONA_CARD])
+    world.submit(cid, card_id, 1, picks={"主題": "[主題 B]"})
+
+    picks = _picks(world.panel(cid).text)
+
+    # 文體用中文名、主題用 themes.md 的說明、角色用顯示名稱，後面都附 slug
+    assert "理論教學（explainer）" in picks
+    assert "AI 時代的工作與職涯（worldview）" in picks
+    assert "Sunny（sunny）" in picks
+
+
+def test_沒問角色就是_me_第_1_關沒選好的時候標題底下不列(world: World) -> None:
+    cid = world.conversation()
+    card_id = world.propose(cid, None, 1)
+    assert "ch-card-topic__picks" not in world.panel(cid).text
+
+    world.submit(cid, card_id, 1)
+
+    assert "me（沒問，用預設）" in _picks(world.panel(cid).text)
+
+
+def test_文體_主題_角色卡都沒有其他_跟別的選項卡一樣畫(world: World) -> None:
+    cid = world.conversation()
+    (world.folder.data.authors / "sunny").mkdir(parents=True)
+    (world.folder.data.authors / "me").mkdir(parents=True)
+    world.propose(cid, None, 1, [GENRE_CARD, THEME_CARD, PERSONA_CARD])
+
+    html = world.thread(cid)
+
+    assert 'data-kind="other"' not in html
+    assert html.count('<fieldset class="ch-q"') == 3
+    assert "Sunny 本人" in html and "[主題 A]" in html
+
+
 def test_要重確認的關有沿用和重問兩顆按鈕_重問帶出後面有決定的關(world: World) -> None:
     cid = world.conversation()
     card_id = world.through(cid, 3)
@@ -595,7 +649,7 @@ def test_點選之後對話串流沒有假的使用者訊息_主機通知_Pi_的
 def test_無障礙_問題卡是一組有名字的群組_選項是真的單選鈕_按鈕有字(world: World) -> None:
     cid = world.conversation()
     card_id = world.through(cid, 1)
-    world.propose(cid, card_id, 2, [NAME_CARD, {"header": "強度", "question": "要講得多硬？", "options": THEME_CARD["options"]}], minutes=4)
+    world.propose(cid, card_id, 2, [NAME_CARD, {"header": "強度", "question": "要講得多硬？", "options": [{"label": "硬", "description": "直接下結論。"}, {"label": "軟", "description": "留餘地。"}]}], minutes=4)
 
     html = world.thread(cid)
     active = html[html.index("data-qset") - 40 :]

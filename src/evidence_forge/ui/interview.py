@@ -637,6 +637,9 @@ def _picks(card: dict[str, Any], persona_name: str | None) -> tuple[tuple[str, s
     if card.get("persona"):
         # 角色的顯示名稱（角色管理，`persona.display_name`）；沒設就是資料夾名
         found.append(("角色", _named(persona_name or "", card["persona"])))
+    elif card.get("genre"):
+        # 第 1 關選好了、角色卡沒問：寫稿用 me（ADR-0026）
+        found.append(("角色", "me（沒問，用預設）"))
     return tuple(found)
 
 
