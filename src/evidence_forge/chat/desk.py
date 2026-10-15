@@ -23,8 +23,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from evidence_forge import cost_settings
-from evidence_forge.documents import FrontmatterError, read_frontmatter, read_job
+from evidence_forge import confined, cost_settings, persona
+from evidence_forge.documents import FrontmatterError, read_job, split_frontmatter
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.models import Recipe, RecipeStage
 from evidence_forge.paths import DataDir
@@ -312,6 +312,9 @@ def list_personas(data: DataDir) -> dict[str, Any]:
     沒校準的文體寫出來標未校準。匯入角色前的備份放在 `authors/.backup/`，`.` 開頭，不算角色。
 
     對話的 `list_personas` 工具與「角色」頁（#116）都走這一份，兩邊看到的角色清單一定一樣。
+    **先看資料夾本身、再讀裡面的檔，而且每個檔都不跟隨符號連結**（`confined`）：角色資料夾是連結、
+    或 `voice.md`、風格檔是連結（不管指到哪），就當裡面什麼都沒有（只列名字），不讀、也不把外面檔案的內容
+    （例如它的 `default_genre`）寫進回應；這份清單會交給對話的模型，也會顯示在畫面上。
     """
     root = data.authors
     found: list[dict[str, Any]] = []
@@ -319,28 +322,37 @@ def list_personas(data: DataDir) -> dict[str, Any]:
         for folder in sorted(root.iterdir()):
             if not folder.is_dir() or folder.name.startswith(("_", ".")):
                 continue
-            written = [slug for slug in sorted(GENRE_NAME) if (folder / "genres" / f"{slug}.md").is_file()]
-            default = default_genre(data, folder.name)
-            persona: dict[str, Any] = {
+            with confined.open_root(folder) as handle:
+                real = handle is not None  # 最後一節是連結的資料夾開不起來
+            written: list[str] = []
+            calibrated: list[str] = []
+            default: str | None = None
+            if real:
+                for slug in sorted(GENRE_NAME):
+                    kind, text = confined.read_text(folder, persona.genre_file(slug))
+                    if kind == "file":
+                        written.append(slug)
+                        if text is not None and _calibrated(text):
+                            calibrated.append(slug)
+                default = default_genre(data, folder.name)
+            entry: dict[str, Any] = {
                 "name": folder.name,
                 # 舊角色的預設文類可能還是 12 種的 id：不認得的不列，免得看起來像第 8 種文體
                 "default_genre": default if default in GENRE_NAME else None,
                 "written_genres": written,
-                "calibrated_genres": [
-                    slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
-                ],
+                "calibrated_genres": calibrated,
             }
             if default is not None and default not in GENRE_NAME:
-                persona["note"] = f"預設文體 {default} 不是現在的 7 種之一，當成沒有預設文體"
-            found.append(persona)
+                entry["note"] = f"預設文體 {default} 不是現在的 7 種之一，當成沒有預設文體"
+            found.append(entry)
     return {"personas": found}
 
 
-def _calibrated(style: Path) -> bool:
-    """文體風格檔的 front matter 寫了 `calibrated: true`；讀不懂當成沒校準（跟 `stage_inputs.uncalibrated` 同一條）。"""
+def _calibrated(text: str) -> bool:
+    """風格檔的 front matter 寫了 `calibrated: true`；讀不懂當成沒校準（跟 `stage_inputs.uncalibrated` 同一條）。"""
     try:
-        return read_frontmatter(style).get("calibrated") is True
-    except (FrontmatterError, OSError):
+        return split_frontmatter(text)[0].get("calibrated") is True
+    except FrontmatterError:
         return False
 
 

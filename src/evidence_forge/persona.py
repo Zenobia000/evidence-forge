@@ -4,6 +4,8 @@
 `PARTS` 列出每一部分叫什麼、放哪裡、沒有的時候怎麼辦；畫面標「缺」與「用通用預設」都從這裡來，
 不另寫第二份。檔案內容的格式範本在 `harness/templates/author-*.md`（只寫格式，不放品牌內容）；
 把創作者現有的寫作系統拆進這個樣子的匯入腳本是 `persona_import.py`，寫出來的檔名跟這裡一樣。
+`PARTS` 之外還有一個 `META_PART`（`persona.json`，顯示名稱）：它不是創作者寫的內容，是角色頁記的小檔，
+所以不列在 `PARTS`（畫面不把它當成「缺了要補」的一部分）；資料夾名稱才是角色的身分。
 
 不進 repo：角色資料夾裡是創作者的私人寫作系統（ADR-0014）。這個檔只知道檔名與欄位，不碰內容。
 
@@ -12,8 +14,8 @@
   再過 `figures.brand.persona_dir`（角色資料夾本身若是符號連結一律拒絕）。
 - **建立與複製不覆蓋**：目標只要已經有東西（含壞掉的符號連結）就拒絕；用 `mkdir` 搶位，
   兩個請求同時建同一個名字，只有一個會成功。
-- 複製不跟隨符號連結：連結一律略過（不然連結指到別處，複製就把別處的檔案帶進來）。
-- 讀角色資料夾裡的任何檔都經 `ui.artifacts` 的 `safe_path`／`read_text`。
+- 角色資料夾裡的讀、複製、寫都走 `confined`（`O_NOFOLLOW` 加資料夾 fd）：沿路不跟隨任何符號連結，
+  檢查與使用同一個 fd，所以「檢查完、動手前被換成連結」也沒有空檔。複製遇到連結一律略過並回報。
 - 改顯示名稱只寫角色資料夾裡的 `persona.json`，不改資料夾名字：資料夾名字是角色的身分
   （工單的 `persona` 欄、帳本、對話都記它）。
 """
@@ -22,23 +24,18 @@ import json
 import os
 import re
 import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from evidence_forge import confined
 from evidence_forge.figures.brand import BrandError, persona_dir
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts
 from evidence_forge.ui.format import GENRE_NAME
 
-# 顯示名稱存在角色資料夾裡這個小檔（不是 voice.md 的欄位：那是創作者手寫的，畫面不改它）
-META_FILE = "persona.json"
 MAX_DISPLAY_NAME = 40
 _VOICE_TEMPLATE = "author-voice.md"
-# 複製時不帶過去的檔：顯示名稱是這個角色自己的
-_NOT_COPIED = (META_FILE,)
 
 
 @dataclass(frozen=True)
@@ -105,8 +102,33 @@ PARTS: tuple[PartSpec, ...] = (
     ),
 )
 PART_BY_KEY = {part.key: part for part in PARTS}
+# 顯示名稱的小檔：只有角色頁寫（`rename`、建立、複製），內容是 {"display_name": "…"}。
+# 不是 voice.md 的欄位（那是創作者手寫的，畫面不改它）；資料夾名稱才是身分，這個檔只管畫面上顯示什麼
+META_PART = PartSpec(
+    "meta",
+    "顯示名稱",
+    "persona.json",
+    "畫面上顯示的名字；只有角色頁寫它，資料夾名稱才是角色的身分",
+    False,
+    "畫面顯示資料夾名稱",
+)
+META_FILE = META_PART.path
+# 其餘程式要這些檔名，都從 `PARTS` 拿，不再自己寫一份字串
+VOICE_FILE = PART_BY_KEY["voice"].path
+THEMES_FILE = PART_BY_KEY["themes"].path
+LESSONS_FILE = PART_BY_KEY["lessons"].path
+BRAND_FILE = PART_BY_KEY["brand"].path
+GENRES_DIR = PART_BY_KEY["genres"].path.rstrip("/")
+CRAFT_DIR = PART_BY_KEY["craft"].path.rstrip("/")
+# 複製時不帶過去的檔：顯示名稱是這個角色自己的
+_NOT_COPIED = (META_FILE,)
 # 文體風格檔只認 7 種（ADR-0026 §3.1）；舊的 12 種不支援
 GENRE_SLUGS: tuple[str, ...] = tuple(GENRE_NAME)
+
+
+def genre_file(slug: str) -> str:
+    """某一種文體的風格檔，相對於角色資料夾：`genres/<slug>.md`。"""
+    return f"{GENRES_DIR}/{slug}.md"
 
 
 class PersonaError(ValueError):
@@ -165,12 +187,15 @@ def clean_display_name(raw: object) -> str:
 
 
 def display_name(data: DataDir, name: str) -> str | None:
-    """畫面上顯示的名字：`persona.json` 的 `display_name`；沒設、讀不懂都是 None（畫面改顯示資料夾名字）。"""
+    """畫面上顯示的名字：`persona.json` 的 `display_name`；沒設、讀不懂都是 None（畫面改顯示資料夾名字）。
+
+    `persona.json` 是連結（不管指到哪）就當沒設。
+    """
     try:
         folder = persona_dir(data, name)
     except (InvalidJobKey, BrandError):
         return None
-    text = artifacts.read_text(folder, folder / META_FILE)
+    text = confined.text(folder, META_FILE)
     if text is None:
         return None
     try:
@@ -187,7 +212,8 @@ def display_name(data: DataDir, name: str) -> str | None:
 def rename(data: DataDir, name: str, new_display_name: object) -> str:
     """改顯示名稱，回存下去的名字。只寫 `persona.json`（先寫暫存檔再換上去），不動資料夾名字。
 
-    `persona.json` 若是符號連結，換上去的是連結本身，不會寫到連結指向的地方。
+    寫的時候用角色資料夾的 fd（`confined.write_text_atomic`）：檢查完、動手前資料夾被換成連結，
+    就寫不進去（409），不會寫到連結指到的地方。`persona.json` 若是連結，換上去的是連結本身。
     """
     folder = folder_of(data, name)
     cleaned = clean_display_name(new_display_name)
@@ -197,14 +223,10 @@ def rename(data: DataDir, name: str, new_display_name: object) -> str:
 
 def _write_meta(folder: Path, shown: str) -> None:
     payload = json.dumps({"display_name": shown}, ensure_ascii=False, indent=2) + "\n"
-    handle, temporary = tempfile.mkstemp(prefix=".persona-", suffix=".tmp", dir=folder)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as out:
-            out.write(payload)
-        os.replace(temporary, folder / META_FILE)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+        confined.write_text_atomic(folder, META_FILE, payload)
+    except confined.FolderChanged as exc:
+        raise PersonaError(f"角色資料夾 {folder.name} 在存檔前被換掉了，沒有寫", 409) from exc
 
 
 # --- 建立 ---------------------------------------------------------------------
@@ -248,7 +270,7 @@ def create_from_template(
 ) -> list[str]:
     """用範本建一個新角色，回寫了哪些檔。
 
-    只建必要的 `voice.md`（範本的格式與欄位說明，`id` 與 `name` 填好）加顯示名稱；其他部分缺的時候
+    只建必要的 `voice.md`（範本的格式與欄位說明，`id` 填資料夾名稱，`name` 填顯示名稱，沒給就用資料夾名稱）加顯示名稱；其他部分缺的時候
     用通用預設（`PARTS`），畫面標出來。範本裡的例子是為了示範格式虛構的，所以不整包帶過去，
     免得別的角色的檔案長得像一個假品牌。
     """
@@ -262,12 +284,12 @@ def create_from_template(
     try:
         text = _set_front_matter_key(text, "id", name)
         text = _set_front_matter_key(text, "name", cleaned)
-        (folder / "voice.md").write_text(text, encoding="utf-8")
+        confined.write_text_atomic(folder, VOICE_FILE, text)
         _write_meta(folder, cleaned)
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)  # 這個資料夾是剛剛才搶下來的，沒有別人的東西
         raise
-    return ["voice.md", META_FILE]
+    return [VOICE_FILE, META_FILE]
 
 
 # --- 複製 ---------------------------------------------------------------------
@@ -283,54 +305,75 @@ class Copied:
 def copy_persona(data: DataDir, source: str, name: str, shown: object | None = None) -> Copied:
     """複製一個既有角色成新角色。新名字已經有東西就拒絕（不覆蓋）。
 
-    連結略過；`persona.json`（顯示名稱）不帶，新角色用自己的；`voice.md`／`themes.md` 開頭
-    寫著「這是誰」的欄位改成新名字，其餘內容原樣。複製到一半失敗，剛建的資料夾整個移除。
+    - 只改「這是誰」的身分欄位成新資料夾名稱：`voice.md` 的 `id`、`themes.md` 與 `genres/*.md` 的 `author`。
+      創作者寫的 `voice.md` 的 `name`（筆名）與 `brand.yaml` 的 `name` 一個字都不動；其餘內容位元組相同。
+    - **lessons 的決定：** `lessons.md` 連同其他檔一起帶過去，當新角色的起點（那些規則是對這個聲音累積的，
+      複製出來的聲音一開始就該守著它們）；之後兩邊各自累積，而且只有閘道寫（ADR-0026 §3.3，這一頁不寫）。
+    - `persona.json`（顯示名稱）不帶，新角色用自己的：給了就用給的，沒給就用資料夾名稱。
+    - 讀來源全程用 fd、不跟隨連結（`confined`）：連結一律略過並回報；檢查完被換成連結也不會讀到別處。
+    - 複製到一半失敗，剛建的資料夾整個移除。
     """
     origin = folder_of(data, source)
     cleaned = clean_display_name(shown) if shown is not None else name
-    folder = _claim(data, name)
-    skipped: list[str] = []
-    count = 0
-    try:
-        count = _copy_tree(origin, folder, Path(), skipped)
-        _retarget(folder, name, cleaned)
-        _write_meta(folder, cleaned)
-    except BaseException:
-        shutil.rmtree(folder, ignore_errors=True)
-        raise
+    with confined.open_root(origin) as root:
+        if root is None:
+            raise PersonaError(f"角色資料夾 {source} 在複製前被換掉了，沒有複製", 409)
+        folder = _claim(data, name)
+        skipped: list[str] = []
+        try:
+            count = _copy_dir(root, folder, "", skipped)
+            _retarget(folder, name)
+            _write_meta(folder, cleaned)
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
     return Copied(files=count, skipped_links=tuple(skipped))
 
 
-def _copy_tree(origin: Path, target: Path, relative: Path, skipped: list[str]) -> int:
+def _copy_dir(src_fd: int, target: Path, prefix: str, skipped: list[str]) -> int:
+    """把 `src_fd` 這個資料夾的內容複製到 `target`。每一節都用 `O_NOFOLLOW` 相對於 fd 開、`fstat` 確認，
+    再只對開好的 fd 複製：列出來之後才被換成連結的東西，這裡開的時候就會被擋下（記成略過）。"""
+    with os.scandir(src_fd) as entries:
+        names = sorted(entry.name for entry in entries)
     count = 0
-    with os.scandir(origin / relative) as entries:
-        found = sorted(entries, key=lambda e: e.name)
-    for entry in found:
-        child = relative / entry.name
-        if entry.is_symlink():
-            skipped.append(child.as_posix())
-        elif entry.is_dir(follow_symlinks=False):
-            (target / child).mkdir()
-            count += _copy_tree(origin, target, child, skipped)
-        elif entry.is_file(follow_symlinks=False) and not (relative == Path() and entry.name in _NOT_COPIED):
-            shutil.copyfile(entry.path, target / child)
+    for entry_name in names:
+        relative = f"{prefix}{entry_name}"
+        fd, kind = confined.open_entry(entry_name, src_fd)
+        if kind == "link":
+            skipped.append(relative)
+            continue
+        if fd is None:
+            continue  # 列出來之後消失了，或是 FIFO、裝置這類：不是要複製的東西
+        if kind == "dir":
+            try:
+                (target / entry_name).mkdir()
+                count += _copy_dir(fd, target / entry_name, f"{relative}/", skipped)
+            finally:
+                os.close(fd)
+        elif prefix == "" and entry_name in _NOT_COPIED:
+            os.close(fd)
+        else:
+            with os.fdopen(fd, "rb") as source, open(target / entry_name, "xb") as out:
+                shutil.copyfileobj(source, out)
             count += 1
     return count
 
 
-def _retarget(folder: Path, name: str, shown: str) -> None:
-    """複製出來的檔案開頭寫著原角色的名字：改成新角色。讀不懂的檔（不是 UTF-8）原樣留著。"""
-    _rewrite_key(folder / "voice.md", "id", name)
-    _rewrite_key(folder / "voice.md", "name", shown)
-    _rewrite_key(folder / "themes.md", "author", name)
-    genres = folder / "genres"
+def _retarget(folder: Path, name: str) -> None:
+    """複製出來的檔案開頭寫著原角色的資料夾名稱：改成新角色的。只動身分欄位，筆名等其他欄位不碰。
+
+    讀不懂的檔（不是 UTF-8）原樣留著。這個資料夾是剛建的、裡面沒有連結（複製時都略過了）。
+    """
+    _rewrite_key(folder / VOICE_FILE, "id", name)
+    _rewrite_key(folder / THEMES_FILE, "author", name)
+    genres = folder / GENRES_DIR
     if genres.is_dir():
         for path in sorted(genres.glob("*.md")):
             _rewrite_key(path, "author", name)
 
 
 def _rewrite_key(path: Path, key: str, value: str) -> None:
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         return
     try:
         text = path.read_text(encoding="utf-8")

@@ -34,8 +34,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from evidence_forge import confined
 from evidence_forge.checks.report import ChecksReport
-from evidence_forge.documents import FrontmatterError, read_frontmatter
+from evidence_forge.documents import FrontmatterError, read_frontmatter, split_frontmatter
 from evidence_forge.harness import Harness
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.models import Job
@@ -202,12 +203,15 @@ def uncalibrated(job_dir: Path, job: Job) -> str | None:
 
 
 def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
-    """作家設定的預設文類（`voice.md` frontmatter 的 `default_genre`）；沒有作家設定就是 None。"""
-    voice = author_dir(data, author) / "voice.md"
-    if not voice.is_file():
+    """作家設定的預設文類（`voice.md` frontmatter 的 `default_genre`）；沒有作家設定就是 None。
+
+    不跟隨符號連結（`confined`）：角色資料夾或 `voice.md` 是連結就當沒有，不讀連結指到的檔案。
+    """
+    text = confined.text(author_dir(data, author), "voice.md")
+    if text is None:
         return None
     try:
-        value = read_frontmatter(voice).get("default_genre")
+        value = split_frontmatter(text)[0].get("default_genre")
     except FrontmatterError:
         return None
     return value.strip() if isinstance(value, str) and value.strip() else None

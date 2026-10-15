@@ -4,9 +4,12 @@ ADR-0014：測試進公開 repo，所以這裡的角色全是為測試編的（�
 `CANARY` 是放在「不該被讀到」的檔裡的暗號，結果裡出現它就是外洩。
 """
 
+import contextlib
 import json
 import os
+import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -46,6 +49,21 @@ def test_規格_只有聲音是必要的_每一部分都說了沒有時怎麼辦
     assert [p.key for p in PARTS if p.required] == ["voice"]
     assert all(p.fallback and p.holds and p.label for p in PARTS)
     assert len({p.path for p in PARTS}) == len(PARTS)
+
+
+def test_規格_persona_json_是有名字的中繼項目_不在_PARTS_裡_也不是創作者的內容() -> None:
+    assert persona.META_PART.path == persona.META_FILE == "persona.json"
+    assert persona.META_PART.key not in {p.key for p in PARTS}
+    assert not persona.META_PART.required and persona.META_PART.fallback
+    # 其餘程式要的檔名都從 PARTS 來
+    assert (persona.VOICE_FILE, persona.THEMES_FILE, persona.LESSONS_FILE, persona.BRAND_FILE) == (
+        "voice.md",
+        "themes.md",
+        "lessons.md",
+        "brand.yaml",
+    )
+    assert (persona.GENRES_DIR, persona.CRAFT_DIR) == ("genres", "craft")
+    assert persona.genre_file("essay") == "genres/essay.md"
 
 
 def test_規格_文體只認_7_種_跟_harness_的定義檔是同一份() -> None:
@@ -285,7 +303,7 @@ SOURCE_FILES = {
 }
 
 
-def test_複製_帶走所有檔_內容一個字節都一樣_除了寫著原角色名字的欄位(data: DataDir) -> None:
+def test_複製_帶走所有檔_只改身分欄位_筆名與品牌名稱照創作者寫的(data: DataDir) -> None:
     source = _persona(data, "src", SOURCE_FILES)
     persona.rename(data, "src", "原本的")
 
@@ -297,7 +315,10 @@ def test_複製_帶走所有檔_內容一個字節都一樣_除了寫著原角�
     for relative in ("craft/titles.md", "lessons.md", "brand.yaml"):
         assert (target / relative).read_bytes() == (source / relative).read_bytes()
     assert read_frontmatter(target / "voice.md")["id"] == "dup"
-    assert read_frontmatter(target / "voice.md")["name"] == "複本"
+    # 筆名（voice.md 的 name）與品牌名稱（brand.yaml 的 name）是創作者寫的內容：複製不改；
+    # 新角色在畫面上叫什麼是 persona.json 的事
+    assert read_frontmatter(target / "voice.md")["name"] == "原角色"
+    assert (target / "brand.yaml").read_text(encoding="utf-8") == 'name: "假品牌"\n'
     assert read_frontmatter(target / "voice.md")["default_genre"] == "essay"
     assert read_frontmatter(target / "genres" / "essay.md")["author"] == "dup"
     assert read_frontmatter(target / "genres" / "essay.md")["calibrated"] is True
@@ -308,6 +329,30 @@ def test_複製_帶走所有檔_內容一個字節都一樣_除了寫著原角�
     # 原角色一個字都沒動
     assert read_frontmatter(source / "voice.md")["id"] == "src"
     assert read_frontmatter(source / "genres" / "essay.md")["author"] == "src"
+
+
+def test_複製_只動身分欄位_其餘位元組相同(data: DataDir) -> None:
+    source = _persona(data, "src", SOURCE_FILES)
+    persona.copy_persona(data, "src", "dup")
+    target = data.authors / "dup"
+    for relative in SOURCE_FILES:
+        before = (source / relative).read_text(encoding="utf-8")
+        after = (target / relative).read_text(encoding="utf-8")
+        expected = {
+            "voice.md": before.replace("id: src", 'id: "dup"'),
+            "themes.md": before.replace("author: src", 'author: "dup"'),
+            "genres/essay.md": before.replace("author: src", 'author: "dup"'),
+        }.get(relative, before)
+        assert after == expected, relative
+
+
+def test_複製_lessons_帶過去當起點_之後各自累積(data: DataDir) -> None:
+    source = _persona(data, "src", SOURCE_FILES)
+    persona.copy_persona(data, "src", "dup")
+    assert (data.authors / "dup" / "lessons.md").read_bytes() == (source / "lessons.md").read_bytes()
+    with (source / "lessons.md").open("a", encoding="utf-8") as handle:
+        handle.write("- 之後只有原角色多了一條\n")
+    assert "之後只有原角色" not in (data.authors / "dup" / "lessons.md").read_text(encoding="utf-8")
 
 
 def test_複製_沒給顯示名稱就用新資料夾名稱_不帶原角色的顯示名稱(data: DataDir) -> None:
@@ -420,3 +465,96 @@ def test_建立_同時建同一個名字_只有一個成功(data: DataDir) -> No
 
 def test_規格_GENRE_NAME_就是_7_種() -> None:
     assert tuple(GENRE_NAME) == persona.GENRE_SLUGS
+
+
+# --- 檢查完、動手前被換掉（TOCTOU） -------------------------------------------
+
+
+def test_改顯示名稱_檢查完資料夾被換成連結_寫不進去_外面的資料夾沒被寫(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = _persona(data, "me")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_folder_of = persona.folder_of
+
+    def swap_after_check(data_: DataDir, name: str) -> Path:
+        checked = real_folder_of(data_, name)  # 檢查通過
+        folder.rename(tmp_path / "moved-away")  # 動手前：換成指到外面的連結
+        folder.symlink_to(outside, target_is_directory=True)
+        return checked
+
+    monkeypatch.setattr(persona, "folder_of", swap_after_check)
+
+    with pytest.raises(PersonaError) as caught:
+        persona.rename(data, "me", "新名字")
+
+    assert caught.value.status == 409
+    assert list(outside.iterdir()) == []
+
+
+def test_改顯示名稱_暫存檔不留在資料夾裡_換上去的是新內容(data: DataDir) -> None:
+    folder = _persona(data, "me")
+    persona.rename(data, "me", "甲")
+    assert sorted(p.name for p in folder.iterdir()) == ["persona.json", "voice.md"]
+
+
+def test_複製_列出之後來源的檔被換成連結_開的時候被擋下_不讀連結指到的檔(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _persona(data, "src", SOURCE_FILES)
+    outside = tmp_path / "outside.md"
+    outside.write_text(CANARY, encoding="utf-8")
+    real_scandir = os.scandir
+    swapped: list[str] = []
+
+    def swap_after_listing(fd: Any) -> Any:
+        if not isinstance(fd, int):  # 只動複製用的（資料夾 fd）；pathlib 的 rglob 照常
+            return real_scandir(fd)
+        with real_scandir(fd) as entries:
+            listed = list(entries)
+        if not swapped and any(e.name == "lessons.md" for e in listed):
+            swapped.append("lessons.md")  # 列出來之後、開檔之前：換成指到外面的連結
+            (source / "lessons.md").unlink()
+            (source / "lessons.md").symlink_to(outside)
+        return contextlib.nullcontext(listed)
+
+    monkeypatch.setattr(os, "scandir", swap_after_listing)
+
+    copied = persona.copy_persona(data, "src", "dup")
+
+    assert swapped == ["lessons.md"]
+    assert "lessons.md" in copied.skipped_links
+    assert all(CANARY not in p.read_text(encoding="utf-8") for p in (data.authors / "dup").rglob("*") if p.is_file())
+
+
+def test_複製_來源資料夾在開啟前被換成連結_不複製_不建目標(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = _persona(data, "src", SOURCE_FILES)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "voice.md").write_text(CANARY, encoding="utf-8")
+    real_folder_of = persona.folder_of
+
+    def swap_after_check(data_: DataDir, name: str) -> Path:
+        checked = real_folder_of(data_, name)
+        shutil.move(str(folder), str(tmp_path / "moved-away"))
+        folder.symlink_to(outside, target_is_directory=True)
+        return checked
+
+    monkeypatch.setattr(persona, "folder_of", swap_after_check)
+
+    with pytest.raises(PersonaError) as caught:
+        persona.copy_persona(data, "src", "dup")
+
+    assert caught.value.status == 409
+    assert not (data.authors / "dup").exists()
+
+
+def test_複製_FIFO_與裝置這類不是檔案的東西_略過_不會卡住(data: DataDir) -> None:
+    source = _persona(data, "src", SOURCE_FILES)
+    os.mkfifo(source / "pipe")
+    copied = persona.copy_persona(data, "src", "dup")
+    assert not (data.authors / "dup" / "pipe").exists()
+    assert copied.files == len(SOURCE_FILES)

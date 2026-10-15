@@ -10,12 +10,11 @@
 
 跟聊天室其他頁一樣：只綁 127.0.0.1，POST 只收同源的 `application/json`（`chat/api.py` 的中介層擋）。
 這一頁**不編輯**角色的任何檔；檔案只能讀。角色的內容是創作者私人的寫作系統（ADR-0014），
-所以：每個檔都經 `artifacts.safe_path`／`read_text`（符號連結指到角色資料夾外面就不讀），
-Markdown 先過 `ui/markdown.py`（原始 HTML 不放行）。
+所以：每個檔都經 `confined`（`O_NOFOLLOW` 加資料夾 fd，沿路不跟隨任何符號連結，檢查與讀取同一個 fd；
+連結一律標「不讀」，內容不進畫面），Markdown 先過 `ui/markdown.py`（原始 HTML 不放行）。
 """
 
 import asyncio
-import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -28,11 +27,12 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
+from pydantic import ValidationError
 
-from evidence_forge import persona
+from evidence_forge import confined, persona
 from evidence_forge.chat.desk import list_personas
 from evidence_forge.documents import FrontmatterError, split_frontmatter
-from evidence_forge.figures.brand import BrandError, load_brand_file
+from evidence_forge.figures.brand import Brand
 from evidence_forge.harness import Harness
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
@@ -99,38 +99,29 @@ class Detail:
 # --- 讀角色資料夾 -------------------------------------------------------------
 
 
-def _state(folder: Path, path: Path) -> State | None:
-    """這個檔的狀態：不存在是 None；在、但指到角色資料夾之外或不是一般檔案是 `unsafe`。"""
-    if not os.path.lexists(path):
-        return None
-    return "ok" if artifacts.safe_file(folder, path) is not None else "unsafe"
-
-
-def _paths(folder: Path, spec: PartSpec) -> list[Path]:
-    """這一部分在硬碟上有的檔（還沒判斷安不安全）。"""
+def _paths(folder: Path, spec: PartSpec) -> list[str]:
+    """這一部分在硬碟上有的東西（相對於角色資料夾的路徑）。連結也算「有」，讓畫面能說它被擋下了。"""
     if spec.key == "genres":
-        found = [folder / "genres" / f"{slug}.md" for slug in GENRE_SLUGS]
+        names = [persona.genre_file(slug) for slug in GENRE_SLUGS]
     elif spec.key == "craft":
-        directory = folder / "craft"
-        if os.path.lexists(directory) and (artifacts.safe_path(folder, directory) is None or not directory.is_dir()):
-            return [directory]  # 資料夾本身指到外面：整個不讀
-        found = sorted(directory.glob("*.md")) if directory.is_dir() else []
+        kind, entries = confined.listdir(folder, persona.CRAFT_DIR)
+        if kind in ("link", "other"):
+            return [persona.CRAFT_DIR]  # 資料夾本身是連結：整個不讀
+        names = [f"{persona.CRAFT_DIR}/{n}" for n, _ in entries if n.endswith(".md")]
     else:
-        found = [folder / spec.path]
-    return [p for p in found if os.path.lexists(p)]
+        names = [spec.path]
+    return [n for n in names if confined.kind_of(folder, n) != "missing"]
 
 
-def _view_file(folder: Path, path: Path) -> FileView:
-    relative = path.relative_to(folder).as_posix()
-    state = _state(folder, path)
-    if state != "ok":
+def _view_file(folder: Path, relative: str) -> FileView:
+    kind, text = confined.read_text(folder, relative)
+    if kind != "file":
         return FileView(relative, "unsafe")
-    text = artifacts.read_text(folder, path)
     if text is None:
         return FileView(relative, "unreadable")
     meta: tuple[tuple[str, str], ...] = ()
     body = text
-    if text.lstrip("﻿").startswith("---"):
+    if text.startswith("---"):
         try:
             front, body = split_frontmatter(text)
             meta = tuple((str(k), _cell(v)) for k, v in front.items())
@@ -151,15 +142,18 @@ def _cell(value: Any) -> str:
 
 
 def part_views(folder: Path, *, render: bool = True) -> tuple[PartView, ...]:
-    """`persona.PARTS` 的每一部分各一個 `PartView`。`render=False` 只看有沒有、不讀內容（清單頁用）。"""
+    """`persona.PARTS` 的每一部分各一個 `PartView`。`render=False` 只看有沒有、不讀內容（清單頁用）。
+
+    每個檔都不跟隨符號連結（`confined`）：連結（不管指到哪）標成不讀，內容不會出現在畫面上。
+    """
     views: list[PartView] = []
     for spec in PARTS:
         files: list[FileView] = []
-        for path in _paths(folder, spec):
+        for relative in _paths(folder, spec):
             if render:
-                files.append(_view_file(folder, path))
+                files.append(_view_file(folder, relative))
             else:
-                files.append(FileView(path.relative_to(folder).as_posix(), _state(folder, path) or "unsafe"))
+                files.append(FileView(relative, "ok" if confined.kind_of(folder, relative) == "file" else "unsafe"))
         views.append(PartView(spec, tuple(files)))
     return tuple(views)
 
@@ -168,21 +162,20 @@ def genre_rows(folder: Path) -> tuple[GenreRow, ...]:
     """7 種文體各一列：這個角色寫了沒、校準了沒（front matter 寫 `calibrated: true`，跟執行器同一條規則）。"""
     rows: list[GenreRow] = []
     for slug in GENRE_SLUGS:
-        path = folder / "genres" / f"{slug}.md"
-        text = artifacts.read_text(folder, path)
+        kind, text = confined.read_text(folder, persona.genre_file(slug))
         calibrated = False
         if text is not None:
             try:
                 calibrated = split_frontmatter(text)[0].get("calibrated") is True
             except FrontmatterError:
                 calibrated = False
-        rows.append(GenreRow(slug, GENRE_NAME[slug], text is not None, calibrated))
+        rows.append(GenreRow(slug, GENRE_NAME[slug], kind == "file", calibrated))
     return tuple(rows)
 
 
 def recent_lessons(folder: Path) -> tuple[tuple[str, ...], int]:
     """`lessons.md` 最近 10 筆（新的在前）與總數。一筆一行、以 `- ` 開頭；`<!-- -->` 註解不算。"""
-    text = artifacts.read_text(folder, folder / "lessons.md")
+    text = confined.text(folder, persona.LESSONS_FILE)
     if text is None:
         return (), 0
     body = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
@@ -195,9 +188,9 @@ def brand_table(folder: Path) -> tuple[tuple[tuple[str, str], ...], str | None]:
     """`brand.yaml` 攤成「欄位 → 值」的表（巢狀的欄位用 `.` 串起來）；檔案讀不懂或欄位不合格就說原因。
 
     表列的是檔裡實際寫了什麼；沒寫的欄位用中性預設值（`figures.brand`），所以不列。
+    欄位合不合格用讀進來的同一份文字驗（`Brand.model_validate`），不再用路徑開第二次。
     """
-    path = folder / "brand.yaml"
-    text = artifacts.read_text(folder, path)
+    text = confined.text(folder, persona.BRAND_FILE)
     if text is None:
         return (), None
     try:
@@ -205,10 +198,14 @@ def brand_table(folder: Path) -> tuple[tuple[tuple[str, str], ...], str | None]:
     except yaml.YAMLError:
         return (), "不是合法的 YAML"
     problem: str | None = None
-    try:
-        load_brand_file(path)
-    except BrandError as exc:
-        problem = str(exc).splitlines()[0].replace(str(folder) + "/", "")
+    if loaded is not None and not isinstance(loaded, dict):
+        problem = "最上層必須是欄位對照（mapping）"
+    else:
+        try:
+            Brand.model_validate(loaded or {})
+        except ValidationError as exc:
+            found = [f"{'.'.join(str(p) for p in e['loc'])}：{e['msg']}" for e in exc.errors()[:3]]
+            problem = "欄位不合格（" + "；".join(found) + "）"
     rows: list[tuple[str, str]] = []
 
     def walk(prefix: str, value: Any) -> None:

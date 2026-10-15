@@ -255,6 +255,29 @@ def test_api_personas_就是對話_list_personas_的清單_多一欄顯示名稱
     assert {p["name"]: p["display_name"] for p in reply.json()["personas"]} == {"bare": None, "me": "我自己"}
 
 
+def test_清單頁與清單_api_外面檔案的預設文體不外洩_連結資料夾與連結檔都不讀(
+    world: tuple[str, ChatFolder], tmp_path: Path
+) -> None:
+    url, folder = world
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "voice.md").write_text("---\ndefault_genre: 暗號-外面的文類\n---\n", encoding="utf-8")
+    folder.data.authors.mkdir(exist_ok=True)
+    (folder.data.authors / "linked").symlink_to(outside, target_is_directory=True)
+    real = _write(folder, "real", {"themes.md": "x"})
+    (real / "voice.md").symlink_to(outside / "voice.md")
+
+    page = httpx.get(f"{url}/personas")
+    api = httpx.get(f"{url}/api/personas")
+
+    for response in (page, api):
+        assert response.status_code == 200
+        assert "暗號" not in response.text
+        assert "預設文體 暗號" not in response.text
+    assert [p["default_genre"] for p in api.json()["personas"]] == [None, None]
+    assert [p.get("note") for p in api.json()["personas"]] == [None, None]
+
+
 # --- 新增 ---------------------------------------------------------------------
 
 
