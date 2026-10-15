@@ -19,6 +19,22 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
+def _commit_all(repo: Path) -> None:
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+
+
+def _hook_dir(at: Path) -> Path:
+    """在 `at/.githooks` 放三個可執行的 hook，回傳那個資料夾。"""
+    hooks = at / ".githooks"
+    hooks.mkdir(parents=True)
+    for name in ("pre-commit", "commit-msg", "pre-push"):
+        hook = hooks / name
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+    return hooks
+
+
 @pytest.fixture(autouse=True)
 def _isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
     # 使用者的全域與系統 git 設定（可能也設了 core.hooksPath）不參與
@@ -28,14 +44,11 @@ def _isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def hooked(tmp_path: Path) -> Path:
-    """啟用了 .githooks（三個 hook 都在、可執行）的 repo。"""
+    """啟用了 .githooks（三個 hook 都在、可執行、跟 commit 進去的一樣）的 repo。"""
     repo = tmp_path / "hooked"
-    (repo / ".githooks").mkdir(parents=True)
-    for name in ("pre-commit", "commit-msg", "pre-push"):
-        hook = repo / ".githooks" / name
-        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        hook.chmod(0o755)
+    _hook_dir(repo)
     _git(repo, "init", "-q")
+    _commit_all(repo)
     _git(repo, "config", "core.hooksPath", ".githooks")
     return repo
 
@@ -206,25 +219,13 @@ def test_絕對路徑的hooksPath指到同一個_githooks也算啟用(hooked: Pa
 # ── 工作副本（#133）：開工作副本的工具會把共用設定改寫成主 checkout 的絕對路徑 ──────
 
 
-def _hook_dir(at: Path) -> Path:
-    """在 `at/.githooks` 放三個可執行的 hook，回傳那個資料夾。"""
-    hooks = at / ".githooks"
-    hooks.mkdir(parents=True)
-    for name in ("pre-commit", "commit-msg", "pre-push"):
-        hook = hooks / name
-        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        hook.chmod(0o755)
-    return hooks
-
-
 @pytest.fixture
 def main_and_worktree(tmp_path: Path) -> tuple[Path, Path]:
     """主 checkout（.githooks 有進版控）與它開出來的一個工作副本；設定是兩邊共用的那一份。"""
     main = tmp_path / "main"
     _hook_dir(main)
     _git(main, "init", "-q", "-b", "main")
-    _git(main, "add", ".githooks")
-    _git(main, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+    _commit_all(main)
     wt = tmp_path / "wt"
     _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
     return main, wt
@@ -275,6 +276,88 @@ def test_工作副本_自己的githooks缺了_但解析到主checkout那份齊�
     (wt / ".githooks" / "commit-msg").chmod(0o644)  # 不會被跑到的那份，缺不缺不影響
 
     assert _check("git commit -m x", wt) == []
+
+
+def test_工作副本_比對的是主checkout的HEAD_改主checkout那份擋_改自己那份不影響(
+    main_and_worktree: tuple[Path, Path],
+) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", str(main / ".githooks"))
+    (wt / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n# 工作副本自己的改動\n", encoding="utf-8")
+    assert _check("git commit -m x", wt) == []
+
+    (main / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n# 直接改主 checkout\n", encoding="utf-8")
+    assert any("pre-commit" in p and "commit 進去的那一份不一樣" in p for p in _check("git commit -m x", wt))
+
+
+def test_共用git資料夾不叫_git_上一層不算主checkout(tmp_path: Path) -> None:
+    root = tmp_path / "sep"
+    work = root / "work"
+    _hook_dir(work)
+    _hook_dir(root)  # 「共用 git 資料夾的上一層」那裡也放齊 hook：位置不對，齊了也不行
+    _git(tmp_path, "init", "-q", f"--separate-git-dir={root / 'store.git'}", str(work))
+    _commit_all(work)
+    _git(work, "config", "core.hooksPath", str(root / ".githooks"))
+
+    assert any("core.hooksPath" in p and "只接受" in p for p in _check("git commit -m x", work))
+    _git(work, "config", "core.hooksPath", ".githooks")
+    assert _check("git commit -m x", work) == []
+
+
+# ── hook 本身要是 commit 進去的那一份 ───────────────────────────────────
+
+
+def test_hook換成指到bin_true的符號連結就擋(hooked: Path) -> None:
+    pre = hooked / ".githooks" / "pre-commit"
+    pre.unlink()
+    pre.symlink_to("/bin/true")
+
+    assert any("pre-commit" in p and "符號連結" in p for p in _check("git commit -m x", hooked))
+
+
+def test_hook內容被改過就擋(hooked: Path) -> None:
+    (hooked / ".githooks" / "pre-push").write_text("#!/bin/sh\nexit 0  # 偷偷改掉\n", encoding="utf-8")
+
+    problems = _check("git push origin HEAD", hooked)
+    assert any("pre-push" in p and "commit 進去的那一份不一樣" in p for p in problems), problems
+
+
+def test_hook沒commit進去也擋(tmp_path: Path) -> None:
+    repo = tmp_path / "uncommitted"
+    _hook_dir(repo)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "core.hooksPath", ".githooks")
+
+    assert any("commit 進去的那一份不一樣" in p for p in _check("git commit -m x", repo))
+
+
+def test_hook跟commit進去的一樣就放行(hooked: Path) -> None:
+    assert _check("git commit -m x", hooked) == []
+    assert _check("git push origin HEAD", hooked) == []
+
+
+# ── 改道到別的 repo 的環境變數 ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "GIT_DIR=/tmp/x/.git GIT_WORK_TREE=. git commit -m x",
+        "GIT_INDEX_FILE=/tmp/other-index git commit -m x",
+        "GIT_OBJECT_DIRECTORY=/tmp/objs git commit -m x",
+        "GIT_COMMON_DIR=/tmp/x/.git git push origin HEAD",
+        "env GIT_DIR=/tmp/x/.git git push origin HEAD",
+        "export GIT_DIR=/tmp/x/.git; git commit -m x",
+        "bash -c 'GIT_WORK_TREE=/tmp/x git commit -m x'",
+    ],
+)
+def test_改道到別的repo的環境變數_commit或push就擋(hooked: Path, cmd: str) -> None:
+    assert any("改道" in p for p in _check(cmd, hooked)), cmd
+
+
+def test_改道環境變數_不是commit或push的指令不擋(hooked: Path) -> None:
+    assert _check("GIT_DIR=/tmp/x/.git git status", hooked) == []
+    assert _check("MY_GIT_DIR=/tmp/x git commit -m x", hooked) == []
 
 
 def test_把hook關掉的寫法都擋(hooked: Path) -> None:

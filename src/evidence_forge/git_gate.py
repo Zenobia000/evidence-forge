@@ -3,7 +3,7 @@
 設計是創作者定的：**主關卡是 git 原生 hook**（`.githooks/pre-commit`、`commit-msg`、`pre-push`，
 `git config core.hooksPath .githooks` 啟用）。Claude 守衛的工作變成兩件事：
 1. 目標 repo 沒有啟用這些 hook（`core.hooksPath` 解析出來不是這個工作副本或主 checkout 的 `.githooks`、
-   或那個資料夾裡 hook 檔缺了）就擋下
+   或那個資料夾裡 hook 檔缺了、是符號連結、內容跟 commit 進去的不一樣）就擋下
    `git commit`／`git push`／`gh pr create`／`gh pr merge`——沒有 hook 的 repo，守衛一個一個指令掃也掃不乾淨。
 2. 不准用指令把 hook 關掉：`-c core.hooksPath=…`、`GIT_CONFIG_*` 環境變數、碰 `core.hooksPath` 的 `git config`、
    `--no-verify`、`git commit -n`（任何位置）。
@@ -17,6 +17,8 @@
 **追 shell 的寫法追不完，所以另外按關鍵字擋**：指令裡有 `GIT_CONFIG_`、`hooksPath`、`--no-verify` 就擋；
 git／gh 前面接著沒完整解析的包裝指令（`xargs`、`sudo`、`nohup`、`command`、`exec`、`time`、`nice`、帶選項的 `env`、子 shell 括號）
 而且可能是 commit／push，也擋。`env VAR=val`、`env -C dir` 這個常見寫法有解析，照目標 repo 判。
+有 commit／push／PR 的指令裡出現 `GIT_DIR=`、`GIT_WORK_TREE=`、`GIT_COMMON_DIR=`、`GIT_INDEX_FILE=`、
+`GIT_OBJECT_DIRECTORY=` 也擋：它們把 git 改道到別的 repo，守衛查的跟 git 寫的就不是同一個。
 
 不處理的（寫出來，免得以為它保證了全部）：函式與 alias 在 shell 裡才定義的別名（git 設定裡的
 alias 會查）、腳本檔裡面的 git 指令。這些情況由 git 原生 hook 在 commit／push 當下接住——那也是它是主關卡的原因。
@@ -43,6 +45,9 @@ _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # 追 shell 的寫法追不完，關鍵字是追得完的那一邊。
 _BYPASS_KEYWORDS = re.compile(r"GIT_CONFIG_|hookspath|--no-verify", re.IGNORECASE)
 _GIT_OR_GH_WORD = re.compile(r"(^|[^\w.-])(git|gh)(\s|$)")
+# 這幾個環境變數會把 git 改道到別的 repo、別的暫存區或別的物件庫：守衛查的是一個 repo，git 寫的是另一個。
+# 跟上面的關鍵字同一個理由，按指令文字找（`VAR=… git`、`env VAR=…`、`export VAR=…; git` 都算），不去追 shell 的寫法。
+_REPO_ENV = re.compile(r"(?<![\w])(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY)=")
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 _HOOKS = ("pre-commit", "commit-msg", "pre-push")
 _MAX_DEPTH = 4
@@ -336,8 +341,47 @@ def parse_command(cmd: str, base: Path | None, depth: int = 0) -> list[Invocatio
 # ── 判斷 ────────────────────────────────────────────────────────────────
 
 
+def _main_checkout(base: list[str], d: Path) -> Path | None:
+    """主 checkout 的位置；認不出來回 None（那就只接受工作副本自己的 .githooks）。
+
+    算法跟 git 自己的 get_main_worktree 一樣：共用 git 資料夾去掉結尾的 `/.git`。不叫 `.git` 的
+    （bare repo、`--separate-git-dir`）上一層不是 checkout，不認。再拿 `worktree list --porcelain` 的
+    第一筆核對一次，對不上也不認。`--git-common-dir` 的輸出可能是相對於執行資料夾的路徑，
+    自己接回 `d`（不用 `--path-format`，舊版 git 沒有它）。
+    """
+    common = (d / _git([*base, "rev-parse", "--git-common-dir"]).strip()).resolve()
+    if common.name != ".git":
+        return None
+    first = next(iter(_git([*base, "worktree", "list", "--porcelain"]).splitlines()), "")
+    if not first.startswith("worktree "):
+        return None
+    return common.parent if Path(first.removeprefix("worktree ")).resolve() == common.parent else None
+
+
+def _hooks_differ(checkout: list[str], hooks: Path) -> list[str]:
+    """`hooks` 裡哪幾支 hook 不是 `checkout` 的 HEAD 裡 commit 進去的那一份（符號連結、不是一般檔、內容不同、沒 commit）。"""
+    listed = _git([*checkout, "ls-tree", "--full-tree", "HEAD", "--", *(f".githooks/{n}" for n in _HOOKS)], ok=(0, 128))
+    committed: dict[str, str] = {}
+    for line in listed.splitlines():
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob" and parts[0] in ("100755", "100644"):
+            committed[path.rsplit("/", 1)[-1]] = parts[2]
+    files = [hooks / n for n in _HOOKS]
+    odd = [n for n, f in zip(_HOOKS, files, strict=True) if f.is_symlink() or not f.is_file()]
+    if odd:
+        return odd
+    hashes = _git([*checkout, "hash-object", "--", *(str(f) for f in files)]).split()
+    return [n for n, h in zip(_HOOKS, hashes, strict=True) if committed.get(n) != h]
+
+
 def _hooks_problem(inv: Invocation) -> str | None:
-    """目標 repo 有沒有啟用 `.githooks`；有問題回說明，沒問題回 None。"""
+    """目標 repo 有沒有啟用 `.githooks`；有問題回說明，沒問題回 None。
+
+    **擋不到的時間差**：這裡在整條 shell 指令跑之前就判完了。同一條指令裡先改 hook 檔、再 commit
+    （`echo … > .githooks/pre-commit && git commit`），這裡看到的是改之前的 hook，擋不到。
+    守衛只確認 hook 在、而且是 commit 進去的那一份；真正的關卡是 git 原生 hook 在 commit／push 當下跑。
+    """
     d = inv.dir
     if d is None:
         return "算不出它會在哪個資料夾跑（路徑含變數、`cd -` 之類），看不清楚的 commit／push 不放行。"
@@ -346,7 +390,6 @@ def _hooks_problem(inv: Invocation) -> str | None:
     base = ["-C", str(d), *inv.git_opts]
     try:
         top = Path(_git([*base, "rev-parse", "--show-toplevel"]).strip())
-        common = Path(_git([*base, "rev-parse", "--path-format=absolute", "--git-common-dir"]).strip())
         value = _git([*base, "config", "--get", "core.hooksPath"], ok=(0, 1)).strip()
     except GuardError:
         return "那裡讀不到 git repo，不知道 hook 有沒有啟用。"
@@ -354,21 +397,33 @@ def _hooks_problem(inv: Invocation) -> str | None:
         return "那個 repo 沒設 core.hooksPath，私人內容 hook 沒有啟用。"
     configured = Path(value).expanduser()
     resolved = (configured if configured.is_absolute() else top / configured).resolve()
-    # 接受兩個位置（#133）：這個工作副本自己的 .githooks，或主 checkout 的 .githooks。
-    # 開工作副本的工具會把共用設定改寫成主 checkout 的絕對路徑；那樣跑的永遠是主 checkout 那一份，
-    # 子代理在自己分支上改 hook 檔也改不到它。主 checkout 從共用的 .git 往上一層算，不寫死；
-    # 共用目錄不叫 .git（bare repo、--separate-git-dir）時上一層不是 checkout，就不認第二個位置。
-    accepted = [(top / ".githooks").resolve()]
-    if common.name == ".git":
-        accepted.append((common.parent / ".githooks").resolve())
-    accepted = list(dict.fromkeys(accepted))
-    if resolved not in accepted:
-        names = " 或 ".join(f"`{p}`" for p in accepted)
-        return f"那個 repo 的 core.hooksPath 解析出來是 `{resolved}`，只接受 {names}，私人內容 hook 沒有啟用。"
-    # hook 檔要檢查的是 git 真的會去跑的那個資料夾，不是這個工作副本自己的 .githooks
-    missing = [name for name in _HOOKS if not os.access(resolved / name, os.X_OK)]
-    if missing:
-        return f"那個 repo 的 hook 資料夾 `{resolved}` 缺了可執行的 {'、'.join(missing)}，私人內容 hook 沒有完整啟用。"
+    own = (top / ".githooks").resolve()
+    try:
+        # 接受兩個位置（#133）：這個工作副本自己的 .githooks，或主 checkout 的 .githooks。
+        # 開工作副本的工具會把共用設定改寫成主 checkout 的絕對路徑；那樣跑的是主 checkout 那一份，
+        # 子代理在自己的分支上改 hook 檔改不到它（直接寫主 checkout 的檔案還是改得到，由下面的內容比對接住）。
+        checkout = base
+        if resolved != own:
+            main = _main_checkout(base, d)
+            if main is None or resolved != (main / ".githooks").resolve():
+                accepted = [own] if main is None else [own, (main / ".githooks").resolve()]
+                names = " 或 ".join(f"`{p}`" for p in accepted)
+                return f"那個 repo 的 core.hooksPath 解析出來是 `{resolved}`，只接受 {names}，私人內容 hook 沒有啟用。"
+            checkout = ["-C", str(main)]
+        # hook 檔要檢查的是 git 真的會去跑的那個資料夾，不是這個工作副本自己的 .githooks
+        missing = [name for name in _HOOKS if not os.access(resolved / name, os.X_OK)]
+        if missing:
+            return f"那個 repo 的 hook 資料夾 `{resolved}` 缺了可執行的 {'、'.join(missing)}，私人內容 hook 沒有完整啟用。"
+        # 在、可執行還不夠：換成符號連結（例如指到 /bin/true）或改了內容，一樣等於關掉。
+        # 要跟「這個路徑所屬的 checkout」HEAD 裡 commit 進去的那一份一模一樣。
+        differ = _hooks_differ(checkout, resolved)
+    except GuardError:
+        return "讀不到主 checkout 或 hook 的 commit 紀錄，不知道 hook 是不是原本那一份。"
+    if differ:
+        return (
+            f"`{resolved}` 裡的 {'、'.join(differ)} 跟 commit 進去的那一份不一樣（被改過、換成符號連結，或沒 commit），"
+            "私人內容 hook 可能已經被換掉。hook 要改請走 PR，由使用者合併。"
+        )
     return None
 
 
@@ -436,7 +491,13 @@ def guard_command(
             "git／gh 指令裡出現了 GIT_CONFIG_、hooksPath 或 --no-verify——這些是把 hook 關掉的字，"
             "不管它是怎麼拼出來的一律不放行（要改 hook 設定是使用者的事；commit 說明請改寫成不含這幾個字）。"
         )
-    for inv in parse_command(cmd, base):
+    invocations = parse_command(cmd, base)
+    if any(inv.name in _SENSITIVE for inv in invocations) and (m := _REPO_ENV.search(cmd)):
+        problems.append(
+            f"指令裡設了 {m.group(1)}：它會把 git 改道到別的 repo（或別的暫存區、物件庫），"
+            "看不清楚這次 commit／push 寫到哪個 repo，不放行。"
+        )
+    for inv in invocations:
         if (issue := _config_problem(inv)) is not None:
             problems.append(f"{inv.name}：{issue}")
         if inv.ambiguous and (inv.name in _SENSITIVE or (inv.tool == "git" and inv.sub not in _SAFE_SUBS)):
