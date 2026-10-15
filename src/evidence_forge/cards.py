@@ -104,19 +104,8 @@ SELF_FREE_GENRES = frozenset(
 )
 # 主證據是作者自己的使用、測試或專案：第 3 關不能答「沒有例子」（ADR-0025 §3.2）
 AUTHOR_EVIDENCE_GENRES = frozenset({"product-case", "benchmark", "postmortem"})
-# 主題（ADR-0026 §3.2；通用說明在 `harness/genres/themes.md`，#106 加進來之前照這份驗）
-THEMES = frozenset(
-    {
-        "worldview",
-        "builder-method",
-        "startup",
-        "tech-selection",
-        "adoption",
-        "education",
-        "tools",
-        "open-source",
-    }
-)
+# 主題（ADR-0026 §3.2）：清單只有一份，`harness/genres/themes.md`
+THEMES = default_harness().theme_slugs()
 # 第 1 關帶結構化值的問題卡（#109）：選項的 `value` 是文體、主題的 slug，或角色名稱
 QuestionKind = Literal["genre", "theme", "persona"]
 

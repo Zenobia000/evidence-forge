@@ -61,11 +61,8 @@ def test_打字說沒有例子_記成_no_example_閘道才擋得到() -> None:
 def test_第_1_關列的主題就是閘道收的八種() -> None:
     theme_line = next(line for line in PROMPT.splitlines() if line.startswith("- One theme card"))
     assert set(re.findall(r"`([a-z-]+)` \(", theme_line)) == THEMES
-    # #106 把通用清單放進 harness/genres/themes.md 之後，兩邊也要對得上
-    themes_md = default_harness().root / "genres" / "themes.md"
-    if themes_md.is_file():
-        text = themes_md.read_text(encoding="utf-8")
-        assert set(re.findall(r"^\| `([a-z-]+)` \|", text, re.MULTILINE)) == THEMES
+    # THEMES 讀的是 harness/genres/themes.md（清單只有一份）；讀壞了會是空的，跟 ADR-0026 §3.2 的 8 個對一下
+    assert len(THEMES) == 8
 
 
 # 訪談的硬規則：改提示詞時漏掉一條，模型就不知道那條規則（閘道只擋得到其中幾條）
