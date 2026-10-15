@@ -275,6 +275,65 @@ if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit[^;|&]*[[:space:]](
   deny "Blocked: commit with hooks bypassed. A failing hook is a signal to fix, not to mute. Investigate the failure; bypassing is the user's call."
 fi
 
+# 私人內容關卡（#126）：commit 與 push 之前掃指紋，有命中就擋。
+#
+# 為什麼在這裡：這個 repo 是公開的。舊的守門只在整套測試跑完才紅，那時 commit 做了、push 也推了
+# （2026-10-15 創作者的真名就這樣進了公開歷史，帳本 L-028）。公開歷史上的東西只有 GitHub 客服收得回來，
+# 所以檢查要在 commit 與 push **之前**，不是之後。
+#
+# 這裡做的事很薄：判斷「這是不是 commit／push」，然後交給 scripts/brand_guard.py。指紋怎麼來、
+# 怎麼比、為什麼輸出不含命中的字，都在 src/evidence_forge/brand_guard.py 的說明；git 原生的
+# pre-commit／pre-push（.githooks/）呼叫同一支，所以手動 push 也被擋，規則只有一份。
+#
+# **掃不了也擋（fail-closed）**：找不到 python3、找不到腳本、腳本自己壞掉，都不放行——
+# 這一關擋的是推出去就收不回來的東西，放行的代價遠高於擋錯一次。跟上面缺 jq 同一個取捨。
+#
+# 已知邊界（寫出來，免得讀的人以為它保證了全部）：
+#   - 掃的是**這個守衛的工作目錄**的 repo；`git -C 別處 commit`、`cd 別處 && git commit` 看不到。
+#   - 同一條指令裡才 `git add` 或用 `commit -a` 時，暫存區現在是空的，所以改掃「可能被提交的全部」
+#     （追蹤中檔案相對 HEAD 的變更＋未追蹤的檔），寧可多擋。
+#   - 真正精確的是 git 原生 hook（commit 當下才看暫存區）；那要 `git config core.hooksPath .githooks`，
+#     見 README。沒設的機器只有這一層。
+BRAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/brand_guard.py"
+
+brand_scan() { # $1=是什麼指令（給訊息用） 其餘=scripts/brand_guard.py 的參數
+  local what=$1 py out rc
+  shift
+  py=$(command -v python3 || command -v python || true)
+  if [ -z "$py" ]; then
+    deny "Blocked: $what — 私人內容掃描需要 python3，這台機器找不到。沒有它這一關會靜靜放行，所以先擋。請人裝好 python3 再試。"
+  fi
+  if [ ! -f "$BRAND_GUARD" ]; then
+    deny "Blocked: $what — 找不到 $BRAND_GUARD，私人內容掃描跑不了，所以先擋。"
+  fi
+  out=$("$py" "$BRAND_GUARD" "$@" 2>&1)
+  rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) deny "Blocked: $what — 要進歷史的內容裡有創作者的私人字眼（這個 repo 是公開的，推出去就收不回來）。
+$out" ;;
+    *) deny "Blocked: $what — 私人內容掃描自己壞了（exit $rc），掃不了就不放行。
+$out" ;;
+  esac
+}
+
+if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit([[:space:]]|;|\)|$)"; then
+  wt=""
+  if printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+add([[:space:]]|;|\)|$)" \
+     || printf '%s\n' "$cmd" | grep -qE "${P}git[[:space:]]+commit[^;|&]*[[:space:]](-[a-zA-Z]*a[a-zA-Z]*|--all|--include)([[:space:]]|;|\)|$)"; then
+    wt="--worktree"
+  fi
+  brand_scan "git commit" staged $wt
+fi
+
+# 每一個 `git push`（一條指令可能有好幾個）各掃一次；後面的參數原樣交給腳本，由它解出要推哪些 commit。
+while IFS= read -r pushargs; do
+  [ -z "${pushargs:-}" ] && continue
+  brand_scan "git push" push -- "${pushargs#*git push}"
+done <<EOF
+$(printf '%s\n' "$cmd" | grep -oE "${P}git[[:space:]]+push([[:space:]][^;|&]*)?" | sed -E 's/^[;|&(\$[:space:]]*//')
+EOF
+
 # Merging a PR lands code on a shared branch and can trigger deploys — the one
 # button in the whole flow that nobody can un-press. 'gh pr merge' is the front
 # door; a PUT to the REST merge endpoint is the same act through the back one.

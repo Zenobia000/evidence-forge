@@ -22,7 +22,15 @@
    bash .claude/hooks/test-guard-git.sh   # 合併閘自己的測試；需要真 PR 的幾發會 skip 並說明
    ```
 
-4. **開第一張票**：把想做的事講給 Claude，打 `/to-spec` 收成規格，再 `/to-tickets` 切成票。之後的順序與停點見 `.claude/skills/PIPELINE.md`。
+4. **啟用 commit／push 前的私人內容關卡（每個 clone 一次）**：
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+   這個 repo 是公開的，創作者的名字、色票、封面用語不准進來，而推出去就收不回來。`.githooks/pre-commit` 掃暫存區、`.githooks/pre-push` 掃要推出去的 commit，兩個都呼叫 `scripts/brand_guard.py`；命中就擋，**只印哪個檔哪一行，不印命中的字**。Claude Code 的守衛（`guard-git.sh`）對它下的 `git commit`／`git push` 也呼叫同一支，所以這個設定是給手動操作用的。掃描只要系統的 `python3`，不需要 uv 環境。指紋有兩部分：寫死在 `src/evidence_forge/brand_guard.py` 的固定指紋，加上每次執行時從 `$EF_DATA/authors/*/` 現算的（不寫檔；沒有 `$EF_DATA` 時只用固定的）。`python3 scripts/brand_guard.py stats` 看這次用了多少組。測試資料請用虛構的名字與色票（`Ai-coding-principle/LESSONS.md` L-028）。
+
+5. **開第一張票**：把想做的事講給 Claude，打 `/to-spec` 收成規格，再 `/to-tickets` 切成票。之後的順序與停點見 `.claude/skills/PIPELINE.md`。
 
 ## 目錄地圖
 
@@ -30,7 +38,8 @@
 | --- | --- |
 | `CLAUDE.md` | 給 Claude 的常駐指示：專案狀態、技能組態、派子代理、人語層 |
 | `CONTEXT.md` | 領域語言（訂閱源、工單、配方、閘道…） |
-| `.claude/hooks/` | 守衛。`guard-git.sh`（擋大量 add、force push、跳過 hook、按風險分級的合併閘）、`guard-secrets.sh`（擋把金鑰 commit 進去）、`human-only-paths.conf`（這個專案自己的高風險路徑與本機檢查指令）、`test-guard-git.sh`（守衛的測試，CI 會跑） |
+| `.githooks/`、`scripts/brand_guard.py` | git 原生的 `pre-commit`／`pre-push`（要 `git config core.hooksPath .githooks` 才生效），與它們呼叫的私人內容掃描 |
+| `.claude/hooks/` | 守衛。`guard-git.sh`（擋大量 add、force push、跳過 hook、按風險分級的合併閘）、`guard-secrets.sh`（擋把金鑰 commit 進去）、私人內容關卡（`commit`／`push` 前掃指紋，見快速開始第 4 步）、`human-only-paths.conf`（這個專案自己的高風險路徑與本機檢查指令）、`test-guard-git.sh`（守衛的測試，CI 會跑） |
 | `.claude/skills/` | 技能。大部分是上游快照，來源與哪些可以改見 `VENDOR.md`、`UPSTREAM.md`；開發順序見 `PIPELINE.md` |
 | `.claude/agents/` | 三格子代理角色（便宜快／強／最強），見 `Ai-coding-principle/MODEL-ROUTING.md` |
 | `Ai-coding-principle/` | 家規（`README.md`）、傷疤帳本（`LESSONS.md`）、人的組塊庫（`PLAYBOOK.md`）、模型路由、分級、Git 協作、語言法 |

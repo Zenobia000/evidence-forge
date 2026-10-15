@@ -473,6 +473,128 @@ if MSYS_NO_PATHCONV=1 git -C "$groot" rev-parse --verify --quiet origin/main >/d
 else
   skip=$((skip+3)); echo "skip [main_guard_blob 兩發＋釘版整條路] —— 這棵樹沒有 origin/main（淺 clone？）"
 fi
+# ── 私人內容關卡（#126）：commit 與 push 之前掃指紋 ──────────────────────
+#
+# 這一組驗的是「真的擋得下」：在暫存的 git repo 裡暫存／提交含假名字的檔，餵真的 payload 給守衛，
+# 看它 exit 2、說得出哪個檔哪一行、而且訊息裡沒有命中的字。**角色全是虛構的**（假名字、假品牌、假色票，
+# 寫進暫存的 EF_DATA）——測試資料不准用真人的名字或真實的品牌內容（帳本 L-028）。
+# 「沒有 EF_DATA 時固定指紋照跑」要有真的固定指紋才驗得到、而那些不能明文進測試，所以放在
+# tests/unit/test_brand_guard.py（換一組假的固定指紋）；這裡只驗沒有 EF_DATA 時不壞、乾淨的照放行。
+if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  bgroot="$(cd "$(dirname "$h")/../.." && pwd)"
+  hb="$bgroot/.claude/hooks/guard-git.sh"   # 在別的目錄跑，要用絕對路徑
+  bt=$(mktemp -d)
+  ef="$bt/ef"; repo="$bt/repo"; bare="$bt/remote.git"; noef="$bt/noef"
+  mkdir -p "$ef/authors/quillon" "$noef" "$repo"
+  printf '%s\n' '---' 'id: quillon' 'name: Quillon Tavernash' '---' > "$ef/authors/quillon/voice.md"
+  printf '%s\n' 'name: Marbled Fox Atelier' 'palette:' '  paper: "#13579B"' > "$ef/authors/quillon/brand.yaml"
+  # 每個 git 都關掉使用者的 hooksPath，測試才不會被那台機器的設定牽著走
+  gq() { git -C "$repo" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
+  gq init -q -b main
+  printf 'hello\n' > "$repo/README.txt"
+  gq add README.txt && gq commit -q -m init
+  git init -q --bare "$bare"
+  gq remote add origin "$bare" && gq push -q origin HEAD
+
+  # $1=期望exit $2=指令 $3=說明 $4=訊息裡必須出現的位置（空＝不問） $5=EF_DATA（預設假角色）
+  # 擋下時再問：訊息指得出位置、而且不含任何一個假字
+  tb() {
+    _ef=${5-$ef}
+    msg=$(cd "$repo" && printf '%s' "$2" | jq -Rs '{tool_input:{command:.}}' | EF_DATA="$_ef" bash "$hb" 2>&1 >/dev/null)
+    got=$?
+    ok=1
+    [ "$got" -eq "$1" ] || ok=0
+    if [ -n "${4-}" ]; then case "$msg" in *"$4"*) ;; *) ok=0 ;; esac; fi
+    if printf '%s' "$msg" | grep -qiE 'quillon|tavernash|marbled|13579b'; then ok=0; fi
+    if [ "$ok" -eq 1 ]; then pass=$((pass+1)); echo "ok   exit=$got [$3]"
+    else fail=$((fail+1)); echo "FAIL exit=$got want=$1 [$3] got: $(printf '%s' "$msg" | head -c 120)"; fi
+  }
+
+  tb 0 "git commit -m x" "私人內容：暫存區是空的，放行"
+  tb 0 "git status" "私人內容：不是 commit／push 的指令不碰"
+  mkdir -p "$repo/tests"
+  printf "name = 'Quillon Tavernash'\n" > "$repo/tests/test_a.py"
+  gq add tests/test_a.py
+  tb 2 "git commit -m x" "私人內容：暫存區有假名字，commit 擋下，只講檔案與行號" "tests/test_a.py:1"
+  tb 2 "git commit -m 'a b c'" "私人內容：帶 -m 的 commit 一樣擋"
+  tb 2 "git status && git commit -m x" "私人內容：接在別的指令後面的 commit 也擋"
+  tb 0 "git commit -m x" "私人內容：EF_DATA 是空的（CI 的樣子）時不壞、也不亂擋（固定指紋那半在 pytest 驗）" "" "$noef"
+  gq reset -q tests/test_a.py
+  printf "accent = '#13579b'\n" > "$repo/tests/test_b.py"
+  gq add tests/test_b.py
+  tb 2 "git commit -m x" "私人內容：假色票也擋" "tests/test_b.py:1"
+  gq reset -q tests/test_b.py
+  rm -f "$repo/tests/test_a.py" "$repo/tests/test_b.py"
+
+  # 暫存區現在是空的、但這條指令會把東西帶進去：commit -a、同一條指令才 add
+  printf 'hello Quillon\n' > "$repo/README.txt"
+  tb 0 "git commit -m x" "私人內容：沒暫存的髒檔不在這次 commit 裡，放行"
+  tb 2 "git commit -am x" "私人內容：commit -a 會帶進追蹤中的檔，擋" "README.txt:1"
+  tb 2 "git add README.txt && git commit -m x" "私人內容：同一條指令才 add，擋" "README.txt:1"
+  gq checkout -q README.txt
+  printf "x = 'Tavernash'\n" > "$repo/untracked.py"
+  tb 2 "git add untracked.py && git commit -m x" "私人內容：同一條指令才 add 的未追蹤檔也擋" "untracked.py:1"
+  rm -f "$repo/untracked.py"
+  mkdir -p "$repo/docs"
+  printf 'Quillon is the pen name used in this doc\n' > "$repo/docs/note.md"
+  gq add docs/note.md
+  tb 0 "git commit -m x" "私人內容：docs/ 底下不掃（文件裡本來就會提到公開的名字）"
+  gq reset -q docs/note.md; rm -f "$repo/docs/note.md"
+
+  # push：只看還沒有任何遠端有的 commit。洩漏的 commit 後面補一個刪掉它的 commit 也沒用——歷史上還在。
+  tb 0 "git push origin HEAD" "私人內容：沒有新 commit，push 放行"
+  printf "name = 'Quillon'\n" > "$repo/leak.py"
+  gq add leak.py && gq commit -q -m leak
+  leak_sha=$(gq rev-parse --short=8 HEAD)
+  gq rm -q leak.py && gq commit -q -m remove
+  tb 2 "git push origin HEAD" "私人內容：push 擋下有洩漏的 commit，而且指出是哪一個" "$leak_sha leak.py:1"
+  tb 2 "git push -u origin main" "私人內容：push -u 一樣擋"
+  tb 2 "git push" "私人內容：沒寫遠端與分支也擋（推目前分支）"
+  tb 2 "git status && git push origin HEAD 2>&1 | tail -3" "私人內容：接在後面、帶管線的 push 也擋"
+  tb 2 "git push -f origin HEAD" "私人內容：force push 本來就擋（舊規則先擋，這裡只確認不放行）"
+  tb 0 "git push origin HEAD" "私人內容：EF_DATA 是空的時不壞（只剩固定指紋，不認得假角色）" "" "$noef"
+
+  # git 原生 hook（.githooks/）：手動 commit／push 也擋。用同一支掃描，所以只確認接得上、退出碼對
+  base=$(gq rev-parse HEAD~2); head=$(gq rev-parse HEAD)
+  printf "name = 'Quillon'\n" > "$repo/leak2.py"; gq add leak2.py
+  nh() { # $1=期望的退出碼（0 放行、1 擋；127 之類是跑不起來，不算擋） $2=說明 其餘=指令
+    _w=$1; _d=$2; shift 2
+    _m=$("$@" 2>&1); _r=$?
+    if [ "$_r" -eq "$_w" ]; then
+      if printf '%s' "$_m" | grep -qiE 'quillon|tavernash'; then fail=$((fail+1)); echo "FAIL rc=$_r [$_d] 輸出含假名字"
+      else pass=$((pass+1)); echo "ok   rc=$_r [$_d]"; fi
+    else fail=$((fail+1)); echo "FAIL rc=$_r [$_d] got: $(printf '%s' "$_m" | head -c 100)"; fi
+  }
+  nh 1 "原生 pre-commit：暫存區有假名字，擋" bash -c 'cd "$1" && EF_DATA="$2" bash "$3/.githooks/pre-commit"' _ "$repo" "$ef" "$bgroot"
+  gq reset -q leak2.py; rm -f "$repo/leak2.py"
+  nh 0 "原生 pre-commit：暫存區乾淨，放行" bash -c 'cd "$1" && EF_DATA="$2" bash "$3/.githooks/pre-commit"' _ "$repo" "$ef" "$bgroot"
+  nh 1 "原生 pre-push：要推的 commit 有假名字，擋" bash -c 'cd "$1" && printf "refs/heads/main %s refs/heads/main %s\n" "$4" "$5" | EF_DATA="$2" bash "$3/.githooks/pre-push" origin url' _ "$repo" "$ef" "$bgroot" "$head" "$base"
+  nh 0 "原生 pre-push：沒有新內容（遠端已經是這個 commit），放行" bash -c 'cd "$1" && printf "refs/heads/main %s refs/heads/main %s\n" "$4" "$4" | EF_DATA="$2" bash "$3/.githooks/pre-push" origin url' _ "$repo" "$ef" "$bgroot" "$head"
+
+  # 掃不了就擋（fail-closed）：沒有 python3、找不到腳本、腳本壞掉（不在 git repo 裡）
+  nopy="$bt/nopy"; mkdir -p "$nopy"
+  for c in bash jq grep sed tr cat cut head awk dirname; do
+    cp_src=$(command -v "$c" 2>/dev/null) && ln -s "$cp_src" "$nopy/$c"
+  done
+  pmsg=$(printf '%s' '{"tool_input":{"command":"git commit -m x"}}' | PATH="$nopy" "$nopy/bash" "$hb" 2>&1 >/dev/null); prc=$?
+  if [ "$prc" -eq 2 ] && case "$pmsg" in *python3*) true ;; *) false ;; esac; then
+    pass=$((pass+1)); echo "ok   exit=2 [私人內容：沒有 python3：出聲並擋，不靜靜放行]"
+  else fail=$((fail+1)); echo "FAIL exit=$prc [私人內容：沒有 python3] got: $(printf '%s' "$pmsg" | head -c 80)"; fi
+  mkdir -p "$bt/fake/.claude/hooks"; cp "$hb" "$bt/fake/.claude/hooks/guard-git.sh"
+  fmsg=$(cd "$repo" && printf '%s' '{"tool_input":{"command":"git push origin HEAD"}}' | bash "$bt/fake/.claude/hooks/guard-git.sh" 2>&1 >/dev/null); frc=$?
+  if [ "$frc" -eq 2 ] && case "$fmsg" in *brand_guard.py*) true ;; *) false ;; esac; then
+    pass=$((pass+1)); echo "ok   exit=2 [私人內容：找不到腳本：出聲並擋]"
+  else fail=$((fail+1)); echo "FAIL exit=$frc [私人內容：找不到腳本] got: $(printf '%s' "$fmsg" | head -c 80)"; fi
+  mkdir -p "$bt/notrepo"
+  nmsg=$(cd "$bt/notrepo" && printf '%s' '{"tool_input":{"command":"git commit -m x"}}' | EF_DATA="$ef" bash "$hb" 2>&1 >/dev/null); nrc=$?
+  if [ "$nrc" -eq 2 ] && case "$nmsg" in *"掃描自己壞了"*) true ;; *) false ;; esac; then
+    pass=$((pass+1)); echo "ok   exit=2 [私人內容：掃描自己壞了（不在 git repo 裡）：擋，不放行]"
+  else fail=$((fail+1)); echo "FAIL exit=$nrc [私人內容：掃描壞了] got: $(printf '%s' "$nmsg" | head -c 80)"; fi
+  rm -rf "$bt"
+else
+  skip=$((skip+1)); echo "skip [私人內容關卡那一組] —— 需要 git 與 python3"
+fi
+
 # 缺 jq：守衛讀不到指令就等於不存在，所以要出聲並擋，不能靜靜放行。
 # 造一個只有基本工具、沒有 jq 的 PATH 來跑。
 nojq=$(mktemp -d)
