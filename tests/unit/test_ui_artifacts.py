@@ -164,7 +164,8 @@ def test_報告的查證少一條_一樣不接來源(folder: ChatFolder) -> None
     assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
 
 
-def test_題材照標題接來源_不照順序(folder: ChatFolder) -> None:
+def test_題材順序跟_sources_json_不一樣_一個來源都不接(folder: ChatFolder) -> None:
+    # codex 第二輪：對得上（同樣多、同標題、同順序）才照位置接；對不上就都不接
     sources = {
         **SOURCES_JSON,
         "topics": [
@@ -176,10 +177,11 @@ def test_題材照標題接來源_不照順序(folder: ChatFolder) -> None:
     folder.analysis(cid, "a1", sources=sources)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
-    assert [[s.title for s in t.sources] for t in view.topics] == [["價目表"], ["延遲說明"]]
+    assert [t.sources for t in view.topics] == [[], []]
+    assert [t.number for t in view.topics] == [1, 2]
 
 
-def test_題材在_sources_json_找不到同名的_不掛別的題材的來源(folder: ChatFolder) -> None:
+def test_題材有一個在_sources_json_找不到同名的_整組都不接來源(folder: ChatFolder) -> None:
     sources = {
         **SOURCES_JSON,
         "topics": [{"title": "長上下文的帳怎麼算", "sources": ["S2"]}, {"title": "完全不同", "sources": ["S4"]}],
@@ -188,7 +190,45 @@ def test_題材在_sources_json_找不到同名的_不掛別的題材的來源(f
     folder.analysis(cid, "a1", sources=sources)
     view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
 
-    assert [(t.number, [s.title for s in t.sources]) for t in view.topics] == [(1, ["價目表"]), (2, [])]
+    assert [(t.number, t.sources) for t in view.topics] == [(1, []), (2, [])]
+
+
+def test_兩個題材同名_照位置各接各的來源(folder: ChatFolder) -> None:
+    # codex 第二輪：用標題當 dict 的鍵，同名的兩個都拿到最後一個的來源
+    report = REPORT.replace("### 2. 第一個字為什麼越來越慢", "### 2. 長上下文的帳怎麼算")
+    sources = {
+        **SOURCES_JSON,
+        "topics": [
+            {"title": "長上下文的帳怎麼算", "sources": ["S2"]},
+            {"title": "長上下文的帳怎麼算", "sources": ["S3"]},
+        ],
+    }
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report, sources=sources)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert [[s.id for s in t.sources] for t in view.topics] == [["S2"], ["S3"]]
+
+
+def test_新格式的報告查證沒有任何標記_不走舊報告那一套_不接來源(folder: ChatFolder) -> None:
+    report = REPORT.replace("- 【有爭議】", "- ").replace("- 【查不到】", "- ").replace("- 【有佐證】", "- ")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.checks == []
+    assert "價目表與廠商部落格的算法對不上" in str(view.verify_html)
+    assert (view.doubtful, view.supported, view.unfound) == (1, 1, 1)
+
+
+def test_新格式的報告題材沒有編號_不走舊報告那一套_不接來源(folder: ChatFolder) -> None:
+    report = REPORT.replace("### 1. ", "### ").replace("### 2. ", "### ")
+    cid = folder.conversation()
+    folder.analysis(cid, "a1", report=report)
+    view = artifacts.report_view(folder.data, _jobs(folder, cid)[0])
+
+    assert view.topics == []
+    assert "長上下文的帳怎麼算" in str(view.topics_html)
 
 
 def test_舊報告_查證的說明從報告原文對到那一條_引用編號變成連結(folder: ChatFolder) -> None:

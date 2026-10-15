@@ -338,18 +338,19 @@ def check_original_not_in_body(
 
 
 # 回應原文的說法（ADR-0024 §3.2 第 2 點）：內文不提原文、不提原作者。
-# 「原文」只在當成「那篇原文」用時才擋（原文說、原文提到、在原文裡）；「英文原文書」「照原文翻譯」不算
-_REPLY_PHRASE = re.compile(
-    r"原作者|這篇(?:文章)?談的是|原文(?:說|提到|認為|指出|中|裡|寫道|談到|作者)"
-)
+# 「原文」一律擋，只放過幾個跟「那篇原文」無關的固定說法（`_BENIGN_ORIGINAL`）
+_REPLY_PHRASE = re.compile(r"原作者|這篇(?:文章)?談的是|原文")
+# 不是在講「那篇原文」的「原文」：原文書、英文原文、照原文、依原文、原文翻譯、原文照登
+_BENIGN_ORIGINAL = re.compile(r"(?:英|日|中|德|法|韓)文原文|[照依]原文|原文(?:書|翻譯|照登)")
 
 
 def check_reply_phrases(article: str, *, file: str) -> list[CheckEntry]:
-    """參考來源以外的內文不能有回應原文的說法：「原作者」「這篇談的是」「原文提到」這類。每種說法報一次。"""
+    """參考來源以外的內文不能有回應原文的說法：「原作者」「這篇談的是」與「原文」（幾個固定說法除外）。每種說法報一次。"""
     body, _, _ = split_references(article)
     failures: list[CheckEntry] = []
     reported: set[str] = set()
-    for number, line in enumerate(mask_code(body).split("\n"), start=1):
+    masked = _BENIGN_ORIGINAL.sub(lambda match: " " * len(match.group(0)), mask_code(body))
+    for number, line in enumerate(masked.split("\n"), start=1):
         for match in _REPLY_PHRASE.finditer(line):
             phrase = match.group(0)
             if phrase in reported:

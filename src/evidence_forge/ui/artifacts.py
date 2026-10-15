@@ -620,10 +620,15 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
         return markdown.render(_link_citations(body, urls)) if body else Markup("")
 
     verify_blocks = _blocks(sections.get("查證", ""))
-    checks = _fact_checks(report, listed_raw, brief, verify_blocks, listed, placed, urls)
+    # 舊報告（ADR-0024 之前）：節名是「事實與觀點」「研究題材」，查證帶 K 編號、照編號對；
+    # 新格式的報告只照標記與位置對，對不上就不接來源，不退回舊的那一套
+    legacy = any(name in sections for name in _OLD_SECTIONS.values())
+    checks = _fact_checks(report, listed_raw, brief, verify_blocks, listed, placed, urls, legacy=legacy)
     views = _slot(sections, "作者的看法")
     topics_name = _slot(sections, "可以寫的題材")
-    topics = _topics(report, listed_raw, sections.get(topics_name, ""), listed, placed, urls)
+    topics = _topics(
+        report, listed_raw, sections.get(topics_name, ""), listed, placed, urls, legacy=legacy
+    )
     opening, next_step = _opening(report)
     ordered = sorted(listed.values(), key=lambda s: int(s.id[1:]) if s.id[1:].isdigit() else 0)
     sources = [original, *_source_refs([s.id for s in ordered], listed, placed)]
@@ -687,20 +692,23 @@ def _fact_checks(
     listed: dict[str, SourceRef],
     placed: dict[str, SourceRef],
     urls: dict[str, str | None],
+    *,
+    legacy: bool,
 ) -> list[FactCheck]:
     """查證一條一條：結果與來源看 `sources.json`，文字看報告。
 
     新報告沒有編號（ADR-0024），每條開頭是【有爭議】這類標記，順序跟 `fact_checks` 一樣：
-    標記一條一條對得上（`checks/analysis.py` 也這樣擋）才照位置把來源接上去；對不上就回空的，
-    畫面照報告原文顯示那一節，不把來源掛到別條上。舊報告每條帶著主張編號（「K1 有爭議：…」），照編號對。
+    標記一條一條對得上（`checks/analysis.py` 也這樣擋）才照位置把來源接上去；對不上（連一個標記都沒有也算）
+    就回空的，畫面照報告原文顯示那一節，不把來源掛到別條上。
+    `legacy`（舊報告）每條帶著主張編號（「K1 有爭議：…」），照編號對。
     """
     if not isinstance(listed_raw, dict):
         return []
     entries = [entry for entry in listed_raw.get("fact_checks", []) if isinstance(entry, dict)]
-    items = section_items(report, "查證")
-    marks = [match.group(1) if (match := MARK.match(text)) else None for _, text in items]
-    if any(marks):
-        if marks != fact_check_marks(listed_raw):
+    if not legacy:
+        items = section_items(report, "查證")
+        marks = [match.group(1) if (match := MARK.match(text)) else None for _, text in items]
+        if not items or marks != fact_check_marks(listed_raw):
             return []
         paired = [(entry, _split_fact(text, urls)) for entry, (_, text) in zip(entries, items, strict=True)]
     else:
@@ -762,10 +770,13 @@ def _topics(
     listed: dict[str, SourceRef],
     placed: dict[str, SourceRef],
     urls: dict[str, str | None],
+    *,
+    legacy: bool,
 ) -> list[Topic]:
-    """可以寫的題材。新報告照 `### 1.` 切（跟 `checks/analysis.py` 同一份切法），
-    來源照標題接 `sources.json` 同名的那一個；找不到同名的就不給來源，不拿別的題材的來頂。
-    舊報告（研究題材）照 `sources.json` 的題材標題去報告裡找說明。"""
+    """可以寫的題材。新報告照 `### 1.` 切（跟 `checks/analysis.py` 同一份切法）；
+    題材跟 `sources.json` 的 topics 一樣多、標題一樣、順序一樣（`check_topic_alignment` 擋的那一條）
+    才照位置接來源，對不上就一個都不接，不拿別的題材的來頂。新報告沒切出題材就回空的，畫面照原文顯示。
+    `legacy`（舊報告的研究題材）照 `sources.json` 的題材標題去報告裡找說明。"""
     raw = listed_raw.get("topics", []) if isinstance(listed_raw, dict) else []
     entries = [entry for entry in raw if isinstance(entry, dict)]
 
@@ -775,17 +786,19 @@ def _topics(
         ids = [s for s in entry.get("sources", []) if isinstance(s, str)]
         return _source_refs(ids, listed, placed)
 
-    numbered = topic_entries(report)
-    if numbered:
-        by_title = {normalize_for_match(str(entry.get("title", ""))): entry for entry in entries}
+    if not legacy:
+        numbered = topic_entries(report)
+        aligned = [normalize_for_match(title) for _, _, title, _ in numbered] == [
+            normalize_for_match(str(entry.get("title", ""))) for entry in entries
+        ]
         return [
             Topic(
                 title,
                 markdown.render(_link_citations(body, urls)) if body else None,
-                refs(by_title.get(normalize_for_match(title))),
+                refs(entries[index]) if aligned else [],
                 number,
             )
-            for _, number, title, body in numbered
+            for index, (_, number, title, body) in enumerate(numbered)
         ]
     blocks = _blocks(section)
     found: list[Topic] = []
