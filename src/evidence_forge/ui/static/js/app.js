@@ -8,6 +8,7 @@
 // - 沒有輪詢工單：清單每 15 秒與視窗重新取得焦點時重抓一次，因為別的分頁、別的入口也會改清單。
 
 import { buildMessage, fileProblem, restoreAfterFailure, suggestions, toBase64 } from "./compose.js";
+import { initInterview } from "./interview-ui.js";
 import { describe } from "./progress.js";
 import { createState, reconnect, reduce, seedFinished } from "./state.js";
 
@@ -30,6 +31,7 @@ const els = {
   box: $("#ch-box"),
   empty: $("#ch-empty"),
   loading: $("#ch-loading"),
+  confirm: $("#ch-confirm"),
 };
 
 let conversationId = shell.dataset.conversation || "";
@@ -38,7 +40,8 @@ const loose = shell.dataset.loose === "true";
 let state = createState();
 let source = null;
 let attachments = [];
-const view = { panelOpen: false, tab: "report", job: null, diff: false };
+const view = { panelOpen: false, tab: "report", job: null, diff: false, card: null };
+const PANEL_TABS = ["report", "decisions", "article", "cost"];
 const pending = []; // 剛送出、還沒進紀錄的訊息（畫面先放著）
 
 // ── 小工具 ───────────────────────────────────────────────────────
@@ -166,7 +169,11 @@ async function loadThread() {
     const { status, html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/thread`);
     if (els.loading) els.loading.remove();
     els.loading = null;
+    const focusToken = interview.captureFocus();
     els.thread.innerHTML = html;
+    // 問題卡長出狀態：答到一半的草稿與焦點接回去（interview-ui.js）
+    interview.mountAll(els.thread);
+    interview.restoreFocus(focusToken);
     const root = $("[data-thread-root]", els.thread);
     if (status === 200 && root) {
       pending.length = 0;
@@ -320,8 +327,9 @@ function connect() {
   source.onopen = () => {
     state = reconnect(state);
     // 每次連上（第一次，也包括斷線重連）都重抓一次串流：主機重開、積太多被斷開、
-    // 第一次載入到連上之間漏掉的事件，都靠完整紀錄補回來（#94 審查）
+    // 第一次載入到連上之間漏掉的事件，都靠完整紀錄補回來（#94 審查）；編輯卡的事件同理，面板開著就一起重抓
     refreshThread();
+    if (view.panelOpen) loadPanel();
   };
   source.onmessage = (message) => {
     let event;
@@ -359,7 +367,13 @@ async function loadPanel() {
   const params = new URLSearchParams({ tab: view.tab });
   if (view.job) params.set("v", view.job);
   if (view.diff) params.set("diff", "1");
+  if (view.tab === "decisions" && view.card) params.set("card", view.card);
   els.panel.setAttribute("aria-busy", "true");
+  // 決策分頁第一次打開：先放骨架，讀編輯卡要一點時間
+  if (view.tab === "decisions" && shell.dataset.tab !== "decisions" && !els.panel.hidden) {
+    const body = $(".ch-panel__body", els.panel);
+    if (body) body.replaceChildren(el("span", { class: "s0-skel", style: "width: 45%; height: 16px" }), el("span", { class: "s0-skel", style: "width: 90%; margin-top: 12px" }), el("span", { class: "s0-skel", style: "width: 80%; margin-top: 12px" }));
+  }
   try {
     const { html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/panel?${params}`);
     const body = $(".ch-panel__body", els.panel);
@@ -371,6 +385,9 @@ async function loadPanel() {
     // 伺服器選了哪一版就記哪一版
     const picked = $("[data-version]", els.panel);
     if (picked) view.job = picked.value;
+    const card = $("[data-card-select]", els.panel);
+    if (card) view.card = card.value;
+    interview.paintDrafts();
   } catch (error) {
     els.panel.replaceChildren(el("div", { class: "ch-panel__body" }, el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` }))));
   } finally {
@@ -617,6 +634,9 @@ document.addEventListener("change", (event) => {
   if (target.matches("[data-version]")) {
     view.job = target.value;
     loadPanel();
+  } else if (target.matches("[data-card-select]")) {
+    view.card = target.value;
+    loadPanel();
   } else if (target.matches("[data-diff]")) {
     view.diff = target.checked;
     loadPanel();
@@ -632,6 +652,34 @@ $("#ch-list-toggle").addEventListener("click", () => {
 window.addEventListener("focus", refreshList);
 setInterval(refreshList, 15000);
 
+// ── 訪談：問題卡、決策分頁的按鈕、寫稿前的最後確認（interview-ui.js） ──────
+
+// 「照這張編輯卡寫稿」的預留位置：寫稿本身（開 rewrite 工單、帶編輯卡的快照）是 票 110 的事。
+// 最後確認卡按下「照這張寫」會走到這裡；票 110 接上之前只說明還沒接上，編輯卡照舊留著，不開工單、不花錢。
+function startWritingFromCard(cardId) {
+  showNote("info", `「照這張編輯卡寫稿」還沒接上（票 110）。編輯卡 ${cardId} 先留著，什麼都沒開、沒花錢。`);
+  setTimeout(() => showNote("info", ""), 10000);
+}
+
+const interview = initInterview({
+  conversation: () => conversationId,
+  post: postJson,
+  fragment,
+  // 寫進決策紀錄之後：對話串流（摘要卡、系統小字）、決策分頁、清單都重抓
+  afterWrite: () => {
+    refreshThread();
+    if (view.panelOpen) loadPanel();
+    refreshList();
+  },
+  startWriting: startWritingFromCard,
+  // 窄螢幕上面板是蓋住對話的抽屜：要看最後確認卡就先收起來
+  revealChat: () => {
+    if (window.matchMedia("(max-width: 1100px)").matches) setPanel(false);
+  },
+  confirmHost: els.confirm,
+  panel: els.panel,
+});
+
 // ── 開頁 ─────────────────────────────────────────────────────────
 
 (async function init() {
@@ -641,9 +689,9 @@ setInterval(refreshList, 15000);
     connect();
     const wanted = shell.dataset.initialTab;
     const remembered = load(`ef:panel:${conversationId}`);
-    if (["report", "article", "cost"].includes(wanted)) await openPanel(wanted);
+    if (PANEL_TABS.includes(wanted)) await openPanel(wanted);
     else if (remembered?.open) {
-      view.tab = remembered.tab || "report";
+      view.tab = PANEL_TABS.includes(remembered.tab) ? remembered.tab : "report";
       await openPanel(view.tab);
     }
   }

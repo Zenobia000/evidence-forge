@@ -1,0 +1,129 @@
+{% from "_icons.html" import icon %}
+{# 訪談（票 108）：對話裡的問題卡與摘要卡，右側面板的決策分頁，寫稿前的最後確認卡。
+   資料都來自 ui/interview.py；互動由 static/js/interview-ui.js 接。文字一律交給 Jinja 跳脫。 #}
+
+{%- macro qset(s) -%}
+{%- if s.kind == "answered" -%}
+<div class="ch-qset" data-answered data-card="{{ s.card_id }}" data-station="{{ s.station }}" role="group" aria-label="{{ s.title ~ '・' if s.title }}第 {{ s.station }} 關{{ '重問' if s.reask }}，已送出">
+<div class="ch-qset__head">
+<span class="ch-qset__station">{{ icon("flag") }}{{ s.title ~ '・' if s.title }}第 {{ s.station }} 關・{{ s.name }}{{ "（重問）" if s.reask }}</span>
+<span class="ch-qset__count"><span class="ch-src" data-src="{{ s.source }}">{{ icon(s.source_icon) }}{{ s.source_label }}</span> {{ s.rows|length }} 張{% if s.time %}・{{ s.time }}{% endif %} 已記下</span>
+</div>
+<ol class="ch-qdone">
+{% for r in s.rows %}<li>{{ icon("check") }}<span class="ch-qdone__chip">{{ r.chip }}</span><span class="ch-qdone__q">{{ r.question }}</span><span class="ch-qdone__a">→ <b>{{ r.answer }}</b></span>{% if r.note %}<span class="ch-qdone__n">備註：{{ r.note }}</span>{% endif %}</li>
+{% endfor %}
+</ol>
+</div>
+{%- else -%}
+{%- set total = s.cards|length -%}
+<div class="ch-qset" data-qset data-card="{{ s.card_id }}" data-station="{{ s.station }}" data-reask="{{ 'true' if s.reask else 'false' }}" role="group" aria-current="true" aria-label="{{ s.title ~ '・' if s.title }}第 {{ s.station }} 關・{{ s.name }}，答題中">
+<div class="ch-qset__head">
+<span class="ch-qset__station">{{ icon("flag") }}{{ s.title ~ '・' if s.title }}第 {{ s.station }} 關・{{ s.name }}{{ "（重問）" if s.reask }}</span>
+{% if total > 1 %}<ol class="ch-qtabs" aria-label="這一關的問題" data-qtabs>
+{% for c in s.cards %}<li class="ch-qtab" data-qtab="{{ c.id }}">{{ c.header }}</li>
+{% endfor %}
+</ol>{% endif %}
+<span class="ch-qset__count" data-qcount>第 1 張／共 {{ total }} 張</span>
+</div>
+<ol class="ch-qdone" data-qdone hidden></ol>
+{% for c in s.cards %}
+{%- set slot = loop.index -%}
+<fieldset class="ch-q" data-q="{{ c.id }}" tabindex="-1"{% if not loop.first %} hidden{% endif %}>
+<legend class="ch-q__legend"><span class="ch-sr">第 {{ s.station }} 關，第 {{ slot }} 張共 {{ total }} 張，</span><span class="ch-q__chip">{{ c.header }}</span><span class="ch-q__q">{{ c.question }}</span></legend>
+<ol class="ch-qopts">
+{% for o in c.options %}
+<li><label class="ch-qopt"><input type="radio" name="q-{{ s.card_id }}-{{ c.id }}" value="{{ loop.index0 }}" data-kind="{{ o.kind }}" data-label="{{ o.label }}"{% if c.choice == loop.index0 %} checked{% endif %}><span class="ch-qopt__n">{{ loop.index }}</span><span class="ch-qopt__t">{{ o.label }}</span>{% if o.description and o.kind != "other" %}<span class="ch-qopt__d">{{ o.description }}</span>{% endif %}{% if o.kind == "other" %}<input class="ch-qopt__other" type="text" data-other aria-label="{{ c.header }}：自己寫的答案" autocomplete="off" value="{{ c.other_text }}"{% if c.choice != loop.index0 %} hidden{% endif %}>{% endif %}</label></li>
+{% endfor %}
+</ol>
+<div class="ch-qnote" data-note hidden>
+<label for="note-{{ s.card_id }}-{{ c.id }}" data-note-label>備註（選填）</label>
+<textarea id="note-{{ s.card_id }}-{{ c.id }}" rows="2" data-note-input>{{ c.note }}</textarea>
+</div>
+</fieldset>
+{% endfor %}
+<p class="ch-error ch-qerror" role="alert" data-qerror hidden></p>
+<div class="ch-qbar ch-qfoot">
+<div class="ch-keys" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> 選</span><span><kbd>1</kbd>～<kbd>9</kbd> 直接選</span><span><kbd>Enter</kbd> 確認</span><span><kbd>←</kbd> 上一張</span></div>
+<div class="s0-row">
+<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-q-action="back" hidden>{{ icon("left") }}上一張</button>
+<button class="lm-btn" data-variant="primary" type="button" data-q-action="next"><span data-q-primary>{{ "確認並送出這一關" if total == 1 else "確認，下一張" }}</span></button>
+</div>
+</div>
+</div>
+{%- endif -%}
+{%- endmacro -%}
+
+{# 寫稿前的最後確認（FR-IW-03）：只有兩個選項，沒有「其他」、沒有備註；確認之後才開始花錢 #}
+{%- macro write_confirm(w) -%}
+<div class="ch-qset" data-qset data-confirm data-card="{{ w.card_id }}" role="group" aria-current="true" aria-label="寫稿前的最後確認">
+<div class="ch-qset__head">
+<span class="ch-qset__station">{{ icon("pencil") }}六關都選好</span>
+<span class="ch-qset__count">第 1 張／共 1 張</span>
+</div>
+<fieldset class="ch-q" data-q="go" tabindex="-1">
+<legend class="ch-q__legend"><span class="ch-sr">寫稿前的最後確認，第 1 張共 1 張，</span><span class="ch-q__chip">開始寫</span><span class="ch-q__q">要照這張編輯卡開始寫了嗎？</span></legend>
+<ol class="ch-qopts">
+<li><label class="ch-qopt"><input type="radio" name="q-go-{{ w.card_id }}" value="0" data-kind="option" data-label="照這張寫" checked><span class="ch-qopt__n">1</span><span class="ch-qopt__t">照這張寫</span><span class="ch-qopt__d">角色 {{ w.persona }}{% if w.genre %}・<span class="s0-mono">{{ w.genre }}</span>{% endif %}，{{ w.estimate }}，{{ w.cap }}。</span></label></li>
+<li><label class="ch-qopt"><input type="radio" name="q-go-{{ w.card_id }}" value="1" data-kind="option" data-label="先不要"><span class="ch-qopt__n">2</span><span class="ch-qopt__t">先不要</span><span class="ch-qopt__d">編輯卡留著，之後說一聲就開始寫。</span></label></li>
+</ol>
+</fieldset>
+<p class="ch-error ch-qerror" role="alert" data-qerror hidden></p>
+<div class="ch-qbar ch-qfoot">
+<span class="s0-small">確認之後就開寫稿工單，開始花錢。</span>
+<button class="lm-btn" data-variant="primary" type="button" data-q-action="next"><span data-q-primary>確認</span></button>
+</div>
+</div>
+{%- endmacro -%}
+
+{%- macro decisions(v) -%}
+<div class="ch-card-topic" style="margin-bottom: 24px">
+<span class="ch-card-topic__k">這張編輯卡在寫</span>
+<span class="ch-card-topic__v">{{ v.title or "（還沒有題目）" }}</span>
+<span class="s0-small">{% if v.origin %}{{ v.origin }}{% if v.started %}・{% endif %}{% endif %}{% if v.started %}<span class="s0-mono">{{ v.started }}</span> 開始{% endif %}</span>
+</div>
+<ol class="ch-dec" aria-label="六關">
+{% for s in v.stations %}
+<li class="ch-dec__item" data-state="{{ s.state }}" data-station="{{ s.number }}" data-card="{{ v.card_id }}"{% if s.asking %} data-asking{% endif %}>
+<span class="ch-dec__dot" aria-hidden="true">{{ s.number }}</span>
+<div class="ch-dec__body">
+<div class="ch-dec__head"><h3 class="ch-dec__name">{{ s.name }}</h3>
+{%- if s.badge %}<span class="s0-badge"{% if s.badge_tone %} data-tone="{{ s.badge_tone }}"{% endif %}>{% if s.badge_icon %}{{ icon(s.badge_icon) }}{% endif %}<span{% if s.asking %} data-asking-badge{% endif %}>{{ s.badge }}</span></span>{% elif s.state == "done" %}<span class="ch-sr">選好</span>{% endif %}
+{%- if s.time %}<span class="ch-dec__time">{{ s.time }}</span>{% endif %}</div>
+{% if s.note %}<p class="ch-dec__was">{{ s.note }}</p>{% endif %}
+{% if s.rows %}
+<ol class="ch-dec__qa">
+{% for r in s.rows %}
+<li data-q="{{ r.id }}"><span class="ch-dec__q"><b>{{ r.chip }}</b>{{ r.question }}{% if r.source %} <span class="ch-src" data-src="{{ r.source }}">{{ icon(r.source_icon) }}{{ r.source_label }}</span>{% endif %}</span>
+{% if r.drafting %}<span class="ch-dec__a" data-draft hidden></span><span class="ch-dec__d" data-draft-hint>這張還沒答……</span>
+{% else %}
+<span class="ch-dec__a">{{ r.answer }}</span>
+{% if r.description %}<span class="ch-dec__d">{{ r.description }}</span>{% endif %}
+{% if r.quote %}<span class="ch-dec__d">你打的：「{{ r.quote }}」（<span class="s0-mono">{{ r.quote_time }}</span>）</span>{% endif %}
+{% if r.note %}<p class="ch-dec__note"><strong>你的備註</strong>{{ r.note }}</p>{% endif %}
+{% if r.was %}<p class="ch-dec__was">原本{% if r.was_time %}（<span class="s0-mono">{{ r.was_time }}</span>）{% endif %}：<del>{{ r.was }}</del></p>{% endif %}
+{% if r.unselected %}<details class="ch-dec__more"><summary>{{ icon("chevron") }}沒選的 {{ r.unselected|length }} 個</summary><ul>{% for label, description in r.unselected %}<li>{{ label }}{% if description %}：{{ description }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+{% endif %}
+</li>
+{% endfor %}
+</ol>
+{% if s.asking %}<p class="s0-small" style="margin: 0">還沒送出的答案先列在這裡，不算記下；整關送出後才變「選好」。</p>{% endif %}
+{% endif %}
+{% if s.keep or s.reask %}
+<div class="ch-dec__actions" data-actions>
+{% if s.keep %}<button class="lm-btn" data-variant="primary" type="button" data-dec-action="keep" data-card="{{ v.card_id }}" data-station="{{ s.number }}" aria-label="沿用第 {{ s.number }} 關">{{ icon("keep") }}沿用</button>{% endif %}
+{% if s.reask %}<button class="lm-btn lm-btn--line" data-variant="quiet" type="button" data-dec-action="reask" data-card="{{ v.card_id }}" data-station="{{ s.number }}" data-later="{{ s.later|join(',') }}" aria-label="重問第 {{ s.number }} 關">{{ icon("undo") }}重問這一關</button>{% endif %}
+</div>
+{% endif %}
+<p class="ch-error ch-dec__error" role="alert" data-dec-error hidden></p>
+</div>
+</li>
+{% endfor %}
+</ol>
+{% if v.writable %}
+<div class="ch-dec__foot">
+<span style="font-weight: 600">六關都選好，沒有要重確認的</span>
+<button class="lm-btn" data-variant="primary" type="button" data-action="write-from-card" data-card="{{ v.card_id }}">{{ icon("pencil") }}照這張編輯卡寫稿</button>
+</div>
+{% endif %}
+<p class="s0-small" style="margin: 8px 0 0">寫稿只照這張卡。舊的答案不會刪掉：改過的那張卡留著原本那一行。點選的答案、「沿用」、「重問」都由系統直接寫進決策紀錄，這裡立刻變，再通知 agent 往下問；只有標「從你打的字整理」的，是 agent 看了你打的字之後判斷寫的。</p>
+{%- endmacro -%}

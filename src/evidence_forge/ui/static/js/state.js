@@ -10,6 +10,8 @@ export function createState() {
   return {
     // 每張工單最新的 ef_job 事件
     jobs: {},
+    // 每張編輯卡最新的 ef_card 事件：{ seq, events（決策紀錄的筆數）, card }
+    cards: {},
     // Pi 的狀態：{state, reason, busy, seq}
     pi: { state: "unknown", reason: null, busy: false, seq: 0 },
     // 這條連線看過的最大序號（給沒有分門別類的事件用）
@@ -22,7 +24,13 @@ export function createState() {
 
 // 連線重開：序號重算，其餘（工單、Pi 狀態）留著，現況事件會蓋過去
 export function reconnect(state) {
-  return { ...state, lastSeq: 0, jobs: mapValues(state.jobs, (job) => ({ ...job, seq: 0 })), pi: { ...state.pi, seq: 0 } };
+  return {
+    ...state,
+    lastSeq: 0,
+    jobs: mapValues(state.jobs, (job) => ({ ...job, seq: 0 })),
+    cards: mapValues(state.cards, (card) => ({ ...card, seq: 0 })),
+    pi: { ...state.pi, seq: 0 },
+  };
 }
 
 // 畫面載入時串流裡已經是結果卡的工單：之後的現況事件不用為它們重抓
@@ -55,6 +63,8 @@ function textOf(message) {
 //   live        串流中的回答文字變了（帶 text）
 //   note        要顯示的一行說明（帶 kind: "resume" | "error"、text），kind 為 "clear" 時收掉
 //   title       對話標題變了（帶 title）
+//   card        某張編輯卡變了（帶 card_id、card）；同時會有 refresh thread／panel／list
+//               （問題卡、摘要卡、決策分頁、清單都從決策紀錄長出來）
 export function reduce(state, event) {
   const effects = [];
   if (!event || typeof event !== "object") return { state, effects };
@@ -71,6 +81,23 @@ export function reduce(state, event) {
       if (job.finished && !(known && known.finished)) {
         effects.push({ type: "refresh", what: "thread" }, { type: "refresh", what: "list" }, { type: "refresh", what: "panel" });
         if (job.outcome !== "failed") effects.push({ type: "seen", job_id: job.job_id });
+      }
+      return { state: next, effects };
+    }
+    case "ef_card": {
+      // 兩道擋：序號比手上的小（同一條連線內的舊事件），或卡裡的決策紀錄筆數比手上的少（重連之後序號重算，
+      // 序號比不了，筆數還比得了：紀錄只增不改，筆數大的就是新的）
+      const known = state.cards[event.card_id];
+      const count = event.card && typeof event.card.events === "number" ? event.card.events : 0;
+      if (known && seq !== null && known.seq >= seq) return { state, effects };
+      if (known && count < known.events) return { state, effects };
+      const entry = { seq: seq ?? 0, events: count, card: event.card };
+      const next = { ...state, cards: { ...state.cards, [event.card_id]: entry } };
+      effects.push({ type: "card", card_id: event.card_id, card: event.card });
+      // 訂閱時每張卡先送一則 events: [] 的現況：筆數沒變就是重述，不用為它重抓（連上時畫面本來就會整個重抓）
+      const changed = (Array.isArray(event.events) && event.events.length > 0) || (known && count > known.events);
+      if (changed) {
+        effects.push({ type: "refresh", what: "thread" }, { type: "refresh", what: "list" }, { type: "refresh", what: "panel" });
       }
       return { state: next, effects };
     }
