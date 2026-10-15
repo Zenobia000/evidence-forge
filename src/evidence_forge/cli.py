@@ -11,7 +11,7 @@
   啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01，含 `harness/pi/` 的 Pi 有沒有裝）；同時最多跑 `--parallel` 張（預設 2）；
   重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
   還有對話主機（#85，`chat/host.py`）與給畫面的 API 和畫面本身（`chat/api.py`、`ui/pages.py`，`--chat-port`，預設 8790，也只綁 127.0.0.1；
-  瀏覽器開 `http://127.0.0.1:8790/` 就是聊天室，帳單在 `/bills`，頁面跟 API 同源）：
+  瀏覽器開 `http://127.0.0.1:8790/` 就是聊天室，帳單在 `/bills`、費用設定在 `/settings`，頁面跟 API 同源）：
   對話的 Pi 閒置 `--chat-idle-minutes`（預設 10）分鐘就關掉，`analyze` 開 `--chat-recipe`（預設 analyze）。
   `--chat-port 0` 或 `--once` 時不開對話主機。
 
@@ -27,6 +27,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
+from evidence_forge import cost_settings
 from evidence_forge.chat import api as chat_api
 from evidence_forge.chat.desk import Desk
 from evidence_forge.chat.host import ConversationHost
@@ -97,6 +98,11 @@ def _new(args: argparse.Namespace) -> int:
         return 2
     data = resolve_data_dir()
     data.ensure()
+    # 沒帶 --budget-usd 就照費用設定（設定頁可以改；沒設定檔是 US$0.5）
+    budget_usd = args.budget_usd
+    if budget_usd is None:
+        settings = cost_settings.load(data).settings
+        budget_usd = settings.rewrite_budget_usd if args.from_job else settings.analysis_budget_usd
     if args.from_job:
         job = open_job_from(
             data,
@@ -107,7 +113,7 @@ def _new(args: argparse.Namespace) -> int:
             persona=args.persona,
             genre=args.genre,
             feedback=args.feedback,
-            budget_usd=args.budget_usd,
+            budget_usd=budget_usd,
             budget_credits=args.budget_credits,
         )
         print(job.id)
@@ -121,7 +127,7 @@ def _new(args: argparse.Namespace) -> int:
             _source(args),
             goal=args.goal,
             now=taipei_now(),
-            budget_usd=args.budget_usd,
+            budget_usd=budget_usd,
             budget_credits=args.budget_credits,
             genre=args.genre,
             persona=args.persona,
@@ -246,7 +252,7 @@ def _serve(args: argparse.Namespace) -> int:
                 print(f"對話的 API 沒有啟動（埠 {args.chat_port} 被佔用？）", file=sys.stderr)
                 return 1
             print(
-                f"聊天室 http://127.0.0.1:{args.chat_port}/（帳單 /bills；API /api/conversations）；"
+                f"聊天室 http://127.0.0.1:{args.chat_port}/（帳單 /bills；費用設定 /settings；API /api/conversations）；"
                 f"analyze 開 {args.chat_recipe}；閒置 {args.chat_idle_minutes:g} 分鐘關掉對話的 Pi",
                 flush=True,
             )
@@ -304,7 +310,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     new.add_argument("--feedback", help="再改時對上一版的一句意見（跟 --from 一起用）")
     new.add_argument(
-        "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"
+        "--budget-usd",
+        type=float,
+        help="這張工單的預算（美元；預設照費用設定，分析與重構各一個數字）",
     )
     new.add_argument(
         "--budget-credits",

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Literal, cast, get_args
 from urllib.parse import urlsplit
 
+from evidence_forge import cost_settings
+from evidence_forge.budget import usd_to_micros
 from evidence_forge.convkey import Principal, parse_principal
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.aliases import Alias, load_aliases
@@ -44,8 +46,9 @@ class GatewayConfig:
     # 雲端金鑰在 <secrets_dir>/anthropic、<secrets_dir>/tavily（ADR-0014）；要用才讀
     secrets_dir: Path = field(default_factory=resolve_secrets_dir)
     prices: Mapping[str, Price] = field(default_factory=load_prices)
-    # 每月美元上限，依 Asia/Taipei 的日曆月（Q-30、NFR-COST-01）
-    monthly_cap_usd: float = 10.0
+    # 每月美元上限的覆蓋值（環境變數 EF_MONTHLY_BUDGET_USD，給測試與 CI）。None 是照設定檔
+    # （`$EF_DATA/settings/costs.json`，沒有檔就不設每月上限，ADR-0027 §3.6）；用 `monthly_cap_micros()` 讀
+    monthly_cap_override_usd: float | None = None
     fault: Fault | None = None
     # 等後端回應的上限（秒）；本機模型冷啟動要 75 秒（#10 第 6 題）
     backend_timeout_s: float = 600.0
@@ -56,6 +59,13 @@ class GatewayConfig:
     # 每個對話同一時間最多幾張工單在跑（排隊中也算），超過就拒絕開單（ADR-0021 §3.4）
     chat_max_running_jobs: int = 1
     clock: Callable[[], datetime] = _utc_now
+
+    def monthly_cap_micros(self) -> int | None:
+        """這一刻的每月上限（微美元）；None 是不設。每次都重讀設定檔：改了設定不用重開 `ef serve`。"""
+        if self.monthly_cap_override_usd is not None:
+            return usd_to_micros(self.monthly_cap_override_usd)
+        cap = cost_settings.load(self.data).settings.monthly_cap_usd
+        return usd_to_micros(cap) if cap is not None else None
 
     def backoff_delay(self, retry_after: str | None, attempt: int) -> float:
         """第 `attempt` 次（從 0 算）收到 429 之後等幾秒：照後端的 `retry-after`（秒）；
@@ -85,7 +95,6 @@ def config_from_env(
         raise ValueError(
             f"EF_GATEWAY_FAULT 只能是 {'、'.join(get_args(Fault))}：{fault}"
         )
-    cap = environ.get("EF_MONTHLY_BUDGET_USD", "").strip()
     running = environ.get("EF_CHAT_MAX_RUNNING_JOBS", "").strip()
     return GatewayConfig(
         data=data,
@@ -99,7 +108,7 @@ def config_from_env(
             "EF_TAVILY_URL", environ.get("EF_TAVILY_URL", ""), "https://api.tavily.com"
         ),
         secrets_dir=resolve_secrets_dir(environ),
-        monthly_cap_usd=_monthly_cap(cap) if cap else 10.0,
+        monthly_cap_override_usd=cost_settings.env_monthly_cap(environ),
         fault=cast(Fault, fault) if fault else None,
         chat_max_running_jobs=_positive_int("EF_CHAT_MAX_RUNNING_JOBS", running)
         if running
@@ -137,16 +146,6 @@ def _positive_int(name: str, value: str) -> int:
     if number < 1:
         raise ValueError(f"{name} 要是正整數：{value}")
     return number
-
-
-def _monthly_cap(value: str) -> float:
-    try:
-        cap = float(value)
-    except ValueError:
-        raise ValueError(f"EF_MONTHLY_BUDGET_USD 要是美元金額：{value}") from None
-    if not 0 <= cap < float("inf"):
-        raise ValueError(f"EF_MONTHLY_BUDGET_USD 要是 0 以上的有限金額：{value}")
-    return cap
 
 
 def require_active_key(header: str | None, stages: ActiveStages) -> Principal:

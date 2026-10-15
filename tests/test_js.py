@@ -15,7 +15,7 @@ JS_TESTS = sorted((Path(__file__).parent / "js").glob("*.test.mjs"))
 
 def test_there_are_js_tests_to_run() -> None:
     # 擋住「路徑改了、glob 找不到、底下的測試變空轉」
-    assert {p.name for p in JS_TESTS} >= {"state.test.mjs", "progress.test.mjs", "compose.test.mjs"}
+    assert {p.name for p in JS_TESTS} >= {"state.test.mjs", "progress.test.mjs", "compose.test.mjs", "settings.test.mjs"}
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="沒有 node：前端的純邏輯測試跳過（用 nvm 裝 node）")

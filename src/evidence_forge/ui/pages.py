@@ -3,7 +3,9 @@
 | 路徑 | 做什麼 |
 | :--- | :--- |
 | `GET /`、`GET /c/<對話 id>` | 聊天室外框：三欄。內容由 `static/js/app.js` 依下面的片段與 API 填 |
-| `GET /bills?month=2026-10` | 帳單：伺服器整頁產生，沒有前端狀態 |
+| `GET /bills?month=2026-10` | 帳單：伺服器整頁產生，沒有前端狀態；頂部寫每月上限（未設，或還剩多少） |
+| `GET /settings` | 費用設定（#115）：這個月花了多少、各供應商後台的連結、每月上限與預設預算的表單 |
+| `POST /api/settings/costs` | 存費用設定：`{"monthly_cap_usd": 數字或 null, "analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd"}`，只給要改的也行 → `{"settings", "changes"}`；不合法 400 |
 | `GET /ui/list?current=<id>` | 對話清單（HTML 片段） |
 | `GET /ui/c/<id>/thread` | 對話串流（HTML 片段）：Pi 的完整紀錄加工單；Pi 接不回來回 503 的錯誤片段 |
 | `GET /ui/c/<id>/panel?tab=report｜article｜cost&v=<工單 id>&diff=1` | 右側面板（HTML 片段） |
@@ -18,6 +20,7 @@
 import asyncio
 import base64
 import binascii
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,13 +32,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from evidence_forge import cost_settings
 from evidence_forge.chat.desk import MAX_FILE_CHARS
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound
 from evidence_forge.chat.pi_rpc import PiExited
 from evidence_forge.extract import ExtractError, pdf_to_text
 from evidence_forge.models import Recipe
 from evidence_forge.paths import DataDir
-from evidence_forge.ui import artifacts, bills, thread
+from evidence_forge.ui import artifacts, bills, costs, thread
 from evidence_forge.ui.format import clock as format_clock
 from evidence_forge.ui.format import format_usd, month_day_clock, relative_day
 
@@ -338,16 +342,22 @@ def install(
             return PlainTextResponse(view.error, status_code=404)
         return PlainTextResponse(view.text, media_type="text/markdown; charset=utf-8")
 
+    async def nav_count(moment: datetime) -> int:
+        """導覽列「有新結果」的數字；對話清單讀不到就當 0。"""
+        try:
+            found = await asyncio.to_thread(summaries)
+        except OSError:
+            found = []
+        return new_count(list_rows(found, None, moment))
+
     @app.get("/bills", response_class=HTMLResponse)
     async def bills_page(request: Request, month: str | None = None) -> HTMLResponse:
         moment = clock()
         chosen = bills.parse_month(month, moment)
         view = await asyncio.to_thread(bills.month_view, data, recipe_map, chosen, now=moment)
-        try:
-            found = await asyncio.to_thread(summaries)
-        except OSError:
-            found = []
-        count = new_count(list_rows(found, None, moment))
+        state = await asyncio.to_thread(cost_settings.effective, data, os.environ)
+        cap = costs.cap_status(state, view.total_usd, current_month=chosen == bills.month_of(moment))
+        count = await nav_count(moment)
         return page(
             request,
             "bills.html",
@@ -355,10 +365,49 @@ def install(
                 "nav": "bills",
                 "new_count": count,
                 "view": view,
+                "cap": cap,
                 "page_title": (f"({count}) " if count else "") + "Evidence Forge・帳單",
                 "usd": format_usd,
             },
         )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page(request: Request) -> HTMLResponse:
+        moment = clock()
+        month = bills.month_of(moment)
+        view = await asyncio.to_thread(bills.month_view, data, recipe_map, month, now=moment)
+        state = await asyncio.to_thread(cost_settings.effective, data, os.environ)
+        count = await nav_count(moment)
+        return page(
+            request,
+            "settings.html",
+            {
+                "nav": "settings",
+                "new_count": count,
+                "month": month,
+                "spent_usd": view.total_usd,
+                "cap": costs.cap_status(state, view.total_usd, current_month=True),
+                "settings": state.loaded.settings,
+                "consoles": costs.CONSOLES,
+                "env_name": cost_settings.ENV_MONTHLY_CAP,
+                "page_title": (f"({count}) " if count else "") + "Evidence Forge・設定",
+            },
+        )
+
+    @app.post("/api/settings/costs")
+    async def save_costs(request: Request) -> Response:
+        # 跨站與表單偷送由 `chat/api.py` 的中介層擋（只收本機、同源、application/json）
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "請求內容要是 JSON"}, status_code=400)
+        current = await asyncio.to_thread(cost_settings.load, data)
+        try:
+            new = costs.parse_update(body, current.settings)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        changes = await asyncio.to_thread(cost_settings.save, data, new, now=clock())
+        return JSONResponse({"settings": new.model_dump(), "changes": changes})
 
     @app.post("/api/extract")
     async def extract(request: Request) -> Response:

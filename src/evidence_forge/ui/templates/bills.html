@@ -15,6 +15,7 @@
 <div>
 <h1 class="s0-h1">帳單</h1>
 <p class="s0-sub">資料來自模型閘道的帳本，每一筆呼叫都記在裡面，包含 agent 在對話裡回話的花費。</p>
+<p class="s0-sub" data-cap>{% if cap.cap_usd is none %}未設每月上限{% else %}每月上限 {{ usd(cap.cap_usd) }}{% if cap.left_usd is not none %}，這個月剩 {{ usd(cap.left_usd) }}{% endif %}{% if cap.from_env %}（環境變數給的）{% endif %}{% endif %}{% if cap.problem %}（設定檔讀不懂，先用預設值）{% endif %}・<a href="/settings">費用設定</a></p>
 </div>
 <div class="s0-row" role="group" aria-label="切換月份">
 <a class="lm-btn lm-btn--line" data-variant="quiet" href="/bills?month={{ view.previous_month }}" aria-label="上一個月">{{ icon("left") }}</a>

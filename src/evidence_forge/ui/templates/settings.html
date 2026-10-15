@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{# 費用設定（票 115、ADR-0027 §3.6）：每月上限可設可不設、單張工單的預設預算、生圖每張的上限。
+   存的時候由 /static/js/settings.js 送 JSON 到 /api/settings/costs（中介層只收本機同源的 application/json）。 #}
+{% macro money(name, value, hint) %}
+<div class="s0-field">
+<label for="f-{{ name }}">{{ caller() }}</label>
+<div class="s0-row"><span class="s0-mono">US$</span><input id="f-{{ name }}" type="number" name="{{ name }}" value="{{ value }}" min="0" step="0.01" inputmode="decimal" required style="max-width: 160px"></div>
+<span class="s0-field__hint">{{ hint }}</span>
+</div>
+{% endmacro %}
+{% block content %}
+<main class="s0-main" style="max-width: 880px; margin: 0 auto">
+<div class="s0-pagehead">
+<div>
+<h1 class="s0-h1">費用設定</h1>
+<p class="s0-sub">改了馬上生效，不用重開 <span class="s0-mono">ef serve</span>。每次改動都記在資料目錄的 <span class="s0-mono">settings/changes.jsonl</span>。</p>
+</div>
+</div>
+
+{% if cap.problem %}
+<div class="s0-alert" role="alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">設定檔讀不懂，現在用的是預設值</p><p class="s0-small" style="margin: 0">{{ cap.problem }}。下面按一次「存設定」就會寫回一份好的。</p></div></div>
+{% endif %}
+
+<div class="s0-stats" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+<div class="s0-panel s0-stat"><span class="s0-stat__label">這個月（{{ month }}）花了</span><span class="s0-stat__num">{{ usd(spent_usd) }}</span><span class="s0-stat__note">模型、搜尋、對話本身都算，跟<a href="/bills">帳單</a>同一份帳本</span></div>
+<div class="s0-panel s0-stat" data-cap><span class="s0-stat__label">每月上限</span>
+{% if cap.cap_usd is none %}<span class="s0-stat__num">未設每月上限</span><span class="s0-stat__note">只靠每張工單、每個對話自己的預算擋，加上雲端平台後台的上限</span>
+{% else %}<span class="s0-stat__num">{{ usd(cap.cap_usd) }}</span><span class="s0-stat__note">這個月剩 {{ usd(cap.left_usd) }}{% if cap.from_env %}；這個數字是環境變數 <span class="s0-mono">{{ env_name }}</span> 給的，蓋過下面的設定{% endif %}</span>{% endif %}
+</div>
+</div>
+
+<section class="s0-panel" aria-labelledby="consoles-h" style="margin-bottom: 16px">
+<h2 class="s0-h2" id="consoles-h">真正的硬上限設在雲端平台</h2>
+<p class="s0-small" style="margin: 0 0 12px">EF 的上限擋的是自己送出去的請求；金鑰外流或別的程式在用時，只有平台自己的後台擋得住。每個平台都去設一次。</p>
+<ul style="margin: 0; padding-left: 20px; display: grid; gap: 6px">
+{% for c in consoles %}<li><a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.name }} 後台</a> <span class="s0-small">— {{ c.what }}</span></li>
+{% endfor %}</ul>
+</section>
+
+<form class="s0-panel" id="cost-settings" aria-labelledby="form-h" novalidate>
+<h2 class="s0-h2" id="form-h">EF 自己的上限</h2>
+<fieldset class="s0-field" style="border: 0; padding: 0; margin: 0 0 20px">
+<legend class="s0-field__label" style="padding: 0; margin-bottom: 6px">每月上限</legend>
+<label class="s0-row"><input type="radio" name="cap_mode" value="none"{% if settings.monthly_cap_usd is none %} checked{% endif %}> 不設</label>
+<label class="s0-row"><input type="radio" name="cap_mode" value="set"{% if settings.monthly_cap_usd is not none %} checked{% endif %}> 設上限 <span class="s0-mono">US$</span><input type="number" name="monthly_cap_usd" value="{{ settings.monthly_cap_usd if settings.monthly_cap_usd is not none else '' }}" min="0" step="0.01" inputmode="decimal" aria-label="每月上限（美元）" style="max-width: 160px"></label>
+<span class="s0-field__hint">依台北時間的日曆月算，模型、搜尋、生圖、對話全部算進去；到了上限，工單停下並標「本月額度用完」。</span>
+</fieldset>
+<div style="display: grid; gap: 20px; margin-bottom: 20px">
+{% call money("analysis_budget_usd", settings.analysis_budget_usd, "對話開的分析、ef new 沒帶 --budget-usd 時用這個；已經開的單不受影響。") %}分析每張工單的預算{% endcall %}
+{% call money("rewrite_budget_usd", settings.rewrite_budget_usd, "寫稿（重構、再改）每張工單的預算。") %}寫稿每張工單的預算{% endcall %}
+{% call money("image_cap_usd", settings.image_cap_usd, "封面生圖一張最多花多少；配圖接上生圖之後才會用到。") %}生圖每張的上限{% endcall %}
+</div>
+<div class="s0-row">
+<button class="lm-btn" data-variant="primary" type="submit">存設定</button>
+<span class="s0-small" role="status" aria-live="polite" data-result></span>
+</div>
+</form>
+</main>
+<script type="module" src="/static/js/settings.js"></script>
+{% endblock %}

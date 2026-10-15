@@ -24,6 +24,8 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
+from evidence_forge import cost_settings
+from evidence_forge.cost_settings import CostSettings
 from evidence_forge.gateway import ledger
 from evidence_forge.gateway.aliases import load_aliases
 from evidence_forge.gateway.app import ActiveStages, GatewayConfig, JobBoard, create_app
@@ -383,6 +385,8 @@ def test_投入帳本的花費讓本月額度不夠_回_budget_exceeded_原因�
             status="ok",
         ),
     )
+    # 每月上限預設不設（ADR-0027 §3.6）；這裡在設定檔設 US$10
+    cost_settings.save(data, CostSettings(monthly_cap_usd=10.0), now=NOW)
     job_id = _job(data, budget_usd=5.0)
     key = JobKey(job_id, "echo", 1)
     with gateway(_active(key), clock=lambda: NOW) as gw:
@@ -1185,16 +1189,88 @@ def test_故障注入的值只認四種(data: DataDir) -> None:
         config_from_env(data, {"EF_GATEWAY_FAULT": "meteor"})
 
 
-def test_月上限與金鑰位置從環境變數讀(data: DataDir, tmp_path: Path) -> None:
+@pytest.mark.promise("FR-LG-03")
+def test_月上限的環境變數蓋過設定檔_金鑰位置從環境變數讀(data: DataDir, tmp_path: Path) -> None:
     from evidence_forge.gateway.config import config_from_env
 
+    cost_settings.save(data, CostSettings(monthly_cap_usd=20.0), now=NOW)
     config = config_from_env(
         data, {"EF_MONTHLY_BUDGET_USD": "3.5", "EF_SECRETS": str(tmp_path / "s")}
     )
-    assert (config.monthly_cap_usd, config.secrets_dir) == (3.5, tmp_path / "s")
+    assert (config.monthly_cap_micros(), config.secrets_dir) == (3_500_000, tmp_path / "s")
     default = config_from_env(data, {})
-    assert default.monthly_cap_usd == 10.0
+    assert default.monthly_cap_micros() == 20_000_000
     assert default.secrets_dir == Path("~/.config/evidence-forge/secrets").expanduser()
+
+
+@pytest.mark.promise("FR-LG-03")
+@pytest.mark.parametrize("value", ["十塊", "-1", "inf", "nan"])
+def test_月上限的環境變數不是_0_以上的有限金額就不啟動(data: DataDir, value: str) -> None:
+    from evidence_forge.gateway.config import config_from_env
+
+    with pytest.raises(ValueError, match="EF_MONTHLY_BUDGET_USD"):
+        config_from_env(data, {"EF_MONTHLY_BUDGET_USD": value})
+
+
+@pytest.mark.promise("FR-LG-03", "NFR-COST-01")
+def test_沒有設定檔就不設每月上限_本月花很多也不擋_只看工單預算(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # 這個月已經花了 US$500（遠超過舊的預設 US$10）
+    append_intake(
+        data,
+        IntakeEntry(ts=NOW, kind="fetch", url="https://example.com/a", cost_usd=500.0, latency_ms=10, status="ok"),
+    )
+    job_id = _job(data, budget_usd=1.0)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key), clock=lambda: NOW) as gw:
+        response = _post(gw.url, key, _body("strong"))
+    assert response.status_code == 200
+    assert len(anthropic.received) == 1
+
+
+@pytest.mark.promise("FR-LG-03", "NFR-COST-01")
+def test_設定頁改了每月上限_閘道不用重開就照新的擋(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    append_intake(
+        data,
+        IntakeEntry(ts=NOW, kind="fetch", url="https://example.com/a", cost_usd=9.9, latency_ms=10, status="ok"),
+    )
+    job_id = _job(data, budget_usd=5.0)
+    key = JobKey(job_id, "echo", 1)
+    with gateway(_active(key), clock=lambda: NOW) as gw:
+        assert _post(gw.url, key, _body("strong", "one")).status_code == 200
+        cost_settings.save(data, CostSettings(monthly_cap_usd=10.0), now=NOW)
+        refused = _post(gw.url, key, _body("strong", "two"))
+        stop = gw.board.budget_stop(key)
+        cost_settings.save(data, CostSettings(monthly_cap_usd=None), now=NOW)
+        again = _post(gw.url, key, _body("strong", "three"))
+    assert refused.status_code == 400
+    assert refused.json()["error"]["type"] == "budget_exceeded"
+    assert stop == "month"
+    assert again.status_code == 200
+    assert len(anthropic.received) == 2
+
+
+@pytest.mark.promise("FR-LG-03", "NFR-COST-01")
+def test_設定檔壞掉_閘道不當掉_照預設值不設每月上限(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    broken = data.root / "settings" / "costs.json"
+    broken.parent.mkdir(parents=True)
+    broken.write_text('{"monthly_cap_usd": "很多"}', encoding="utf-8")
+    key = JobKey(_job(data, budget_usd=1.0), "echo", 1)
+    with gateway(_active(key), clock=lambda: NOW) as gw:
+        response = _post(gw.url, key, _body("strong"))
+    assert response.status_code == 200
+    assert len(anthropic.received) == 1
 
 
 # --- 金鑰不外洩 ---------------------------------------------------------------
