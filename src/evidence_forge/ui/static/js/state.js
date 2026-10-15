@@ -93,9 +93,9 @@ export function reduce(state, event) {
       if (known && count < known.events) return { state, effects };
       const entry = { seq: seq ?? 0, events: count, card: event.card };
       const next = { ...state, cards: { ...state.cards, [event.card_id]: entry } };
-      effects.push({ type: "card", card_id: event.card_id, card: event.card });
       // 訂閱時每張卡先送一則 events: [] 的現況：筆數沒變就是重述，不用為它重抓（連上時畫面本來就會整個重抓）
       const changed = (Array.isArray(event.events) && event.events.length > 0) || (known && count > known.events);
+      effects.push({ type: "card", card_id: event.card_id, card: event.card, changed: Boolean(changed) });
       if (changed) {
         effects.push({ type: "refresh", what: "thread" }, { type: "refresh", what: "list" }, { type: "refresh", what: "panel" });
       }

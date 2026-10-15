@@ -336,6 +336,20 @@ ins.ch-ins { text-decoration: none; background: var(--diff-insert); }
 .ch-dec__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 12px; border-top: 1px solid var(--color-border-subtle); }
 .ch-dec__foot .lm-btn { height: 40px; }
 
+/* 「其他」的輸入框在選項那一列的外面（label 只包單選鈕與它的字）：接在那一列下面，縮進到文字的位置 */
+.ch-qopts > li { display: flex; flex-direction: column; gap: 6px; }
+.ch-qopts > li > .ch-qopt__other { margin: 0 0 0 44px; width: calc(100% - 44px); }
+.ch-qset:focus-visible, .ch-dec__item:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; border-radius: var(--radius-md); }
+/* 決策分頁：這一關問過的紀錄（舊的組與舊的答案） */
+.ch-dec__hist ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.ch-dec__hist ul { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.ch-dec__hist-h { margin: 0; }
+.ch-dec__hist li[data-current] > .ch-dec__hist-h b { text-decoration: underline; text-underline-offset: 3px; }
+/* 手機寬度才用的收合：寬螢幕一律展開，看不到開關與一行摘要 */
+.ch-dec__line { display: none; margin: 0; font-size: 13px; color: var(--color-text-secondary); }
+.ch-dec__fold-sum { display: none; list-style: none; cursor: pointer; }
+.ch-dec__fold-sum::-webkit-details-marker { display: none; }
+
 @media (max-width: 640px) {
   /* 手機：沒有鍵盤提示；按鈕與選項整列至少 44px；問題卡貼齊對話的邊 */
   .ch-keys { display: none; }
@@ -345,4 +359,8 @@ ins.ch-ins { text-decoration: none; background: var(--diff-insert); }
   .ch-qbar .s0-row { flex: 1 1 auto; justify-content: flex-end; }
   .ch-qbar .s0-row .lm-btn[data-q-action="next"] { flex: 1 1 auto; }
   .ch-qset__head { flex-direction: row; }
+  .ch-dec__line { display: block; }
+  .ch-dec__fold-sum { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
+  .ch-dec__fold[open] > .ch-dec__fold-sum svg { transform: rotate(90deg); }
+  .ch-dec__more summary { min-height: 44px; }
 }

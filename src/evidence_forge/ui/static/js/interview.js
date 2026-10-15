@@ -145,7 +145,9 @@ export function keyAction(station, event) {
   const typing = target === "text" || target === "note";
   if (key === "Enter") {
     if (target === "button") return none; // 按鈕自己會被按下去
-    if (target === "note" && !(event.ctrlKey || event.metaKey)) return none; // 備註是多行
+    // 輸入框裡的 Enter 是打字（「其他」的輸入框也一樣：打字中不能因為按到 Enter 就把整關送出）；
+    // 要確認就按按鈕，或 Ctrl／Cmd + Enter
+    if (typing && !(event.ctrlKey || event.metaKey)) return none;
     if (event.shiftKey) return none;
     return { type: "confirm", prevent: true };
   }
@@ -175,6 +177,47 @@ export function describe(card, labels) {
 // 草稿：整關送出前換頁、重抓對話串流時不能掉。key 是 `${卡 id}:${第幾關}`
 export function draftKey(cardId, stationNumber) {
   return `${cardId}:${stationNumber}`;
+}
+
+// ── 草稿與送出中的記憶（畫面重抓對話串流時，卡片會整張換掉重長）─────────────────────────
+// store：{ drafts: Map(key → { station, labels }), inflight: Set(key) }。key 是 draftKey()。
+
+export function createStore() {
+  return { drafts: new Map(), inflight: new Set() };
+}
+
+// 畫面長出一張卡：伺服器給預設值 `fresh`；有草稿（而且問題卡還是同一組）就用草稿；正在送出的照樣鎖著
+export function mountStation(store, key, fresh, labels) {
+  let station = restoreDraft(fresh, store.drafts.get(key)?.station);
+  if (store.inflight.has(key)) station = setBusy(station, true);
+  store.drafts.set(key, { station, labels });
+  return station;
+}
+
+// 存草稿：輸入法選字中不存（組字中的字還不是答案）。回傳有沒有存
+export function saveDraft(store, key, station, labels, { composing = false } = {}) {
+  if (composing) return false;
+  store.drafts.set(key, { station, labels });
+  return true;
+}
+
+// 開始送出：回 false 表示這一關已經在送了（重複按），呼叫端不能再送
+export function beginSubmit(store, key) {
+  if (store.inflight.has(key)) return false;
+  store.inflight.add(key);
+  return true;
+}
+
+// 送出結束。recorded：寫進紀錄了 → 草稿不用留（畫面重抓之後這一關是摘要卡）；失敗草稿留著
+export function endSubmit(store, key, { recorded }) {
+  store.inflight.delete(key);
+  if (recorded) store.drafts.delete(key);
+}
+
+// 畫面上已經不在的卡片（整關送出收成摘要、被重問換掉）：草稿與送出中的記憶都不用留
+export function pruneStore(store, aliveKeys) {
+  const alive = new Set(aliveKeys);
+  for (const key of [...store.drafts.keys()]) if (!alive.has(key)) store.drafts.delete(key);
 }
 
 // 重抓對話串流後，伺服器給的是預設值：有草稿就用草稿（只要問題卡還是同一組）

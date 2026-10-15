@@ -9,19 +9,24 @@
 import {
   KIND,
   back,
+  beginSubmit,
   cardRequest,
   confirm,
   countText,
   createStation,
+  createStore,
   decisionFailure,
   describe,
   draftKey,
+  endSubmit,
   failureText,
   keyAction,
+  mountStation,
   noteBox,
   primaryLabel,
+  pruneStore,
   reaskNotice,
-  restoreDraft,
+  saveDraft,
   select,
   setBusy,
   setNote,
@@ -75,15 +80,16 @@ export function targetKind(node) {
 //   conversation()      目前的對話 id
 //   post(url, body)     送 JSON，失敗丟 Error（訊息是伺服器給的原因）
 //   fragment(url)       抓 HTML 片段 → {status, html}
-//   afterWrite()        寫進決策紀錄之後：重抓對話串流、決策分頁、清單
+//   afterWrite()        寫進決策紀錄之後：重抓對話串流、決策分頁、清單；回傳的 Promise 在都換好之後才結束
+//   announce(text)      給螢幕閱讀器念一句（放進 #ch-live）
 //   startWriting(cardId)  最後確認之後開始寫稿（票 110 接；現在是預留的位置）
 //   revealChat()        窄螢幕時把蓋住對話的面板收起來
 //   confirmHost         放最後確認卡的容器
 //   panel               右側面板
 export function initInterview(env) {
   const states = new WeakMap(); // 卡片元素 → { station, labels }
-  const drafts = new Map(); // draftKey → { station, labels }
-  const inflight = new Set(); // 正在送出的 draftKey
+  const store = createStore(); // 草稿與送出中的記憶（邏輯在 interview.js）
+  let composing = false; // 輸入法正在組字：不存草稿、不重畫輸入框
 
   const keyOf = (qset) =>
     qset.hasAttribute("data-confirm") ? `confirm:${qset.dataset.card}` : draftKey(qset.dataset.card, qset.dataset.station);
@@ -114,7 +120,7 @@ export function initInterview(env) {
   function commit(qset, station, { focus = false } = {}) {
     const entry = states.get(qset);
     states.set(qset, { ...entry, station });
-    drafts.set(keyOf(qset), { station, labels: entry.labels });
+    saveDraft(store, keyOf(qset), station, entry.labels, { composing });
     render(qset, { focus });
     paintDrafts();
   }
@@ -123,10 +129,8 @@ export function initInterview(env) {
     const fresh = createStation(readSpecs(qset));
     const labels = readLabels(qset);
     const key = keyOf(qset);
-    let station = restoreDraft(fresh, drafts.get(key)?.station);
-    if (inflight.has(key)) station = setBusy(station, true);
+    const station = mountStation(store, key, fresh, labels);
     states.set(qset, { station, labels });
-    drafts.set(key, { station, labels });
     render(qset);
   }
 
@@ -219,7 +223,7 @@ export function initInterview(env) {
 
   function paintDrafts() {
     for (const item of $$(".ch-dec__item[data-asking]", env.panel)) {
-      const draft = drafts.get(draftKey(item.dataset.card, item.dataset.station));
+      const draft = store.drafts.get(draftKey(item.dataset.card, item.dataset.station));
       if (!draft) continue;
       const { station, labels } = draft;
       const badge = $("[data-asking-badge]", item);
@@ -274,8 +278,7 @@ export function initInterview(env) {
   function mountAll(root = document) {
     $$(".ch-qset[data-qset]", root).forEach(mount);
     // 已經不在畫面上的卡片（整關已經送出、收成摘要）：草稿不用留
-    const alive = new Set($$(".ch-qset[data-qset]").map(keyOf));
-    for (const key of [...drafts.keys()]) if (!alive.has(key)) drafts.delete(key);
+    pruneStore(store, $$(".ch-qset[data-qset]").map(keyOf));
     paintDrafts();
   }
 
@@ -285,23 +288,36 @@ export function initInterview(env) {
     const key = keyOf(qset);
     const number = stationNumber(qset);
     const count = payload.answers.length;
-    inflight.add(key);
+    if (!beginSubmit(store, key)) return; // 這一關已經在送了：重複按不再送第二次
     commit(qset, setBusy(current(qset), true));
     showError(qset, "");
+    let recorded = false;
     try {
       const request = cardRequest(env.conversation(), qset.dataset.card, number, "submit", payload);
       await env.post(request.url, request.body);
-      inflight.delete(key);
-      drafts.delete(key);
-      // 寫進紀錄了：串流重抓之後這一關就是摘要卡（標「點選」），不用等 agent 回話
-      env.afterWrite();
+      recorded = true;
     } catch (error) {
-      inflight.delete(key);
       const live = liveQset(key) ?? qset;
       if (states.has(live)) commit(live, setBusy(current(live), false));
       const text = failureText(number, count, error.message);
       showError(live, text.what, text.help);
+    } finally {
+      // 寫進紀錄了也先不解鎖：卡片要等串流重抓、換成摘要卡才算完，中間再按一次會多記一批（那一關變「改過」）
+      if (!recorded) endSubmit(store, key, { recorded });
     }
+    if (!recorded) return;
+    try {
+      await env.afterWrite();
+    } finally {
+      endSubmit(store, key, { recorded });
+      // 重抓之後這一關還是問題卡（重抓失敗、或紀錄沒照預期變）：解鎖，答案還在
+      const stale = liveQset(key);
+      if (stale && states.has(stale)) commit(stale, setBusy(current(stale), false));
+    }
+    // 寫進紀錄的這一關現在是摘要卡：焦點移過去，念一句
+    const summary = $$(`.ch-qset[data-answered][data-station="${number}"][data-card="${CSS.escape(qset.dataset.card)}"]`).at(-1);
+    summary?.focus();
+    env.announce(`第 ${number} 關已記下`);
   }
 
   function confirmStep(qset) {
@@ -359,12 +375,24 @@ export function initInterview(env) {
     if (pointerChoice && target.dataset.kind === KIND.other) $("[data-other]", fieldset)?.focus();
   });
 
-  document.addEventListener("input", (event) => {
-    const target = event.target;
+  // 輸入法組字中（注音、拼音選字）：字還不是答案，不存草稿、不重畫輸入框；選定（compositionend）才算
+  function takeText(target) {
     const qset = qsetOf(target);
     if (!qset || !states.has(qset)) return;
     if (target.matches("[data-other]")) commit(qset, setOther(current(qset), target.value));
     else if (target.matches("[data-note-input]")) commit(qset, setNote(current(qset), target.value));
+  }
+
+  document.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  document.addEventListener("compositionend", (event) => {
+    composing = false;
+    takeText(event.target);
+  });
+  document.addEventListener("input", (event) => {
+    if (composing || event.isComposing) return;
+    takeText(event.target);
   });
 
   document.addEventListener("click", (event) => {
@@ -414,12 +442,16 @@ export function initInterview(env) {
     try {
       const request = cardRequest(env.conversation(), button.dataset.card, station, action);
       await env.post(request.url, request.body);
-      // 這裡立刻變：重抓決策分頁，對話裡會多一行系統小字，agent 接著往下問
-      env.afterWrite();
     } catch (error) {
       buttons.forEach((b) => (b.disabled = false));
       decisionError(item, decisionFailure(station, error.message));
+      return;
     }
+    // 這裡立刻變：重抓決策分頁，對話裡會多一行系統小字，agent 接著往下問
+    await env.afterWrite();
+    // 面板重畫之後，焦點回到同一關（不然鍵盤使用者會掉回頁首）
+    const again = $(`.ch-dec__item[data-card="${CSS.escape(button.dataset.card)}"][data-station="${CSS.escape(station)}"]`, env.panel);
+    again?.focus();
   }
 
   function askBeforeReask(button) {
@@ -442,8 +474,23 @@ export function initInterview(env) {
     $("button", box).focus();
   }
 
+  // 最後確認卡跟著編輯卡走：卡一變（重問、沿用、agent 又寫了一筆）它講的就不是現在的卡了，不能留著
+  function clearConfirm() {
+    confirmRequest++; // 還在路上的確認卡也不要了
+    env.confirmHost.replaceChildren();
+  }
+
+  // 某張卡的決策紀錄長到 count 筆：比確認卡手上那份新，就把確認卡收掉
+  function dropStaleConfirm(cardId, count) {
+    const qset = $(".ch-qset[data-confirm]", env.confirmHost);
+    if (qset && qset.dataset.card === cardId && Number(qset.dataset.events) < count) clearConfirm();
+  }
+
+  let confirmRequest = 0;
   async function openWriteConfirm(cardId) {
+    const mine = ++confirmRequest;
     const { status, html } = await env.fragment(`/ui/c/${encodeURIComponent(env.conversation())}/write-confirm?card=${encodeURIComponent(cardId)}`);
+    if (mine !== confirmRequest) return; // 又按了一次，或卡已經變了：只收最新的
     env.confirmHost.innerHTML = html; // 伺服器產的片段，內容已經跳脫
     env.revealChat();
     const qset = $(".ch-qset[data-qset]", env.confirmHost);
@@ -473,5 +520,12 @@ export function initInterview(env) {
     if (write) openWriteConfirm(write.dataset.card);
   });
 
-  return { mountAll, paintDrafts, captureFocus, restoreFocus };
+  return {
+    mountAll,
+    paintDrafts,
+    captureFocus,
+    restoreFocus,
+    clearConfirm,
+    dropStaleConfirm,
+  };
 }

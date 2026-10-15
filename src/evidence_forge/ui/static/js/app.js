@@ -41,6 +41,7 @@ let state = createState();
 let source = null;
 let attachments = [];
 const view = { panelOpen: false, tab: "report", job: null, diff: false, card: null };
+let panelRequest = 0; // 面板重抓的流水號
 const PANEL_TABS = ["report", "decisions", "article", "cost"];
 const pending = []; // 剛送出、還沒進紀錄的訊息（畫面先放著）
 
@@ -147,22 +148,53 @@ function filterList() {
 
 // ── 對話串流 ─────────────────────────────────────────────────────
 
-let threadBusy = false;
+let threadRun = null; // 正在重抓的那一輪（Promise）；有的話新的要求只記一筆，等這輪結束再跑
 let threadDirty = false;
 let threadTimer = null;
+// 輸入法正在組字（注音、拼音選字）：這時把對話串流整個換掉，會打斷組字中的「其他」、備註，等組完再抓
+let composing = false;
+let threadDeferred = false;
+
+document.addEventListener("compositionstart", () => {
+  composing = true;
+});
+document.addEventListener("compositionend", () => {
+  composing = false;
+  if (threadDeferred) {
+    threadDeferred = false;
+    refreshThread();
+  }
+});
 
 function refreshThread() {
   clearTimeout(threadTimer);
   threadTimer = setTimeout(loadThread, 120);
 }
 
-async function loadThread() {
-  if (!conversationId) return;
-  if (threadBusy) {
-    threadDirty = true;
-    return;
+// 回傳的 Promise 在「這一次要求」的內容換好之後才結束（送出一關之後要等卡片換成摘要才解鎖，不然會多記一批）
+function loadThread() {
+  if (!conversationId) return Promise.resolve();
+  if (composing) {
+    threadDeferred = true;
+    return Promise.resolve();
   }
-  threadBusy = true;
+  if (threadRun) {
+    threadDirty = true;
+    return threadRun;
+  }
+  threadRun = (async () => {
+    do {
+      threadDirty = false;
+      await loadThreadOnce();
+    } while (threadDirty && !composing);
+    if (threadDirty) threadDeferred = true;
+  })().finally(() => {
+    threadRun = null;
+  });
+  return threadRun;
+}
+
+async function loadThreadOnce() {
   const first = !els.thread.firstChild;
   const stick = first || nearBottom();
   try {
@@ -190,12 +222,7 @@ async function loadThread() {
   } catch (error) {
     els.thread.replaceChildren(el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` })));
   } finally {
-    threadBusy = false;
     if (stick) scrollToEnd();
-    if (threadDirty) {
-      threadDirty = false;
-      refreshThread();
-    }
   }
 }
 
@@ -310,6 +337,9 @@ function applyEffects(effects) {
       if (effect.what === "thread") refreshThread();
       else if (effect.what === "list") refreshList();
       else if (effect.what === "panel" && view.panelOpen) loadPanel();
+    } else if (effect.type === "card") {
+      // 這張卡的決策紀錄比確認卡手上的新：「照這張寫」講的已經不是現在的卡
+      interview.dropStaleConfirm(effect.card_id, effect.card && typeof effect.card.events === "number" ? effect.card.events : 0);
     } else if (effect.type === "live") {
       showLive(effect.text);
     } else if (effect.type === "note") {
@@ -369,6 +399,7 @@ async function loadPanel() {
   if (view.diff) params.set("diff", "1");
   if (view.tab === "decisions" && view.card) params.set("card", view.card);
   els.panel.setAttribute("aria-busy", "true");
+  const mine = ++panelRequest;
   // 決策分頁第一次打開：先放骨架，讀編輯卡要一點時間
   if (view.tab === "decisions" && shell.dataset.tab !== "decisions" && !els.panel.hidden) {
     const body = $(".ch-panel__body", els.panel);
@@ -376,6 +407,8 @@ async function loadPanel() {
   }
   try {
     const { html } = await fragment(`/ui/c/${encodeURIComponent(conversationId)}/panel?${params}`);
+    // 同時有好幾次重抓（點分頁、事件、按完沿用）：只收最新那一次的回應，舊的晚到不能蓋掉新的
+    if (mine !== panelRequest) return;
     const body = $(".ch-panel__body", els.panel);
     const top = body ? body.scrollTop : 0;
     els.panel.innerHTML = html;
@@ -385,16 +418,26 @@ async function loadPanel() {
     // 伺服器選了哪一版就記哪一版
     const picked = $("[data-version]", els.panel);
     if (picked) view.job = picked.value;
-    const card = $("[data-card-select]", els.panel);
-    if (card) view.card = card.value;
+    foldDecisions();
     interview.paintDrafts();
   } catch (error) {
+    if (mine !== panelRequest) return;
     els.panel.replaceChildren(el("div", { class: "ch-panel__body" }, el("div", { class: "s0-alert", role: "alert" }, icon("warn"), el("div", { text: `連不到伺服器：${error.message}` }))));
   } finally {
-    els.panel.removeAttribute("aria-busy");
+    if (mine === panelRequest) els.panel.removeAttribute("aria-busy");
     syncPressed();
   }
 }
+
+// 手機寬度：決策分頁每一關收成一行摘要（點關名展開），正在問的那關與要重確認的關自己打開；寬螢幕一律展開
+const narrowQuery = window.matchMedia("(max-width: 640px)");
+function foldDecisions() {
+  for (const fold of $$(".ch-dec__fold", els.panel)) {
+    const item = fold.closest(".ch-dec__item");
+    fold.open = !narrowQuery.matches || item?.dataset.state === "asking";
+  }
+}
+narrowQuery.addEventListener("change", foldDecisions);
 
 function openPanel(tab, job = null) {
   view.tab = tab;
@@ -666,10 +709,14 @@ const interview = initInterview({
   post: postJson,
   fragment,
   // 寫進決策紀錄之後：對話串流（摘要卡、系統小字）、決策分頁、清單都重抓
-  afterWrite: () => {
-    refreshThread();
-    if (view.panelOpen) loadPanel();
-    refreshList();
+  afterWrite: async () => {
+    interview.clearConfirm();
+    clearTimeout(threadTimer);
+    await Promise.all([loadThread(), view.panelOpen ? loadPanel() : null, refreshList()]);
+  },
+  // 給螢幕閱讀器念的一句（#ch-live 是 aria-live）；視覺上看不到
+  announce: (text) => {
+    els.live.append(el("p", { class: "ch-sr", text }));
   },
   startWriting: startWritingFromCard,
   // 窄螢幕上面板是蓋住對話的抽屜：要看最後確認卡就先收起來

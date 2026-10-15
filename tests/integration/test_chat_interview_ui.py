@@ -436,6 +436,92 @@ def test_改過的答案留著原本那一行加刪除線_沒選的收起來(wor
     assert "<details" in html and "<details open" not in html
 
 
+def test_決策分頁列這一關問過的每一組問題卡與每一次答案_標出現在的(world: World) -> None:
+    cid = world.conversation()
+    card_id = world.through(cid, 1)
+    # 第 2 關：第一組問題問了、沒送出，agent 換成第二組；送出；再重問、agent 又提出第三組、送出
+    world.propose(cid, card_id, 2, [NAME_CARD], minutes=4)
+    world.propose(cid, card_id, 2, [{**NAME_CARD, "header": "標題", "question": "標題要怎麼寫？"}], minutes=5)
+    world.submit(cid, card_id, 2, minutes=6)
+    cards.reask_station(world.folder.data, cid, card_id, 2, now=at(7))
+    world.propose(cid, card_id, 2, [{**NAME_CARD, "header": "標題", "question": "標題換個問法？"}], minutes=8)
+    world.submit(cid, card_id, 2, minutes=9, picks={"標題": "「長上下文稅」"})
+
+    html = world.panel(cid).text
+    station = html.split('data-station="2"')[1].split("</li>\n</ol>")[0]
+    history = station.partition("ch-dec__hist")[2]
+
+    assert "這一關問過的紀錄 3 筆" in history
+    # 三組問題：第 1 組沒送出就換掉、第 2 組送出過（之前的答案）、第 3 組是現在的決定
+    assert "第 1 組問題" in history and "沒送出就換成別組了" in history and "命名" in history
+    assert "第 2 組問題" in history and "之前的答案" in history and "標題要怎麼寫？" in history
+    assert "第 3 組問題" in history and "現在的決定" in history and "標題換個問法？" in history
+    assert history.count("data-current") == 1
+
+
+def test_只問過一組一次答案的關不列問過的紀錄(world: World) -> None:
+    cid = world.conversation()
+    world.through(cid, 2)
+
+    assert "問過的紀錄" not in world.panel(cid).text
+
+
+def test_手機寬度的收合_每關一行摘要_展開才看到每張卡_要重確認的關按鈕不收進去(world: World) -> None:
+    cid = world.conversation()
+    card_id = world.through(cid, 3)
+    cards.reask_station(world.folder.data, cid, card_id, 1, now=at(10))
+    world.propose(cid, card_id, 1, minutes=11)
+    world.submit(cid, card_id, 1, minutes=12, picks={"文體": "trend"})
+
+    html = world.panel(cid).text
+    items = re.split(r'<li class="ch-dec__item"', html)[1:]
+    second = next(i for i in items if 'data-station="2"' in i)
+    first = next(i for i in items if 'data-station="1"' in i)
+
+    # 一行摘要：每張卡的答案用「・」接起來
+    assert re.search(r'<p class="ch-dec__line">trend・\[主題 A\]</p>', first)
+    # 問題卡收在 details 裡（預設展開，窄螢幕由 app.js 收起來）
+    assert '<details class="ch-dec__fold" open>' in second and "看每張問題卡" in second
+    # 要重確認的關：沿用、重問兩顆在 details 外面，窄螢幕收起來也看得到
+    fold_end = second.rindex("</details>")
+    assert second.index('data-dec-action="keep"') > fold_end
+    assert second.index('data-dec-action="reask"') > fold_end
+    # 選好的關：重問收在 details 裡
+    assert first.index('data-dec-action="reask"') < first.rindex("</details>")
+
+
+def test_最後確認卡帶決策紀錄的筆數_卡一變就知道過期了(world: World) -> None:
+    cid = world.conversation()
+    card_id = _writable(world, cid)
+    count = cards.read_card(world.folder.data, cid, card_id).events
+
+    html = httpx.get(f"{world.url}/ui/c/{cid}/write-confirm", params={"card": card_id}, timeout=15).text
+
+    assert f'data-events="{count}"' in html
+
+
+def test_其他的輸入框在_label_外面_label_只包單選鈕與它的字(world: World) -> None:
+    cid = world.conversation()
+    card_id = world.through(cid, 1)
+    world.propose(cid, card_id, 2, [NAME_CARD], minutes=4)
+
+    html = world.thread(cid)
+    other = html[html.index('data-kind="other"') :]
+    label_end = other.index("</label>")
+
+    assert "data-other" not in other[:label_end]
+    assert other[label_end:].startswith("</label><input class=\"ch-qopt__other\"")
+    assert 'aria-label="命名：自己寫的答案"' in other
+
+
+def test_摘要卡與每一關都能收焦點_送出後焦點才移得過去(world: World) -> None:
+    cid = world.conversation()
+    world.through(cid, 2)
+
+    assert re.findall(r'<div class="ch-qset" data-answered tabindex="-1"', world.thread(cid))
+    assert 'class="ch-dec__item" tabindex="-1"' in world.panel(cid).text
+
+
 def test_要重確認的關有沿用和重問兩顆按鈕_重問帶出後面有決定的關(world: World) -> None:
     cid = world.conversation()
     card_id = world.through(cid, 3)
@@ -739,13 +825,14 @@ def test_最後確認卡_別的對話的卡_跟沒有這張卡一樣(world: Worl
 # --- 純資料：interview.py -----------------------------------------------------------------
 
 
-def test_沒有例子的規則跟_cards_的規則對得上() -> None:
-    allowed = interview.no_example_allowed
-    assert allowed({"genre": "explainer"}) is True
-    assert allowed({"genre": "essay", "origin": {"kind": "report_topic"}}) is True
-    assert allowed({"genre": "essay", "origin": {"kind": "idea"}}) is False
-    assert allowed({"genre": "benchmark"}) is False
-    assert allowed({"genre": None}) is False
+def test_沒有例子的規則跟_cards_的規則是同一份() -> None:
+    origin = cards.Origin(kind="report_topic", job_id="a1", topic=1)
+    idea = cards.Origin(kind="idea")
+    assert cards.no_example_allowed("explainer", None) is True
+    assert cards.no_example_allowed("essay", origin) is True
+    assert cards.no_example_allowed("essay", idea) is False
+    assert cards.no_example_allowed("benchmark", None) is False
+    assert cards.no_example_allowed(None, None) is False
 
 
 def test_答案的字_其他_沒有例子_尚待提供_素材() -> None:

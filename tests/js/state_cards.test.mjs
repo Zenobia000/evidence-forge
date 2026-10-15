@@ -85,3 +85,11 @@ test("沒有序號的事件（舊主機）只靠筆數擋舊的", () => {
   );
   assert.equal(state.cards["card-1"].events, 3);
 });
+
+test("card 效果帶 changed：新事件、筆數變多是 true，重述的現況是 false（確認卡只在 changed 時才收）", () => {
+  const first = apply(createState(), cardEvent({ seq: 1, events: [{ n: 2 }], card: { card_id: "card-1", events: 2 } }));
+  assert.equal(first.effects.find((e) => e.type === "card").changed, true);
+  const same = apply(first.state, cardEvent({ seq: 2, events: [], card: { card_id: "card-1", events: 2 } }));
+  assert.equal(same.effects.find((e) => e.type === "card").changed, false);
+  assert.equal(same.effects.find((e) => e.type === "card").card.events, 2);
+});

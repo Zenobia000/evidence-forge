@@ -7,22 +7,28 @@ import { test } from "node:test";
 import {
   KIND,
   back,
+  beginSubmit,
   cardRequest,
   confirm,
   countText,
   createStation,
+  createStore,
   decisionFailure,
   describe,
   draftKey,
+  endSubmit,
   failureText,
   isLast,
   keyAction,
+  mountStation,
   noteBox,
   payload,
   primaryLabel,
   problem,
+  pruneStore,
   reaskNotice,
   restoreDraft,
+  saveDraft,
   select,
   setBusy,
   setNote,
@@ -251,12 +257,13 @@ test("不搶輸入框的鍵：打「其他」的字、備註時數字與方向�
       assert.equal(keyAction(st, key(k, { target })).type, "none", `${target} ${k}`);
     }
   }
-  // 「其他」的輸入框：Enter 確認
-  assert.equal(keyAction(st, key("Enter", { target: "text" })).type, "confirm");
-  // 備註是多行：Enter 是換行，Ctrl／Cmd + Enter 才確認
-  assert.equal(keyAction(st, key("Enter", { target: "note" })).type, "none");
-  assert.equal(keyAction(st, key("Enter", { target: "note", ctrlKey: true })).type, "confirm");
-  assert.equal(keyAction(st, key("Enter", { target: "note", metaKey: true })).type, "confirm");
+  // 任何輸入框裡的 Enter 都是打字（「其他」的框也一樣，不能打到一半就把整關送出）；
+  // 要確認就按按鈕，或 Ctrl／Cmd + Enter
+  for (const target of ["text", "note"]) {
+    assert.equal(keyAction(st, key("Enter", { target })).type, "none", `${target} Enter`);
+    assert.equal(keyAction(st, key("Enter", { target, ctrlKey: true })).type, "confirm", `${target} Ctrl+Enter`);
+    assert.equal(keyAction(st, key("Enter", { target, metaKey: true })).type, "confirm", `${target} Cmd+Enter`);
+  }
 });
 
 test("輸入法選字中的鍵、帶修飾鍵的組合不管；按鈕上的 Enter 讓按鈕自己處理", () => {
@@ -347,4 +354,73 @@ test("重問：後面有選好的關先問一聲，說清楚哪幾關會變成�
 
 test("沿用、重問失敗的說明", () => {
   assert.equal(decisionFailure(4, "連不上伺服器"), "第 4 關沒寫進決策紀錄，連不上伺服器。再按一次就好。");
+});
+
+// --- 草稿與送出中的記憶（store）：畫面重抓對話串流、卡片整張重長時不能掉、不能重複送 -----------------
+
+const draftOf = (store, key) => store.drafts.get(key)?.station;
+
+test("重長一張卡：有草稿就用草稿（答案、第幾張、備註都在），沒有就用伺服器給的預設", () => {
+  const store = createStore();
+  const key = draftKey("card-1", 2);
+  const fresh = createStation(specs());
+  assert.equal(mountStation(store, key, fresh, labels).index, 0);
+  // 使用者答到一半
+  let st = select(fresh, 1);
+  st = confirm(st, 2, labels).station;
+  st = setNote(select(st, 0), "留著");
+  saveDraft(store, key, st, labels);
+  // 對話串流重抓：卡片換成新的 DOM，伺服器又給一次預設值
+  const again = mountStation(store, key, createStation(specs()), labels);
+  assert.equal(again.index, 1);
+  assert.equal(again.cards[0].choice, 1);
+  assert.equal(again.cards[1].note, "留著");
+});
+
+test("agent 重新提出另一組問題：舊草稿不能套在新的卡上", () => {
+  const store = createStore();
+  const key = draftKey("card-1", 2);
+  saveDraft(store, key, select(createStation(specs()), 1), labels);
+  const other = createStation([{ id: "q9", kinds: [OPT, OPT, OTHER] }]);
+  assert.equal(mountStation(store, key, other, labels), other);
+});
+
+test("送出中重長的卡照樣鎖著；這一關已經在送了，再開始送出會被擋", () => {
+  const store = createStore();
+  const key = draftKey("card-1", 2);
+  assert.equal(beginSubmit(store, key), true);
+  assert.equal(beginSubmit(store, key), false); // 連點第二下
+  assert.equal(mountStation(store, key, createStation(specs()), labels).busy, true);
+  endSubmit(store, key, { recorded: true });
+  assert.equal(store.inflight.has(key), false);
+  assert.equal(draftOf(store, key), undefined); // 寫進紀錄了：草稿不用留
+  assert.equal(mountStation(store, key, createStation(specs()), labels).busy, false);
+});
+
+test("送出失敗：解鎖、草稿留著，可以再按一次", () => {
+  const store = createStore();
+  const key = draftKey("card-1", 2);
+  saveDraft(store, key, select(createStation(specs()), 1), labels);
+  beginSubmit(store, key);
+  endSubmit(store, key, { recorded: false });
+  assert.equal(beginSubmit(store, key), true);
+  assert.equal(draftOf(store, key).cards[0].choice, 1);
+});
+
+test("輸入法組字中不存草稿：選定之後才存", () => {
+  const store = createStore();
+  const key = draftKey("card-1", 2);
+  const st = setOther(select(createStation(specs()), 3), "ㄐ");
+  assert.equal(saveDraft(store, key, st, labels, { composing: true }), false);
+  assert.equal(draftOf(store, key), undefined);
+  assert.equal(saveDraft(store, key, setOther(st, "價"), labels, { composing: false }), true);
+  assert.equal(draftOf(store, key).cards[0].other, "價");
+});
+
+test("畫面上已經不在的卡，草稿清掉；還在的留著", () => {
+  const store = createStore();
+  saveDraft(store, "a:1", createStation(specs()), labels);
+  saveDraft(store, "b:2", createStation(specs()), labels);
+  pruneStore(store, ["b:2"]);
+  assert.deepEqual([...store.drafts.keys()], ["b:2"]);
 });

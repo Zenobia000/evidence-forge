@@ -193,19 +193,12 @@ class Line:
 Item = ActiveSet | AnsweredSet | Line
 
 
-def no_example_allowed(card: dict[str, Any]) -> bool:
-    """畫面要不要給「沒有例子」：照 `cards._example_problem` 的規則，伺服器仍是最後一道關。"""
-    genre = card.get("genre")
-    origin = card.get("origin") or {}
-    if genre is None or genre in cards.AUTHOR_EVIDENCE_GENRES:
-        return False
-    return not (genre == "essay" and origin.get("kind") != "report_topic")
-
-
 def _options(station: dict[str, Any], card: dict[str, Any], question: dict[str, Any]) -> tuple[QOption, ...]:
     options = [QOption(o["label"], o.get("description", "")) for o in question["options"]]
     # 第 3 關的選項只是提示：作者自己的例子寫在「其他」或備註；系統另外給「沒有例子」
-    if station["station"] == cards.EXAMPLE_STATION and no_example_allowed(card):
+    if station["station"] == cards.EXAMPLE_STATION and cards.no_example_allowed(
+        card.get("genre"), cards.Origin.model_validate(card["origin"]) if card.get("origin") else None
+    ):
         options.append(QOption(cards.NO_EXAMPLE_LABEL, "我手上沒有可以講的例子。", NO_EXAMPLE))
     # 文體卡（每個選項都帶文體的 value）一定要選列出的文體：沒有「其他」（`cards._parse_answers` 會拒絕）
     if not all(o.get("value") is not None for o in question["options"]):
@@ -384,6 +377,17 @@ class DecisionRow:
 
 
 @dataclass(frozen=True)
+class HistoryEntry:
+    """這一關問過的一組問題卡的一次紀錄：哪一組、什麼時候、答了什麼（沒送出的只列問題）。"""
+
+    title: str
+    time: str
+    note: str
+    current: bool
+    rows: tuple[tuple[str, str, str], ...]
+
+
+@dataclass(frozen=True)
 class DecisionStation:
     number: int
     name: str
@@ -401,6 +405,10 @@ class DecisionStation:
     # 重問這一關會讓這幾關變成要重確認（後面已經有決定的）
     later: tuple[int, ...] = ()
     asking: bool = False
+    # 手機寬度收起來時留的一行摘要：每張卡的答案用「・」接起來
+    line: str = ""
+    # 這一關問過的每一組問題卡與每一次答案（含舊的），照時間；只有一筆就不列
+    history: tuple[HistoryEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -487,6 +495,42 @@ def _row(
     )
 
 
+def _history(station: dict[str, Any]) -> tuple[HistoryEntry, ...]:
+    """這一關每一組問過的問題卡（同一次提出的算一組）加上每一次對它的回答，照時間順序。
+
+    決策分頁主體只列現在的決定；舊的組、舊的答案、問了沒送出就換掉的組都在這裡，標出哪個是現在的。
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for question in station.get("questions", []):
+        groups.setdefault(str(question.get("proposed_at")), []).append(question)
+    decision = station.get("decision")
+    entries: list[HistoryEntry] = []
+    for number, (proposed_at, questions) in enumerate(groups.items(), start=1):
+        by_id = {q["id"]: q for q in questions}
+        current_set = any(q.get("current") for q in questions)
+        answered = [s for s in station.get("submissions", []) if any(a.get("question") in by_id for a in s["answers"])]
+        if not answered:
+            note = "現在這組，還沒送出" if current_set else "沒送出就換成別組了"
+            rows = tuple((q["header"], q["question"], "") for q in questions)
+            entries.append(HistoryEntry(f"第 {number} 組問題", hm(proposed_at), note, current_set, rows))
+            continue
+        for submission in answered:
+            rows = tuple(
+                (
+                    str(by_id.get(a.get("question"), {}).get("header", "")),
+                    str(by_id.get(a.get("question"), {}).get("question", "")),
+                    answer_text(a),
+                )
+                for a in submission["answers"]
+            )
+            is_decision = submission["submission"] == decision
+            note = "現在的決定" if is_decision else ("尚待作者提供" if submission.get("pending") else "之前的答案")
+            if current_set and not is_decision:
+                note += "（現在這組問題）"
+            entries.append(HistoryEntry(f"第 {number} 組問題", hm(submission.get("ts")), note, is_decision, rows))
+    return tuple(entries) if len(entries) > 1 else ()
+
+
 def _station_view(station: dict[str, Any], card: dict[str, Any]) -> DecisionStation:
     status = station["status"]
     number = station["station"]
@@ -499,7 +543,15 @@ def _station_view(station: dict[str, Any], card: dict[str, Any]) -> DecisionStat
             if q.get("current")
         )
         return DecisionStation(
-            number, station["name"], status, "asking", badge="正在問", badge_tone="complete", rows=drafting, asking=True
+            number,
+            station["name"],
+            status,
+            "asking",
+            badge="正在問",
+            badge_tone="complete",
+            rows=drafting,
+            asking=True,
+            history=_history(station),
         )
 
     decision = _decision(station)
@@ -530,6 +582,8 @@ def _station_view(station: dict[str, Any], card: dict[str, Any]) -> DecisionStat
         rows=tuple(rows),
         reask=bool(station.get("questions")),
         later=later,
+        line="・".join(r.answer for r in rows if r.answer),
+        history=_history(station),
     )
     if status == "changed":
         return replace(shown, state="revised", badge=f"改過 {len(complete) - 1} 次", badge_icon="undo")
@@ -594,6 +648,8 @@ class WriteConfirm:
     genre: str
     estimate: str
     cap: str
+    # 確認當下這張卡的決策紀錄有幾筆：之後卡又變了（筆數變多），這張確認卡就過期了
+    events: int = 0
 
 
 def write_confirm(
@@ -615,4 +671,5 @@ def write_confirm(
         genre=str(card.get("genre") or ""),
         estimate=estimate,
         cap=f"這張工單最多 {format_usd(cap_usd)}",
+        events=int(card.get("events") or 0),
     )

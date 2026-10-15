@@ -156,6 +156,24 @@ def test_畫面送出一關_直接寫進決策紀錄_來源是畫面_再通知�
     )
 
 
+def test_連點兩次送出_第二次什麼都不寫也不再通知_回的是同一張卡(world: World) -> None:
+    cid = world.conversation()
+    card_id = world.card(cid)
+    first = world.submit(cid, card_id, 1)
+    last = first.json()["events"][-1]["n"]
+    wait_until(lambda: len(world.card_notices(cid)) == 1, what="對話的 Pi 收到第一則 /ef-card")
+
+    second = world.submit(cid, card_id, 1)
+
+    assert second.status_code == 200 and second.json()["events"] == []
+    assert second.json()["card"]["events"] == last
+    assert second.json()["card"]["stations"][0]["status"] == "decided"
+    # 答案不一樣不能悄悄丟掉
+    other = world.submit(cid, card_id, 1, choice="trend")
+    assert other.status_code == 409
+    assert len(world.card_notices(cid)) == 1
+
+
 def test_重問與沿用也由畫面直接記_各通知一次(world: World) -> None:
     cid = world.conversation()
     card_id = world.card(cid, station_count=2)

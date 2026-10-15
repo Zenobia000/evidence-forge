@@ -672,6 +672,26 @@ def _is_genre_question(question: Question) -> bool:
     return all(o.value is not None for o in question.options)
 
 
+def _no_example_block(genre: str | None, origin: Origin | None) -> str | None:
+    """文體已定時，第 3 關不能答「沒有例子」的原因；可以就回 None。"""
+    if genre in AUTHOR_EVIDENCE_GENRES:
+        return (
+            f"文體是 {genre}，主證據是作者自己的使用、測試或專案，不能「{NO_EXAMPLE_LABEL}」："
+            "請作者補自己的例子，或回第 1 關換文體"
+        )
+    if genre == "essay" and (origin is None or origin.kind != "report_topic"):
+        return (
+            f"文體是 essay，沒有作者的經驗時要有觸發它的原文；這張卡不是從報告開始的，"
+            f"不能「{NO_EXAMPLE_LABEL}」：請作者補自己的例子，或回第 1 關換文體"
+        )
+    return None
+
+
+def no_example_allowed(genre: str | None, origin: Origin | None) -> bool:
+    """第 3 關要不要給「沒有例子」（畫面用；寫入時 `_example_problem` 用同一條規則再查一次）。文體還沒定就不給。"""
+    return genre is not None and _no_example_block(genre, origin) is None
+
+
 def _example_problem(
     answers: list[Answer], genre: str | None, origin: Origin | None, *, genre_known: bool = True
 ) -> str | None:
@@ -692,16 +712,9 @@ def _example_problem(
                     f"第 1 關的文體還沒有決定，不能確認「{NO_EXAMPLE_LABEL}」："
                     "先把第 1 關送出，再回答這一關"
                 )
-            if genre in AUTHOR_EVIDENCE_GENRES:
-                return (
-                    f"文體是 {genre}，主證據是作者自己的使用、測試或專案，不能「{NO_EXAMPLE_LABEL}」："
-                    "請作者補自己的例子，或回第 1 關換文體"
-                )
-            if genre == "essay" and (origin is None or origin.kind != "report_topic"):
-                return (
-                    f"文體是 essay，沒有作者的經驗時要有觸發它的原文；這張卡不是從報告開始的，"
-                    f"不能「{NO_EXAMPLE_LABEL}」：請作者補自己的例子，或回第 1 關換文體"
-                )
+            blocked = _no_example_block(genre, origin)
+            if blocked is not None:
+                return blocked
             continue
         if answer.pending:
             continue
@@ -1112,6 +1125,15 @@ def _record(
             parsed = _picked_for_me(state)
         else:
             parsed = _parse_answers(answers, state, card, allow_pending=source == "agent")
+        if source == "ui" and state.status in _DECIDED and state.submissions:
+            # 這一關現在的這組問題卡已經送出、有決定了，之後沒有重問或重新提出（那樣狀態會是正在問）：再按一次是
+            # 重複送出（連點、畫面還沒換成摘要就又按）。答案一樣就當冪等：回原本那次，什麼都不寫；答案不一樣不能
+            # 悄悄丟掉，要改先重問。要重確認的關不在這裡：重新送出本來就是取消要重確認的一種做法
+            latest = state.submissions[-1]
+            if {a.question for a in latest.answers} == {q.id for q in state.questions if q.current}:
+                if latest.answers == parsed:
+                    return [], {}
+                raise ToolRejected(409, f"第 {number} 關已經送出了（{state.status}）；要改答案先重問這一關")
         # 送出編號：這張卡第幾次送出（跨關數）
         submission = f"sub{len({e.submission for e in events if isinstance(e, Answered)}) + 1}"
         return [
