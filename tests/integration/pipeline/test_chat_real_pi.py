@@ -284,8 +284,8 @@ def test_畫面送出一關_ef_card_通知觸發一輪_模型讀編輯卡(chat: 
         "header": "文體",
         "question": "這篇的主證據是什麼？",
         "options": [
-            {"label": "explainer", "description": "把計價方式講清楚"},
-            {"label": "trend", "description": "兩年內這筆帳會怎麼變"},
+            {"label": "explainer", "description": "把計價方式講清楚", "value": "explainer"},
+            {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
         ],
     }
     card_id = cards.propose_questions(chat.data, cid, None, 1, [question], now=NOW).card_id

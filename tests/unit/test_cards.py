@@ -4,6 +4,8 @@
 再看 `decisions.jsonl` 與算出來的編輯卡。不打模型、不連網。
 """
 
+import subprocess
+import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +18,15 @@ from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.paths import DataDir
 
 NOW = datetime(2026, 10, 15, 7, 0, tzinfo=UTC)
+
+
+def _genre(*slugs: str) -> dict[str, Any]:
+    """第 1 關的文體卡：每個選項帶文體的 slug（`value`），選項名稱就用 slug。"""
+    return {
+        "header": "文體",
+        "question": "這篇的主證據是什麼？",
+        "options": [{"label": slug, "description": f"寫成 {slug}", "value": slug} for slug in slugs],
+    }
 
 
 def _question(header: str, *labels: str) -> dict[str, Any]:
@@ -40,7 +51,7 @@ def cid(data: DataDir) -> str:
 
 def test_提出第_1_關的問題卡_開一張新卡_編輯卡上這一關正在問(data: DataDir, cid: str) -> None:
     written = cards.propose_questions(
-        data, cid, None, 1, [_question("文體", "explainer", "trend")], now=NOW
+        data, cid, None, 1, [_genre("explainer", "trend")], now=NOW
     )
 
     card = cards.read_card(data, cid, written.card_id)
@@ -64,7 +75,7 @@ def _start(data: DataDir, cid: str) -> str:
         cid,
         None,
         1,
-        [_question("文體", "explainer", "trend"), _question("主題", "主題 A", "主題 B")],
+        [_genre("explainer", "trend"), _question("主題", "主題 A", "主題 B")],
         now=NOW,
     ).card_id
 
@@ -119,7 +130,9 @@ def _through(data: DataDir, cid: str, card_id: str, last: int) -> None:
                 data, cid, card_id, station, [_question(f"第{station}關", "甲", "乙")], now=NOW
             )
         current = _current(data, cid, card_id, station)
-        answers = [{"question": q.id, "choice": q.options[0].label} for q in current]
+        # 第 3 關的選項只是提示：作者的例子寫在補充
+        note = {"note": "上個月的帳單三千元"} if station == 3 else {}
+        answers = [{"question": q.id, "choice": q.options[0].label, **note} for q in current]
         cards.submit_station(data, cid, card_id, station, answers, now=NOW)
 
 
@@ -210,7 +223,7 @@ def test_第_3_關你幫我選只記尚待作者提供_不算有決定_寫稿被
     card_id = _start(data, cid)
     _through(data, cid, card_id, 2)
     cards.propose_questions(
-        data, cid, card_id, 3, [_question("例子", "你遇過的帳單", "沒有例子")], now=NOW
+        data, cid, card_id, 3, [_question("例子", "你遇過的帳單", "你量過的數字")], now=NOW
     )
 
     written = cards.record_interpreted_answers(data, cid, card_id, 3, pick_for_me=True, now=NOW)
@@ -233,7 +246,7 @@ def test_第_3_關的尚待作者提供_agent_不能拿來記別的關_畫面也
     with pytest.raises(ToolRejected):
         cards.record_interpreted_answers(data, cid, card_id, 1, pending, quote="先跳過", now=NOW)
     _through(data, cid, card_id, 2)
-    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "沒有例子")], now=NOW)
+    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "乙")], now=NOW)
     (q3,) = _current(data, cid, card_id, 3)
     with pytest.raises(ToolRejected):
         cards.submit_station(data, cid, card_id, 3, [{"question": q3.id, "pending": True}], now=NOW)
@@ -242,11 +255,14 @@ def test_第_3_關的尚待作者提供_agent_不能拿來記別的關_畫面也
 def test_作者自己回答之後第_3_關才有決定(data: DataDir, cid: str) -> None:
     card_id = _start(data, cid)
     _through(data, cid, card_id, 2)
-    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "沒有例子")], now=NOW)
+    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "乙")], now=NOW)
     cards.record_interpreted_answers(data, cid, card_id, 3, pick_for_me=True, now=NOW)
-    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "帳單", "沒有例子")], now=NOW)
+    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "帳單", "數字")], now=NOW)
 
-    card = _submit(data, cid, card_id, 3, "沒有例子").card
+    (q3,) = _current(data, cid, card_id, 3)
+    card = cards.submit_station(
+        data, cid, card_id, 3, [{"question": q3.id, "no_example": True}], now=NOW
+    ).card
 
     assert card.stations[2].status == "decided"
     # 尚待作者提供不是決定，所以補上作者的回答不算「回頭改」：後面沒有東西要重確認
@@ -262,15 +278,15 @@ def test_打字回答_agent_整理後記下_附原話(data: DataDir, cid: str) -
         cid,
         card_id,
         1,
-        [{"question": q1.id, "other_text": "寫成實測"}, {"question": q2.id, "choice": "主題 B"}],
-        quote="我想寫成實測，放主題 B",
+        [{"question": q1.id, "choice": "trend"}, {"question": q2.id, "other_text": "AI 基礎建設"}],
+        quote="寫成趨勢，主題是 AI 基礎建設",
         now=NOW,
     )
 
     assert {(e["source"], e["mode"], e["quote"]) for e in written.events} == {
-        ("agent", "typed", "我想寫成實測，放主題 B")
+        ("agent", "typed", "寫成趨勢，主題是 AI 基礎建設")
     }
-    assert written.card.stations[0].submissions[0].answers[0].other_text == "寫成實測"
+    assert written.card.stations[0].submissions[0].answers[1].other_text == "AI 基礎建設"
 
 
 def test_一關要一次回答到每一張問題卡(data: DataDir, cid: str) -> None:
@@ -449,7 +465,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
         cid,
         None,
         1,
-        [_question("文體", "explainer", "trend")],
+        [_genre("explainer", "trend")],
         now=NOW,
         origin={"kind": "report_topic", "job_id": "20261015-report", "topic": 2, "title": "長上下文的帳"},
     )
@@ -464,7 +480,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
             cid,
             None,
             1,
-            [_question("文體", "explainer", "trend")],
+            [_genre("explainer", "trend")],
             now=NOW,
             origin={"kind": "report_topic", "job_id": "20261015-not-mine", "topic": 1},
         )
@@ -474,7 +490,7 @@ def test_從報告的題材開始_記下哪份報告第幾個題材(data: DataDi
 def test_一個對話可以有好幾張卡(data: DataDir, cid: str) -> None:
     first = _start(data, cid)
     second = cards.propose_questions(
-        data, cid, None, 1, [_question("文體", "essay", "trend")], now=NOW + timedelta(seconds=1)
+        data, cid, None, 1, [_genre("essay", "trend")], now=NOW + timedelta(seconds=1)
     ).card_id
 
     assert [c.card_id for c in cards.list_cards(data, cid)] == sorted([first, second])
@@ -522,3 +538,234 @@ def test_要重確認的關按重問_回到正在問_不能再沿用(data: DataD
     # 重新送出才有決定；第 3 關還是要重確認
     after = _submit(data, cid, card_id, 2, "乙").card
     assert [s.status for s in after.stations[:3]] == ["changed", "changed", "reconfirm"]
+
+
+# --- T3 第 1 輪：重問之後不能沿用、第 3 關的內容、第 1 關的文體 --------------------------------------------
+
+
+def test_重問中的關_前面改了也不標要重確認_不能沿用舊答案(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    cards.reask_station(data, cid, card_id, 5, now=NOW)
+    cards.propose_questions(data, cid, card_id, 5, [_question("候選", "丙", "丁")], now=NOW)
+    cards.reask_station(data, cid, card_id, 2, now=NOW)
+    _submit(data, cid, card_id, 2, "乙")
+
+    card = cards.read_card(data, cid, card_id)
+    assert (card.stations[4].status, card.stations[4].needs_reconfirm) == ("asking", False)
+    assert [s.status for s in card.stations[2:4]] == ["reconfirm", "reconfirm"]
+    with pytest.raises(ToolRejected) as caught:
+        cards.keep_decision(data, cid, card_id, 5, now=NOW)
+    assert caught.value.status == 409
+    assert cards.read_card(data, cid, card_id).writable is False
+
+
+def _to_station_3(data: DataDir, cid: str, genre: str = "explainer", **origin: Any) -> str:
+    card_id = cards.propose_questions(
+        data, cid, None, 1, [_genre(genre, "trend")], now=NOW, origin=origin or None
+    ).card_id
+    _through(data, cid, card_id, 2)
+    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "你的帳單", "你量過的數字")], now=NOW)
+    return card_id
+
+
+def _answer_3(data: DataDir, cid: str, card_id: str, **answer: Any) -> cards.Written:
+    (q3,) = _current(data, cid, card_id, 3)
+    return cards.submit_station(data, cid, card_id, 3, [{"question": q3.id, **answer}], now=NOW)
+
+
+def test_第_3_關只選提示不算作者的例子_要在補充寫下內容(data: DataDir, cid: str) -> None:
+    card_id = _to_station_3(data, cid)
+
+    with pytest.raises(ToolRejected) as caught:
+        _answer_3(data, cid, card_id, choice="你的帳單")
+    assert caught.value.status == 400
+
+    card = _answer_3(data, cid, card_id, choice="你的帳單", note="上個月三千元").card
+    assert card.stations[2].decided is True
+
+
+def test_第_3_關自己打的例子_或引用作者素材_都算(data: DataDir, cid: str) -> None:
+    typed = _to_station_3(data, cid)
+    assert _answer_3(data, cid, typed, other_text="我把客服改成先檢索").card.stations[2].decided
+
+    cited = _to_station_3(data, cid)
+    cards.add_material(data, cid, cited, "帳單截圖的數字", now=NOW)
+    assert _answer_3(data, cid, cited, material="M1").card.stations[2].decided
+    with pytest.raises(ToolRejected):
+        _answer_3(data, cid, cited, material="M9")
+
+
+def test_第_3_關沒有例子是系統的選項_不能列成提示(data: DataDir, cid: str) -> None:
+    card_id = _to_station_3(data, cid)
+    with pytest.raises(ToolRejected) as caught:
+        cards.propose_questions(data, cid, card_id, 3, [_question("例子", "帳單", "沒有例子")], now=NOW)
+    assert caught.value.status == 400
+
+
+@pytest.mark.parametrize("genre", ["product-case", "benchmark", "postmortem"])
+def test_主證據是作者自己的文體_沒有例子就停在第_3_關(data: DataDir, cid: str, genre: str) -> None:
+    card_id = _to_station_3(data, cid, genre)
+
+    with pytest.raises(ToolRejected) as caught:
+        _answer_3(data, cid, card_id, no_example=True)
+    assert caught.value.status == 409
+    assert "第 1 關" in caught.value.message
+
+
+def test_隨筆沒有例子_只有從報告開始才能往下(data: DataDir, cid: str) -> None:
+    idea = _to_station_3(data, cid, "essay", kind="idea", title="一個想法")
+    with pytest.raises(ToolRejected) as caught:
+        _answer_3(data, cid, idea, no_example=True)
+    assert caught.value.status == 409
+
+    conversations.add_job(data, cid, conversations.ConversationJob(job_id="20261015-report", ts=NOW))
+    (data.jobs / "20261015-report").mkdir()
+    report = _to_station_3(data, cid, "essay", kind="report_topic", job_id="20261015-report", topic=1)
+    assert _answer_3(data, cid, report, no_example=True).card.stations[2].decided
+
+
+def test_不需要作者經驗的文體_作者自己說沒有例子就算有決定(data: DataDir, cid: str) -> None:
+    card_id = _to_station_3(data, cid, "explainer")
+    assert _answer_3(data, cid, card_id, no_example=True).card.stations[2].status == "decided"
+
+
+def test_改成要作者經驗的文體之後_沒有例子不能沿用(data: DataDir, cid: str) -> None:
+    card_id = cards.propose_questions(
+        data, cid, None, 1, [_genre("explainer", "product-case")], now=NOW
+    ).card_id
+    _through(data, cid, card_id, 2)
+    cards.propose_questions(data, cid, card_id, 3, [_question("例子", "甲", "乙")], now=NOW)
+    _answer_3(data, cid, card_id, no_example=True)
+    cards.reask_station(data, cid, card_id, 1, now=NOW)
+    _submit(data, cid, card_id, 1, "product-case")
+
+    with pytest.raises(ToolRejected) as caught:
+        cards.keep_decision(data, cid, card_id, 3, now=NOW)
+    assert caught.value.status == 409
+
+
+def test_第_1_關一定有文體卡_選項帶文體的_slug(data: DataDir, cid: str) -> None:
+    for bad in (
+        [_question("主題", "主題 A", "主題 B")],
+        [{**_genre("explainer", "trend"), "options": [
+            {"label": "explainer", "description": "x", "value": "explainer"},
+            {"label": "觀點文", "description": "x", "value": "opinion"},
+        ]}],
+    ):
+        with pytest.raises(ToolRejected) as caught:
+            cards.propose_questions(data, cid, None, 1, bad, now=NOW)
+        assert caught.value.status == 400
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 1)
+    with pytest.raises(ToolRejected):
+        cards.propose_questions(data, cid, card_id, 2, [_genre("trend", "essay")], now=NOW)
+
+
+def test_選好的文體從編輯卡讀得到_文體卡不能用其他(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    q1, q2 = _current(data, cid, card_id, 1)
+    with pytest.raises(ToolRejected) as caught:
+        cards.submit_station(
+            data, cid, card_id, 1,
+            [{"question": q1.id, "other_text": "寫成小說"}, {"question": q2.id, "choice": "主題 A"}],
+            now=NOW,
+        )
+    assert caught.value.status == 400
+    assert cards.read_card(data, cid, card_id).genre is None
+
+    card = _submit(data, cid, card_id, 1, "trend", "主題 A").card
+    assert card.genre == "trend"
+
+
+def test_你幫我選第_1_關_跳過要作者經驗的文體(data: DataDir, cid: str) -> None:
+    card_id = cards.propose_questions(
+        data, cid, None, 1, [_genre("essay", "benchmark", "trend", "explainer")], now=NOW
+    ).card_id
+
+    written = cards.record_interpreted_answers(data, cid, card_id, 1, pick_for_me=True, now=NOW)
+
+    assert [e["choice"] for e in written.events] == ["trend"]
+    assert written.card.genre == "trend"
+
+
+def test_你幫我選第_1_關_沒有不需要作者經驗的文體就什麼都不記(data: DataDir, cid: str) -> None:
+    card_id = cards.propose_questions(
+        data, cid, None, 1, [_genre("essay", "product-case")], now=NOW
+    ).card_id
+
+    with pytest.raises(ToolRejected) as caught:
+        cards.record_interpreted_answers(data, cid, card_id, 1, pick_for_me=True, now=NOW)
+
+    assert caught.value.status == 409
+    assert "創作者" in caught.value.message
+    assert [e["type"] for e in cards.read_events(data, cid, card_id)] == ["questions_proposed"]
+
+
+def test_agent_不能蓋掉創作者剛送出的關(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 1)
+    q1, q2 = _current(data, cid, card_id, 1)
+
+    with pytest.raises(ToolRejected) as typed:
+        cards.record_interpreted_answers(
+            data, cid, card_id, 1,
+            [{"question": q1.id, "choice": "trend"}, {"question": q2.id, "choice": "主題 A"}],
+            quote="改成 trend", now=NOW,
+        )
+    with pytest.raises(ToolRejected) as picked:
+        cards.record_interpreted_answers(data, cid, card_id, 1, pick_for_me=True, now=NOW)
+
+    assert (typed.value.status, picked.value.status) == (409, 409)
+    assert "propose_questions" in typed.value.message
+
+
+def test_作者素材的檔被截斷_再記一次會補回完整內容(data: DataDir, cid: str) -> None:
+    text = "上個月的帳單：三千元，主要花在長上下文"
+    digest = __import__("hashlib").sha256(text.encode()).hexdigest()
+    card_id = _start(data, cid)
+    folder = data.conversation_dir(cid) / "cards" / card_id / "materials"
+    folder.mkdir()
+    (folder / digest).write_bytes(text.encode()[:7])
+
+    cards.add_material(data, cid, card_id, text, now=NOW)
+
+    assert (folder / digest).read_bytes() == text.encode()
+    assert [p.name for p in folder.iterdir()] == [digest]
+
+
+_WRITER = """
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from evidence_forge import cards
+from evidence_forge.paths import DataDir
+data, cid, card_id, number = DataDir(Path(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4]
+for i in range(5):
+    cards.add_material(data, cid, card_id, f"程序 {number} 的第 {i} 份", now=datetime(2026, 10, 15, tzinfo=UTC))
+"""
+
+
+def test_兩個程序同時寫同一張卡_編號也不撞(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    processes = [
+        subprocess.Popen([sys.executable, "-c", _WRITER, str(data.root), cid, card_id, str(i)])
+        for i in range(4)
+    ]
+    assert [process.wait(timeout=60) for process in processes] == [0, 0, 0, 0]
+
+    events = cards.read_events(data, cid, card_id)
+    assert sorted(e["n"] for e in events) == list(range(1, 22))
+    assert sorted(int(m.id[1:]) for m in cards.read_card(data, cid, card_id).materials) == list(range(1, 21))
+
+
+def test_快照_編輯卡與到那一筆為止的事件_同一個時間點(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 2)
+
+    taken = cards.snapshot(data, cid, card_id)
+
+    # 第 1 關：提出 1、兩張卡的回答 2～3；第 2 關：提出 4、回答 5
+    assert taken.card.events == len(taken.events) == 5
+    assert [e["n"] for e in taken.events] == [1, 2, 3, 4, 5]
+    assert taken.card.stations[1].decided is True

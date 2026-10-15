@@ -32,8 +32,20 @@ QUESTIONS = [
         "header": "文體",
         "question": "這篇的主證據是什麼？",
         "options": [
-            {"label": "explainer", "description": "把計價方式講清楚"},
-            {"label": "trend", "description": "兩年內這筆帳會怎麼變"},
+            {"label": "explainer", "description": "把計價方式講清楚", "value": "explainer"},
+            {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
+        ],
+    }
+]
+
+# 第 2 關以後的問題卡：選項不帶文體的 value
+VIEWPOINT = [
+    {
+        "header": "觀點",
+        "question": "讀者看完要記住哪一件事？",
+        "options": [
+            {"label": "explainer", "description": "成本是架構問題"},
+            {"label": "trend", "description": "價目一直在降"},
         ],
     }
 ]
@@ -53,7 +65,7 @@ class World:
         card_id = cards.propose_questions(self.data, cid, None, 1, QUESTIONS, now=NOW).card_id
         for station in range(1, station_count):
             self.submit(cid, card_id, station)
-            cards.propose_questions(self.data, cid, card_id, station + 1, QUESTIONS, now=NOW)
+            cards.propose_questions(self.data, cid, card_id, station + 1, VIEWPOINT, now=NOW)
         return card_id
 
     def submit(self, cid: str, card_id: str, station: int, choice: str = "explainer") -> httpx.Response:

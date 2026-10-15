@@ -31,8 +31,8 @@ STATION_1 = [
         "header": "文體",
         "question": "這篇的主證據是什麼？",
         "options": [
-            {"label": "explainer", "description": "把計價方式講清楚"},
-            {"label": "trend", "description": "兩年內這筆帳會怎麼變"},
+            {"label": "explainer", "description": "把計價方式講清楚", "value": "explainer"},
+            {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
         ],
     }
 ]

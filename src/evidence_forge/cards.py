@@ -17,10 +17,13 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
   事件標 `source: ui`。這三個不在閘道的 `/tools/` 裡，對話的 Pi 叫不到。
 
 **事件五種**（每筆都有 `n`（這張卡的第幾筆）、`type`、`ts`、`source`）：
-- `questions_proposed`：哪一關、問題卡（`id`、`header`、`question`、`options[{label, description}]`）。
-  「其他」一定有，不記。第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
+- `questions_proposed`：哪一關、問題卡（`id`、`header`、`question`、`options[{label, description, value?}]`）。
+  「其他」一定有，不記；第 3 關的「沒有例子」也是系統給的，不記。第 1 關一定有一張文體卡，選項的 `value`
+  是文體的 slug（`GENRES`）；第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
 - `answered`：一張問題卡一筆；一關送出時一批寫（同一個 `submission`，一次 write 寫完）。
-  `choice`（選的選項名稱）、`other_text`（「其他」的文字）、`pending`（第 3 關「尚待作者提供」）三選一，加 `note`。
+  `choice`（選的選項名稱）、`other_text`（「其他」的文字）、`pending`（第 3 關「尚待作者提供」）、
+  `no_example`（第 3 關「沒有例子」）四選一；`material`（引用作者素材 `M<n>`）可以單獨給或跟著前兩種；加 `note`。
+  第 3 關只選提示不算回答：要有補充、「其他」的文字或作者素材（`_example_problem`）。
   agent 寫的另有 `mode`（`typed`：解讀創作者打的字，附原話 `quote`；`pick_for_me`：「交給 AI 選」）。
 - `kept`：要重確認的關按「沿用」，記保留的是哪一次送出。
 - `reasked`：「重問這一關」。
@@ -33,9 +36,11 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
 - 一關的送出要回答到當時這一關的每一張問題卡才算數；寫到一半被砍的一批不算。
 - 已經有決定的一關又送出一次（回頭改），後面已經有決定的關都標要重確認；沿用或重新送出才取消。
 - 六關都有決定、沒有要重確認，`writable` 才是 true；寫稿工具用 `require_writable` 再查一次（最後一道關）。
+  寫稿的快照用 `snapshot`（拿著鎖一次讀出編輯卡與事件），不讀 `card.json`。
 - 讀不懂的一行跳過（`skipped_lines`），不拖垮整張卡。
 """
 
+import fcntl
 import hashlib
 import logging
 import os
@@ -62,7 +67,6 @@ from evidence_forge.gateway.ledger import append_line
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.paths import DataDir
-from evidence_forge.write_once import write_once
 
 _log = logging.getLogger(__name__)
 
@@ -77,8 +81,20 @@ STATIONS: dict[int, str] = {
 # 第 3 關：作者的例子一定來自作者，agent「你幫我選」只能記這個（ADR-0025 §3.2）
 EXAMPLE_STATION = 3
 PENDING_LABEL = "尚待作者提供"
+# 第 3 關系統給的選項（跟「其他」一樣一定有，不列成提示）：只有作者自己能答（ADR-0025 §3.2）
+NO_EXAMPLE_LABEL = "沒有例子"
 PICK_FOR_ME_NOTE = "交給 AI 選"
 OTHER_LABEL = "其他"
+
+# 文體（ADR-0026 §3.1）。第 1 關的文體卡每個選項帶其中一個 slug（`value`）。
+# `harness/genres/` 換成這 7 種是 #106；在那之前資料夾裡還是舊的 12 種，所以照這份清單驗，不讀資料夾
+GENRES = frozenset(
+    {"essay", "research-review", "product-case", "benchmark", "postmortem", "explainer", "trend"}
+)
+# 不需要作者自己經驗的文體：「你幫我選」在第 1 關只能選這三種（ADR-0025 §3.2、ADR-0026 §3.1）
+SELF_FREE_GENRES = frozenset({"research-review", "explainer", "trend"})
+# 主證據是作者自己的使用、測試或專案：第 3 關不能答「沒有例子」（ADR-0025 §3.2）
+AUTHOR_EVIDENCE_GENRES = frozenset({"product-case", "benchmark", "postmortem"})
 
 MAX_QUESTIONS = 4
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
@@ -110,6 +126,8 @@ class Option(BaseModel):
 
     label: str
     description: str
+    # 第 1 關文體卡的選項才有：文體的 slug（`GENRES`）
+    value: str | None = None
 
 
 class Question(BaseModel):
@@ -155,6 +173,10 @@ class Answered(_Event):
     choice: str | None = None
     other_text: str | None = None
     pending: bool = False
+    # 第 3 關：作者自己答「沒有例子」（系統的選項，不是 agent 列的提示）
+    no_example: bool = False
+    # 引用的作者素材（`M1`…）：第 3 關的例子可以直接是作者素材
+    material: str | None = None
     note: str | None = None
     mode: Mode | None = None
     quote: str | None = None
@@ -196,6 +218,8 @@ class Answer(BaseModel):
     choice: str | None = None
     other_text: str | None = None
     pending: bool = False
+    no_example: bool = False
+    material: str | None = None
     note: str | None = None
 
 
@@ -275,6 +299,8 @@ class CardState(BaseModel):
     conversation_id: str
     title: str | None = None
     origin: Origin | None = None
+    # 第 1 關現在的決定選的文體（slug）；還沒選是 None。寫稿（#110）與第 3 關的規則都讀它
+    genre: str | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
     events: int = 0
@@ -286,6 +312,14 @@ class CardState(BaseModel):
     blocking: list[Blocking] = Field(default_factory=list)
     stations: list[StationState]
     materials: list[Material] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """同一個時間點的編輯卡與決策紀錄（`snapshot`）：`events` 剛好是算出 `card` 的那幾筆。"""
+
+    card: CardState
+    events: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -360,11 +394,20 @@ _locks: dict[str, threading.Lock] = {}
 
 @contextmanager
 def _card_lock(folder: Path) -> Iterator[None]:
-    """同一張卡的「讀事件 → 檢查 → 寫事件」一次一個：閘道（agent）與對話主機（畫面）在同一個程序裡。"""
+    """同一張卡的「讀事件 → 檢查 → 寫事件」一次一個。
+
+    閘道（agent 的工具）與對話主機（畫面的點選）在 `ef serve` 的同一個程序、不同執行緒：先拿程序內的鎖。
+    再拿卡資料夾裡 `.lock` 的檔案鎖（flock）：別的程序（另一個 `ef serve`、手動的工具）寫同一張卡也排隊，
+    不會兩邊算出同一個 `n`、同一個送出編號。
+    """
     with _locks_guard:
         lock = _locks.setdefault(str(folder.resolve()), threading.Lock())
-    with lock:
-        yield
+    with lock, (folder / ".lock").open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 # --- 讀 -------------------------------------------------------------------------------
@@ -403,6 +446,21 @@ def read_card(data: DataDir, conversation_id: str, card_id: str) -> CardState:
         card = _compute(conversation_id, card_id, events, skipped)
         _save_cache(folder, card)
     return card
+
+
+def snapshot(data: DataDir, conversation_id: str, card_id: str) -> Snapshot:
+    """拿著這張卡的鎖讀一次：編輯卡與算出它的那幾筆事件，同一個時間點（給寫稿工單的快照，#110）。
+
+    寫稿要用這一份，**不要讀 `card.json`**：那只是快取，可能比事件舊；分兩次讀（先讀卡、再讀事件）
+    中間又可能有人寫了一筆，快照跟它附的決策紀錄就對不上。
+    """
+    _require_conversation(data, conversation_id)
+    folder = _card_dir(data, conversation_id, card_id)
+    with _card_lock(folder):
+        events, skipped = _read(folder)
+        card = _compute(conversation_id, card_id, events, skipped)
+        _save_cache(folder, card)
+    return Snapshot(card=card, events=[e.model_dump(mode="json") for e in events])
 
 
 def list_cards(data: DataDir, conversation_id: str) -> list[CardState]:
@@ -479,11 +537,12 @@ class _Station:
     def status(self) -> Status:
         if not self.questions:
             return "not_reached"
-        if self.reconfirm:
-            return "reconfirm"
         latest = self.latest()
+        # 正在問（重問、重新提出問題卡）壓過要重確認：這時沒有可以沿用的決定
         if self.reopened or latest is None:
             return "asking"
+        if self.reconfirm:
+            return "reconfirm"
         if latest.pending:
             return "pending_author"
         if self.kept is not None:
@@ -548,27 +607,38 @@ def _compute(
                     ts=event.ts,
                 )
             )
-    states = [
-        StationState(
-            station=s.number,
-            name=STATIONS[s.number],
-            status=s.status(),
-            decided=s.status() in _DECIDED,
-            needs_reconfirm=s.reconfirm,
-            questions=s.questions,
-            submissions=s.submissions,
-            decision=s.decision,
-            kept=s.kept,
-            reasked_at=s.reasked_at,
+    genre = _decided_genre(stations[1])
+    states: list[StationState] = []
+    for s in stations.values():
+        status = s.status()
+        if (
+            s.number == EXAMPLE_STATION
+            and status in _DECIDED
+            and _example_problem(_decision_answers(s), genre, origin) is not None
+        ):
+            # 第 3 關的決定不再成立（例如改成要作者經驗的文體之後，原本答的是「沒有例子」）：還要作者給
+            status = "pending_author"
+        states.append(
+            StationState(
+                station=s.number,
+                name=STATIONS[s.number],
+                status=status,
+                decided=status in _DECIDED,
+                needs_reconfirm=s.reconfirm,
+                questions=s.questions,
+                submissions=s.submissions,
+                decision=s.decision,
+                kept=s.kept,
+                reasked_at=s.reasked_at,
+            )
         )
-        for s in stations.values()
-    ]
     blocking = [Blocking(station=s.station, status=s.status) for s in states if not s.decided]
     return CardState(
         card_id=card_id,
         conversation_id=conversation_id,
         title=origin.title if origin is not None else None,
         origin=origin,
+        genre=genre,
         created_at=events[0].ts if events else None,
         updated_at=events[-1].ts if events else None,
         events=len(events),
@@ -579,6 +649,57 @@ def _compute(
         stations=states,
         materials=materials,
     )
+
+
+def _decision_answers(station: _Station) -> list[Answer]:
+    found = next((s for s in station.submissions if s.submission == station.decision), None)
+    return found.answers if found is not None else []
+
+
+def _decided_genre(station: _Station) -> str | None:
+    """第 1 關現在的決定裡，文體卡選的那個選項的 slug。"""
+    questions = {q.id: q for q in station.questions}
+    for answer in _decision_answers(station):
+        question = questions.get(answer.question)
+        if question is None or not _is_genre_question(question):
+            continue
+        return next((o.value for o in question.options if o.label == answer.choice), None)
+    return None
+
+
+def _is_genre_question(question: Question) -> bool:
+    return all(o.value is not None for o in question.options)
+
+
+def _example_problem(answers: list[Answer], genre: str | None, origin: Origin | None) -> str | None:
+    """第 3 關的回答能不能算作者的例子；不能就回原因（ADR-0025 §3.2）。
+
+    - 作者自己的內容才算：「其他」的文字、引用作者素材，或選了提示又在補充寫下內容。只選提示不算：
+      提示是 agent 列的「你有沒有遇過……」，不是作者的經歷。
+    - 「沒有例子」：`product-case`、`benchmark`、`postmortem` 不行（主證據是作者自己的）；
+      `essay` 只有從報告開始（有觸發它的原文）才行。
+    """
+    for answer in answers:
+        if answer.no_example:
+            if genre in AUTHOR_EVIDENCE_GENRES:
+                return (
+                    f"文體是 {genre}，主證據是作者自己的使用、測試或專案，不能「{NO_EXAMPLE_LABEL}」："
+                    "請作者補自己的例子，或回第 1 關換文體"
+                )
+            if genre == "essay" and (origin is None or origin.kind != "report_topic"):
+                return (
+                    f"文體是 essay，沒有作者的經驗時要有觸發它的原文；這張卡不是從報告開始的，"
+                    f"不能「{NO_EXAMPLE_LABEL}」：請作者補自己的例子，或回第 1 關換文體"
+                )
+            continue
+        if answer.pending:
+            continue
+        if answer.other_text is None and answer.material is None and answer.note is None:
+            return (
+                f"第 {EXAMPLE_STATION} 關的選項只是提示：要在補充寫下作者自己的例子、引用作者素材，"
+                f"或由作者選「{NO_EXAMPLE_LABEL}」"
+            )
+    return None
 
 
 def _steps(events: list[AnyEvent]) -> Iterator[AnyEvent | list[Answered]]:
@@ -618,12 +739,20 @@ def _apply_submission(stations: dict[int, _Station], batch: list[Answered]) -> N
                 choice=a.choice,
                 other_text=a.other_text,
                 pending=a.pending,
+                no_example=a.no_example,
+                material=a.material,
                 note=a.note,
             )
             for a in batch
         ],
     )
     had_decision = station.decision is not None
+    # 送出之前就算有決定的後面幾關：這次回頭改了，它們要重確認。正在問、還沒送出的不算（沒有可以沿用的）
+    affected = [
+        later
+        for later in stations.values()
+        if later.number > station.number and later.status() in _DECIDED
+    ]
     station.submissions.append(submission)
     station.reopened = False
     station.reconfirm = False
@@ -631,11 +760,10 @@ def _apply_submission(stations: dict[int, _Station], batch: list[Answered]) -> N
     if not submission.pending:
         station.decision = submission.submission
     if had_decision:
-        # 回頭改了這一關：後面已經有決定的關都要重確認（原本的決定留著當預設）
-        for later in stations.values():
-            if later.number > station.number and later.decision is not None:
-                later.reconfirm = True
-                later.kept = None
+        # 回頭改了這一關：後面有決定的關都要重確認（原本的決定留著當預設）
+        for later in affected:
+            later.reconfirm = True
+            later.kept = None
 
 
 # --- 寫 -------------------------------------------------------------------------------
@@ -699,7 +827,7 @@ def _text(value: object, name: str, limit: int, *, required: bool = True) -> str
     return stripped
 
 
-def _parse_questions(raw: object, next_id: int) -> list[Question]:
+def _parse_questions(raw: object, next_id: int, station: int) -> list[Question]:
     if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_QUESTIONS:
         raise ToolRejected(400, f"questions 要是 1～{MAX_QUESTIONS} 張問題卡")
     found: list[Question] = []
@@ -718,12 +846,26 @@ def _parse_questions(raw: object, next_id: int) -> list[Question]:
                 raise ToolRejected(400, f"{where}的選項要是物件")
             label = _text(option.get("label"), f"{where}的選項名稱", MAX_LABEL)
             description = _text(option.get("description"), f"{where}的選項說明", MAX_DESCRIPTION)
+            value = _text(option.get("value"), f"{where}的選項 value", MAX_LABEL, required=False)
             assert label is not None and description is not None
             if label == OTHER_LABEL:
                 raise ToolRejected(400, f"{where}：「{OTHER_LABEL}」一定有，不用列成選項")
-            parsed.append(Option(label=label, description=description))
+            if station == EXAMPLE_STATION and label == NO_EXAMPLE_LABEL:
+                raise ToolRejected(
+                    400, f"{where}：「{NO_EXAMPLE_LABEL}」是系統的選項，只有作者能答，不用列成提示"
+                )
+            if value is not None and (station != 1 or value not in GENRES):
+                raise ToolRejected(
+                    400,
+                    f"{where}：只有第 1 關的文體卡選項帶 value，而且要是文體的 slug"
+                    f"（{'、'.join(sorted(GENRES))}）",
+                )
+            parsed.append(Option(label=label, description=description, value=value))
         if len({o.label for o in parsed}) != len(parsed):
             raise ToolRejected(400, f"{where}的選項名稱重複了")
+        values = [o.value for o in parsed if o.value is not None]
+        if values and (len(values) != len(parsed) or len(set(values)) != len(values)):
+            raise ToolRejected(400, f"{where}：文體卡的每個選項都要帶不同的文體 slug（value）")
         header = _text(item.get("header"), f"{where}的標籤（header）", MAX_HEADER)
         question = _text(item.get("question"), f"{where}的問題", MAX_QUESTION)
         assert header is not None and question is not None
@@ -734,6 +876,11 @@ def _parse_questions(raw: object, next_id: int) -> list[Question]:
                 question=question,
                 options=tuple(parsed),
             )
+        )
+    if station == 1 and sum(1 for q in found if _is_genre_question(q)) != 1:
+        raise ToolRejected(
+            400,
+            "第 1 關要有一張文體卡（只能一張）：每個選項帶文體的 slug（value，ADR-0026 的 7 種）",
         )
     return found
 
@@ -782,7 +929,7 @@ def propose_questions(
     if parsed_origin is not None and number != 1:
         raise ToolRejected(400, "origin 只在第 1 關提出問題時給")
     # 開卡之前先驗問題卡：不合格的不留一張空卡（編號在寫進去時才照這張卡問過幾張決定）
-    _parse_questions(questions, 1)
+    _parse_questions(questions, 1, number)
     if card_id is None:
         if number != 1:
             raise ToolRejected(400, "新的編輯卡從第 1 關開始；要接著問，帶上 card")
@@ -798,7 +945,7 @@ def propose_questions(
                 ),
             )
         asked = sum(len(e.questions) for e in events if isinstance(e, QuestionsProposed))
-        parsed = _parse_questions(questions, asked + 1)
+        parsed = _parse_questions(questions, asked + 1, number)
         return [
             QuestionsProposed(
                 n=next_n,
@@ -813,13 +960,21 @@ def propose_questions(
     return _write(data, conversation_id, card_id, build)
 
 
-def _parse_answers(raw: object, station: StationState, *, allow_pending: bool) -> list[Answer]:
-    """一關的回答：剛好回答到這一關現在的每一張問題卡，每張一筆，照問題卡的順序。"""
+def _parse_answers(
+    raw: object, station: StationState, card: CardState, *, allow_pending: bool
+) -> list[Answer]:
+    """一關的回答：剛好回答到這一關現在的每一張問題卡，每張一筆，照問題卡的順序。
+
+    一筆是 `choice`（選項名稱）、`other_text`（「其他」）、`pending`（第 3 關「尚待作者提供」，只有 agent）、
+    `no_example`（第 3 關「沒有例子」）其中一個；`material`（引用作者素材 `M<n>`）可以單獨給、或跟
+    `choice`、`other_text` 一起給；`note` 是補充。
+    """
     current = {q.id: q for q in station.questions if q.current}
     if not current:
         raise ToolRejected(409, f"第 {station.station} 關還沒有提出問題卡")
     if not isinstance(raw, list):
         raise ToolRejected(400, "answers 要是清單")
+    materials = {m.id for m in card.materials}
     found: dict[str, Answer] = {}
     for item in raw:
         if not isinstance(item, dict):
@@ -835,11 +990,14 @@ def _parse_answers(raw: object, station: StationState, *, allow_pending: bool) -
             raise ToolRejected(400, f"問題卡 {question.id} 回答了兩次")
         choice = _text(item.get("choice"), "choice", MAX_LABEL, required=False)
         other_text = _text(item.get("other_text"), "other_text", MAX_OTHER_TEXT, required=False)
+        material = _text(item.get("material"), "material", MAX_LABEL, required=False)
         pending = item.get("pending", False)
-        if not isinstance(pending, bool):
-            raise ToolRejected(400, "pending 要是 true 或 false")
+        no_example = item.get("no_example", False)
+        if not isinstance(pending, bool) or not isinstance(no_example, bool):
+            raise ToolRejected(400, "pending、no_example 要是 true 或 false")
         note = _text(item.get("note"), "note", MAX_NOTE, required=False)
-        if sum((choice is not None, other_text is not None, pending)) != 1:
+        forms = sum((choice is not None, other_text is not None, pending, no_example))
+        if forms > 1 or (forms == 0 and material is None) or ((pending or no_example) and material):
             raise ToolRejected(
                 400,
                 f"問題卡 {question.id} 要給 choice（選項名稱）或 other_text（「{OTHER_LABEL}」的文字）其中一個",
@@ -848,12 +1006,27 @@ def _parse_answers(raw: object, station: StationState, *, allow_pending: bool) -
             raise ToolRejected(
                 400, f"問題卡 {question.id} 沒有選項「{choice}」；自己打的回答放 other_text"
             )
+        if material is not None and material not in materials:
+            raise ToolRejected(400, f"這張編輯卡沒有作者素材 {material}")
         if pending and not (allow_pending and station.station == EXAMPLE_STATION):
             raise ToolRejected(
                 400, f"只有第 {EXAMPLE_STATION} 關能記「{PENDING_LABEL}」，而且只有 agent 能記"
             )
+        if no_example and station.station != EXAMPLE_STATION:
+            raise ToolRejected(400, f"只有第 {EXAMPLE_STATION} 關能答「{NO_EXAMPLE_LABEL}」")
+        if _is_genre_question(question) and (choice is None or material is not None):
+            raise ToolRejected(
+                400,
+                f"問題卡 {question.id} 是文體卡：要選列出的其中一種文體（不能用「{OTHER_LABEL}」或作者素材）",
+            )
         found[question.id] = Answer(
-            question=question.id, choice=choice, other_text=other_text, pending=pending, note=note
+            question=question.id,
+            choice=choice,
+            other_text=other_text,
+            pending=pending,
+            no_example=no_example,
+            material=material,
+            note=note,
         )
     missing = [q for q in current if q not in found]
     if missing:
@@ -861,11 +1034,22 @@ def _parse_answers(raw: object, station: StationState, *, allow_pending: bool) -
             400,
             f"一關要一次回答到每一張問題卡：第 {station.station} 關還缺 {'、'.join(missing)}",
         )
-    return [found[q] for q in current]
+    answers = [found[q] for q in current]
+    if station.station == EXAMPLE_STATION:
+        problem = _example_problem(answers, card.genre, card.origin)
+        if problem is not None:
+            # 只選提示是回答的格式不對（400）；「沒有例子」跟文體對不上是這張卡的狀態不允許（409）
+            raise ToolRejected(409 if any(a.no_example for a in answers) else 400, problem)
+    return answers
 
 
 def _picked_for_me(state: StationState) -> list[Answer]:
-    """「你幫我選」：每張問題卡選排第一的選項；第 3 關只記「尚待作者提供」（ADR-0025 §3.2）。"""
+    """「你幫我選」：每張問題卡選排第一的選項，補充寫「交給 AI 選」（ADR-0025 §3.2）。
+
+    - 第 1 關的文體卡：選排最前面、不需要作者經驗的文體（`SELF_FREE_GENRES`）；一個都沒有就什麼都不記，
+      回 409 請 agent 問創作者。
+    - 第 3 關：只記「尚待作者提供」，不算有決定。
+    """
     current = [q for q in state.questions if q.current]
     if not current:
         raise ToolRejected(409, f"第 {state.station} 關還沒有提出問題卡")
@@ -874,7 +1058,20 @@ def _picked_for_me(state: StationState) -> list[Answer]:
             Answer(question=q.id, pending=True, note=f"{PICK_FOR_ME_NOTE}；{PENDING_LABEL}")
             for q in current
         ]
-    return [Answer(question=q.id, choice=q.options[0].label, note=PICK_FOR_ME_NOTE) for q in current]
+    found: list[Answer] = []
+    for question in current:
+        options = question.options
+        if _is_genre_question(question):
+            options = tuple(o for o in options if o.value in SELF_FREE_GENRES)
+            if not options:
+                listed = "、".join(sorted(SELF_FREE_GENRES))
+                raise ToolRejected(
+                    409,
+                    f"問題卡 {question.id} 列的文體都要作者自己的經驗，不能替創作者選（只能替他選 {listed}）："
+                    "請創作者自己挑文體",
+                )
+        found.append(Answer(question=question.id, choice=options[0].label, note=PICK_FOR_ME_NOTE))
+    return found
 
 
 def _record(
@@ -894,10 +1091,16 @@ def _record(
 
     def build(card: CardState, events: list[AnyEvent], next_n: int) -> tuple[list[AnyEvent], dict[str, Any]]:
         state = card.stations[number - 1]
+        if source == "agent" and state.decided:
+            # 不能蓋掉創作者剛送出（或沿用）的決定；要改就先重問
+            raise ToolRejected(
+                409,
+                f"第 {number} 關已經有決定（{state.status}），要改先用 propose_questions 重問這一關",
+            )
         if mode == "pick_for_me":
             parsed = _picked_for_me(state)
         else:
-            parsed = _parse_answers(answers, state, allow_pending=source == "agent")
+            parsed = _parse_answers(answers, state, card, allow_pending=source == "agent")
         # 送出編號：這張卡第幾次送出（跨關數）
         submission = f"sub{len({e.submission for e in events if isinstance(e, Answered)}) + 1}"
         return [
@@ -911,6 +1114,8 @@ def _record(
                 choice=a.choice,
                 other_text=a.other_text,
                 pending=a.pending,
+                no_example=a.no_example,
+                material=a.material,
                 note=a.note,
                 mode=mode,
                 quote=quote,
@@ -976,8 +1181,16 @@ def keep_decision(
 
     def build(card: CardState, events: list[AnyEvent], next_n: int) -> tuple[list[AnyEvent], dict[str, Any]]:
         state = card.stations[number - 1]
-        if not state.needs_reconfirm or state.decision is None:
-            raise ToolRejected(409, f"第 {number} 關沒有要重確認，不用沿用")
+        # 只有「要重確認」的關能沿用：正在重問、或最後一次是「尚待作者提供」的都沒有可以沿用的決定
+        if state.status != "reconfirm" or state.decision is None:
+            raise ToolRejected(
+                409, f"第 {number} 關現在是 {state.status}，沒有要重確認的決定可以沿用"
+            )
+        if number == EXAMPLE_STATION:
+            kept = next(s for s in state.submissions if s.submission == state.decision)
+            problem = _example_problem(kept.answers, card.genre, card.origin)
+            if problem is not None:
+                raise ToolRejected(409, f"第 {number} 關原本的回答不能沿用：{problem}")
         return [Kept(n=next_n, ts=now, source="ui", station=number, submission=state.decision)], {}
 
     return _write(data, conversation_id, card_id, build)
@@ -1027,11 +1240,7 @@ def add_material(
         known = next((m for m in card.materials if m.sha256 == digest), None)
         if known is not None:
             return [], {"created": False, "material": known.id}
-        try:
-            write_once(folder / "materials" / digest, payload)
-        except FileExistsError:
-            # 檔案已經在（上一次寫完檔、還沒記事件就被砍）：檔名就是內容的 sha256，內容一定一樣
-            pass
+        _store_material(folder / "materials" / digest, digest, payload)
         material = f"M{len(card.materials) + 1}"
         return [
             MaterialAdded(
@@ -1047,6 +1256,22 @@ def add_material(
         ], {"created": True, "material": material}
 
     return _write(data, conversation_id, card_id, build)
+
+
+def _store_material(target: Path, digest: str, payload: bytes) -> None:
+    """內容存成 `materials/<sha256>`：先寫暫存檔再整個換上去，讀的人不會讀到寫一半的。
+
+    檔案已經在（上一次寫完檔、還沒記事件就被砍）而且內容的 sha256 與大小都對，就不再寫；
+    對不上（舊版本寫到一半被砍留下的殘檔）就換掉。檔名就是內容的 sha256，換上去的一定是同一份內容。
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file():
+        existing = target.read_bytes()
+        if len(existing) == len(payload) and hashlib.sha256(existing).hexdigest() == digest:
+            return
+    temporary = target.with_name(f".{digest}.{os.getpid()}.{threading.get_ident()}.tmp")
+    temporary.write_bytes(payload)
+    os.replace(temporary, target)
 
 
 def material_path(data: DataDir, conversation_id: str, card_id: str, material_id: str) -> Path:
