@@ -4,6 +4,7 @@
 再看 `decisions.jsonl` 與算出來的編輯卡。不打模型、不連網。
 """
 
+import json
 import subprocess
 import sys
 import threading
@@ -353,9 +354,40 @@ def test_六關都有決定而且沒有要重確認_才放行寫稿(data: DataDi
     assert cards.require_writable(data, cid, card_id).writable is True
 
 
-def _through_last(data: DataDir, cid: str, card_id: str) -> None:
-    cards.propose_questions(data, cid, card_id, 6, [_question("框架", "甲", "乙")], now=NOW)
-    _submit(data, cid, card_id, 6, "甲")
+def _storyboard() -> dict[str, Any]:
+    """第 6 關的圖文分鏡卡（`kind: storyboard`）：每個選項帶這個方案的圖（`figures`）。"""
+    return {
+        "kind": "storyboard",
+        "header": "圖文分鏡",
+        "question": "每節配不配圖？",
+        "options": [
+            {
+                "label": "第 2 節數據圖",
+                "description": "第 1 節概念圖、第 2 節數據圖、第 3 節表格",
+                "figures": [
+                    {"section": "缺口在哪", "kind": "concept", "shows": "白天與晚上的使用者"},
+                    {"section": "數字怎麼看", "kind": "chart", "shows": "九個月的人流"},
+                    {"section": "怎麼取捨", "kind": "table"},
+                ],
+            },
+            {"label": "都不配圖", "description": "整篇只有文字", "figures": []},
+        ],
+    }
+
+
+CLAIMS = [
+    {"claim": "夜間時段頭兩個月人流最高", "wrong_if": "第三個月起的人流比頭兩個月高"},
+    {"claim": "人事費從購書預算挪過來", "wrong_if": "預算書裡購書費沒有減少"},
+]
+
+
+def _station_6(*extra: dict[str, Any]) -> list[dict[str, Any]]:
+    return [_question("框架", "甲", "乙"), _storyboard(), *extra]
+
+
+def _through_last(data: DataDir, cid: str, card_id: str, storyboard: str = "第 2 節數據圖") -> None:
+    cards.propose_questions(data, cid, card_id, 6, _station_6(), now=NOW, claims=CLAIMS)
+    _submit(data, cid, card_id, 6, "甲", storyboard)
 
 
 def test_壞掉的一行跳過_不拖垮整張卡(data: DataDir, cid: str) -> None:
@@ -938,3 +970,182 @@ def test_109_之前沒有_kind_的文體卡_照樣認得出來(data: DataDir, ci
     assert '"kind":"genre"' not in path.read_text(encoding="utf-8")
     (path.parent / "card.json").unlink()
     assert cards.read_card(data, cid, card_id).genre == "trend"
+
+
+# --- 第 6 關的主張與圖文分鏡（#110）----------------------------------------------------------
+
+
+def test_第_6_關的主張與分鏡是結構化的_寫稿從編輯卡讀得到(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+
+    _through_last(data, cid, card_id)
+
+    card = cards.read_card(data, cid, card_id)
+    assert [(c.claim, c.wrong_if) for c in card.claims] == [
+        (c["claim"], c["wrong_if"]) for c in CLAIMS
+    ]
+    assert card.storyboard is not None
+    assert [(f.section, f.kind) for f in card.storyboard] == [
+        ("缺口在哪", "concept"),
+        ("數字怎麼看", "chart"),
+        ("怎麼取捨", "table"),
+    ]
+
+
+def test_第_6_關沒決定之前_編輯卡沒有主張與分鏡(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    cards.propose_questions(data, cid, card_id, 6, _station_6(), now=NOW, claims=CLAIMS)
+
+    card = cards.read_card(data, cid, card_id)
+
+    assert (card.claims, card.storyboard) == ([], None)
+
+
+@pytest.mark.parametrize(
+    "questions, claims, needle",
+    [
+        ([_question("框架", "甲", "乙")], CLAIMS, "圖文分鏡卡"),
+        (_station_6(), None, "主張"),
+        (_station_6(), [], "主張"),
+        (_station_6(), CLAIMS * 3, "主張"),
+        (_station_6(), [{"claim": "沒有怎麼會錯"}], "wrong_if"),
+    ],
+)
+def test_第_6_關一定有一張分鏡卡與_1_到_5_條主張(
+    data: DataDir, cid: str, questions: list[dict[str, Any]], claims: Any, needle: str
+) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+
+    with pytest.raises(ToolRejected) as caught:
+        cards.propose_questions(data, cid, card_id, 6, questions, now=NOW, claims=claims)
+
+    assert caught.value.status == 400 and needle in caught.value.message
+
+
+def test_分鏡卡每個選項都要帶圖_種類只有概念圖_數據圖_表格(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    no_figures = _storyboard()
+    del no_figures["options"][1]["figures"]
+    screenshot = _storyboard()
+    screenshot["options"][0]["figures"][0]["kind"] = "screenshot"
+
+    for bad in (no_figures, screenshot):
+        with pytest.raises(ToolRejected) as caught:
+            cards.propose_questions(
+                data, cid, card_id, 6, [_question("框架", "甲", "乙"), bad], now=NOW, claims=CLAIMS
+            )
+        assert caught.value.status == 400
+
+
+def test_主張與分鏡只在第_6_關(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 1)
+
+    with pytest.raises(ToolRejected):
+        cards.propose_questions(data, cid, card_id, 2, [_storyboard()], now=NOW)
+    with pytest.raises(ToolRejected):
+        cards.propose_questions(
+            data, cid, card_id, 2, [_question("觀點", "甲", "乙")], now=NOW, claims=CLAIMS
+        )
+
+
+def test_分鏡選其他_編輯卡沒有結構化的分鏡_寫稿照文字(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    cards.propose_questions(data, cid, card_id, 6, _station_6(), now=NOW, claims=CLAIMS)
+    framework, storyboard = _current(data, cid, card_id, 6)
+    cards.submit_station(
+        data,
+        cid,
+        card_id,
+        6,
+        [
+            {"question": framework.id, "choice": "甲"},
+            {"question": storyboard.id, "other_text": "只在最後一節放一張數據圖"},
+        ],
+        now=NOW,
+    )
+
+    card = cards.read_card(data, cid, card_id)
+
+    assert card.writable is True and card.storyboard is None
+
+
+def test_110_之前的第_6_關沒有主張與分鏡_照樣讀得懂_也照樣能寫(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    # 舊紀錄：第 6 關只有一張沒有 kind 的卡、沒有 claims（直接寫進決策紀錄，模擬 #110 之前的事件）
+    path = data.conversation_dir(cid) / "cards" / card_id / "decisions.jsonl"
+    count = len(path.read_text(encoding="utf-8").splitlines())
+    old = [
+        {
+            "n": count + 1,
+            "ts": NOW.isoformat(),
+            "source": "agent",
+            "type": "questions_proposed",
+            "station": 6,
+            "questions": [
+                {
+                    "id": "q99",
+                    "header": "框架",
+                    "question": "用哪種結構？",
+                    "options": [
+                        {"label": "甲", "description": "說明"},
+                        {"label": "乙", "description": "說明"},
+                    ],
+                }
+            ],
+        },
+        {
+            "n": count + 2,
+            "ts": NOW.isoformat(),
+            "source": "ui",
+            "type": "answered",
+            "station": 6,
+            "submission": "sub99",
+            "question": "q99",
+            "choice": "甲",
+        },
+    ]
+    with path.open("a", encoding="utf-8") as handle:
+        for event in old:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    card = cards.read_card(data, cid, card_id)
+
+    assert card.writable is True
+    assert (card.claims, card.storyboard) == ([], None)
+    assert card.skipped_lines == 0
+
+
+def test_寫稿用的編輯卡摘要_只放現在的決定_沒有時間與卡_id(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    _through_last(data, cid, card_id)
+    taken = cards.snapshot(data, cid, card_id)
+
+    brief = cards.writing_brief(taken.card)
+
+    assert card_id not in brief and "2026" not in brief
+    assert "上個月的帳單三千元" in brief  # 第 3 關作者自己的例子
+    for claim in CLAIMS:
+        assert claim["claim"] in brief and claim["wrong_if"] in brief
+    # 圖位照分鏡編號：概念圖與數據圖才有圖位，表格沒有
+    assert "./images/fig-1.webp" in brief and "./images/fig-2.webp" in brief
+    assert "./images/fig-3.webp" not in brief
+    # 同一張卡的摘要每次都一樣：請求逐位元組相同，快取與重播才對得上
+    assert cards.writing_brief(cards.snapshot(data, cid, card_id).card) == brief
+
+
+def test_圖位只算概念圖與數據圖_照分鏡的順序編號(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 5)
+    _through_last(data, cid, card_id)
+
+    card = cards.read_card(data, cid, card_id)
+
+    assert [(n, f.kind) for n, f in cards.figure_slots(card)] == [(1, "concept"), (2, "chart")]

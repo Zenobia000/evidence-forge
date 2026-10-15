@@ -47,7 +47,9 @@ def test_提示詞提到的工具都在對話的工具清單裡_畫面才能叫�
 
 def test_訪談不叫_rewrite_寫新文章() -> None:
     writing = PROMPT[PROMPT.index("### Writing") :]
-    assert "Do not call `rewrite` for an interview card" in writing
+    assert "`rewrite` cannot start a new article" in writing
+    # 照編輯卡寫稿只由創作者在畫面上按（#110）：agent 叫不到
+    assert "「照這張編輯卡寫稿」 on screen" in writing and "You cannot start it yourself" in writing
     # 舊的「寫第 N 個 → rewrite」規則拿掉了（ADR-0025 §3.5）
     assert "suggested_genre` to the topic" not in PROMPT
 

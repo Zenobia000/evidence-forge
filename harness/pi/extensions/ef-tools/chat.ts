@@ -168,7 +168,7 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "rewrite",
       label: "Rewrite",
       description:
-        "Start a rewrite job: revise a previous article of this conversation (from_job is that article's rewrite job), as a persona, in a genre. Returns at once with a job id; an [ef-job] notice arrives when it ends. Do not wait or poll. Call it only when the creator asks for a revision. A new article starts with an interview on an editorial card, not with this tool; writing from an editorial card is not connected yet. Only one job of this conversation can run at a time; if one is running, the call fails and says so.",
+        "Start a rewrite job: revise a previous article of this conversation (from_job is that article's rewrite job), as a persona, in a genre. Returns at once with a job id; an [ef-job] notice arrives when it ends. Do not wait or poll. Call it only when the creator asks for a revision. A new article starts with an interview on an editorial card, not with this tool; once the card is complete, the creator starts the writing on screen (「照這張編輯卡寫稿」). Only one job of this conversation can run at a time; if one is running, the call fails and says so.",
       parameters: Type.Object({
         from_job: Type.String({
           description: "The previous rewrite job whose article the creator wants revised. Must be a job of this conversation",

@@ -74,7 +74,8 @@ CHAT_TOOLS = (
     | CARD_TOOLS
 )
 # 只有畫面能叫的入口（ADR-0025 §3.3）：閘道的 /tools/ 拿任何鑰匙來都拒絕，對話主機的 API 直接叫 `cards.py`
-UI_ONLY_TOOLS = frozenset({"submit_station", "keep_decision", "reask_station"})
+# 「照這張編輯卡寫稿」也是創作者按的（#110）：花錢開寫稿工單，只由畫面經對話主機叫
+UI_ONLY_TOOLS = frozenset({"submit_station", "keep_decision", "reask_station", "write_from_card"})
 # 還會花錢的狀態：排隊中的單等一下就會跑
 _RUNNING = frozenset({"queued", "running"})
 
@@ -216,6 +217,7 @@ class ChatTools:
                 body.get("questions"),
                 now=now,
                 origin=body.get("origin"),
+                claims=body.get("claims"),
             )
         elif name == "add_material":
             written = cards.add_material(

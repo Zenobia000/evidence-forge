@@ -155,7 +155,9 @@ def test_作者素材經閘道記_同一份內容拿回原本的編號(env: Env)
 
 
 @pytest.mark.promise("FR-IW-03", "NFR-SEC-02")
-@pytest.mark.parametrize("tool", ["submit_station", "keep_decision", "reask_station"])
+@pytest.mark.parametrize(
+    "tool", ["submit_station", "keep_decision", "reask_station", "write_from_card"]
+)
 def test_畫面的入口對話的_agent_叫不到_段也叫不到(env: Env, tool: str) -> None:
     card_id = _ok(env.call("propose_questions", env.mine, station=1, questions=STATION_1))["card_id"]
 
@@ -207,3 +209,56 @@ def test_問題卡不合格_回_400_說原因(env: Env) -> None:
     response = env.call("propose_questions", env.mine, station=1, questions=bad)
     assert response.status_code == 400
     assert "選項" in response.json()["error"]
+
+
+@pytest.mark.promise("FR-IW-02")
+def test_第_6_關的主張清單經閘道記在提出問題那一筆(env: Env) -> None:
+    card_id = _ok(env.call("propose_questions", env.mine, station=1, questions=STATION_1))["card_id"]
+    folder = env.data.conversation_dir(env.mine.conversation_id)
+    assert folder.is_dir()
+    for station in range(1, 6):
+        state = cards.read_card(env.data, env.mine.conversation_id, card_id).stations[station - 1]
+        answers = [
+            {"question": q.id, "choice": q.options[0].label, "note": "作者自己的例子"}
+            for q in state.questions
+            if q.current
+        ]
+        cards.submit_station(env.data, env.mine.conversation_id, card_id, station, answers, now=NOW)
+        if station < 5:
+            _ok(
+                env.call(
+                    "propose_questions",
+                    env.mine,
+                    card=card_id,
+                    station=station + 1,
+                    questions=[
+                        {
+                            "header": f"第{station + 1}關",
+                            "question": "選哪個？",
+                            "options": [
+                                {"label": "甲", "description": "說明"},
+                                {"label": "乙", "description": "說明"},
+                            ],
+                        }
+                    ],
+                )
+            )
+    claims = [{"claim": "每月三千元", "wrong_if": "帳單不是這個數"}]
+    storyboard = {
+        "kind": "storyboard",
+        "header": "圖文分鏡",
+        "question": "每節配不配圖？",
+        "options": [
+            {"label": "一張數據圖", "description": "第 2 節", "figures": [{"section": "帳單", "kind": "chart"}]},
+            {"label": "不配圖", "description": "只有文字", "figures": []},
+        ],
+    }
+
+    body = _ok(
+        env.call("propose_questions", env.mine, card=card_id, station=6, questions=[storyboard], claims=claims)
+    )
+
+    [event] = body["events"]
+    assert event["claims"] == claims
+    missing = env.call("propose_questions", env.mine, card=card_id, station=6, questions=[storyboard])
+    assert missing.status_code == 400 and "claims" in missing.json()["error"]

@@ -303,11 +303,21 @@ def station_questions(station: int, origin: str, personas: int = 1) -> list[dict
             "options": [_option("四節", "缺口、成本、數字、取捨"), _option("三節", "缺口、成本、取捨")],
         },
         {
+            "kind": "storyboard",
             "header": "圖文分鏡",
             "question": "每節配不配圖？",
             "options": [
-                _option("第 3 節數據圖", "其餘不配圖；第 2 節用 Markdown 表格"),
-                _option("第 1 節概念圖", "其餘不配圖"),
+                {
+                    **_option("第 3 節數據圖", "其餘不配圖；第 2 節用 Markdown 表格"),
+                    "figures": [
+                        {"section": "成本", "kind": "table"},
+                        {"section": "數字", "kind": "chart", "shows": "九個月的人流"},
+                    ],
+                },
+                {
+                    **_option("第 1 節概念圖", "其餘不配圖"),
+                    "figures": [{"section": "缺口", "kind": "concept"}],
+                },
             ],
         },
         {
@@ -383,16 +393,27 @@ def _start(
     return "text", "第 1 關的問題卡在畫面上了。"
 
 
+# 第 6 關的主張清單（#110）：跟「主張」那張卡的問題列的是同一份
+STATION_6_CLAIMS = [
+    {"claim": "晚上平均 42 人", "wrong_if": "館方數字只有頭兩個月"},
+    {"claim": "人事費每月六萬", "wrong_if": "預算書不是這個數"},
+]
+
+
 def _propose(card: _Card, station: int) -> tuple[str, Any]:
-    return _tool(
-        "propose_questions",
-        {"card": card.card_id, "station": station, "questions": station_questions(station, card.origin)},
-    )
+    body: dict[str, Any] = {
+        "card": card.card_id,
+        "station": station,
+        "questions": station_questions(station, card.origin),
+    }
+    if station == 6:
+        body["claims"] = STATION_6_CLAIMS
+    return _tool("propose_questions", body)
 
 
 def _next_step(card: _Card) -> tuple[str, Any]:
     if card.writable:
-        return "text", "編輯卡六關都有決定了。照編輯卡寫稿還沒接上，之後會加。"
+        return "text", "編輯卡六關都有決定了。在畫面上按「照這張編輯卡寫稿」就會開始寫。"
     station = card.current
     if station is not None and card.statuses.get(station) == "not_reached":
         return _propose(card, station)

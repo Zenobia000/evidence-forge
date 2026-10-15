@@ -24,6 +24,9 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
   #109 之前提出、沒有主題卡的第 1 關照舊算得出來（`theme` 是 None），只是新提出的一定要有。
   #109 之前的文體卡沒有 `kind`：每個選項都帶 `value` 的那張就是文體卡（舊紀錄照樣讀得懂）。
   第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
+  第 6 關一定有一張圖文分鏡卡（`kind: storyboard`，每個選項帶這個方案的圖 `figures[{section, kind, shows?}]`，
+  種類只有概念圖、數據圖、表格）與一份主張清單（`claims[{claim, wrong_if}]`，1～5 條，記在提出問題這一筆上，#110）。
+  寫稿照這兩個結構化的欄位寫、檢查圖位，不從問題文字裡猜。#110 之前的第 6 關沒有這兩欄，照樣讀得懂。
 - `answered`：一張問題卡一筆；一關送出時一批寫（同一個 `submission`，一次 write 寫完）。
   `choice`（選的選項名稱）、`other_text`（「其他」的文字）、`pending`（第 3 關「尚待作者提供」）、
   `no_example`（第 3 關「沒有例子」）四選一；`material`（引用作者素材 `M<n>`）可以單獨給或跟著前兩種；加 `note`。
@@ -42,6 +45,9 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
 - 六關都有決定、沒有要重確認，`writable` 才是 true；寫稿工具用 `require_writable` 再查一次（最後一道關）。
   寫稿的快照用 `snapshot`（拿著鎖一次讀出編輯卡與事件），不讀 `card.json`。
 - 讀不懂的一行跳過（`skipped_lines`），不拖垮整張卡。
+- 第 6 關有決定時，`claims` 是那次送出回答的那一組問題卡帶的主張，`storyboard` 是分鏡卡選的那個方案的圖
+  （選「其他」自己寫、或 #110 之前的紀錄就是 None：寫稿照文字寫，圖位不查）。
+- 寫稿工單讀的是 `writing_brief`：只有現在的決定，沒有時間與卡 id（請求逐位元組相同，快取與重播才對得上）。
 """
 
 import fcntl
@@ -52,7 +58,7 @@ import secrets
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -106,8 +112,16 @@ SELF_FREE_GENRES = frozenset(
 AUTHOR_EVIDENCE_GENRES = frozenset({"product-case", "benchmark", "postmortem"})
 # 主題（ADR-0026 §3.2）：清單只有一份，`harness/genres/themes.md`
 THEMES = default_harness().theme_slugs()
-# 第 1 關帶結構化值的問題卡（#109）：選項的 `value` 是文體、主題的 slug，或角色名稱
-QuestionKind = Literal["genre", "theme", "persona"]
+# 帶結構化值的問題卡：第 1 關的文體、主題、角色卡（#109，選項的 `value` 是 slug 或角色名稱），
+# 第 6 關的圖文分鏡卡（#110，選項的 `figures` 是這個方案的圖）
+QuestionKind = Literal["genre", "theme", "persona", "storyboard"]
+# 框架、主幹與圖文分鏡（ADR-0025 §3.2）：分鏡卡與主張清單都在這一關
+STORYBOARD_STATION = 6
+# 分鏡排得出來的種類（ADR-0027 §3.1）：概念圖、數據圖有圖位；表格由寫稿寫成 Markdown 表格，不留圖位
+FigureKind = Literal["concept", "chart", "table"]
+FIGURE_KINDS: frozenset[str] = frozenset({"concept", "chart", "table"})
+DRAWN_KINDS: frozenset[str] = frozenset({"concept", "chart"})
+FIGURE_NAMES: dict[str, str] = {"concept": "概念圖", "chart": "數據圖", "table": "表格"}
 
 MAX_QUESTIONS = 4
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
@@ -120,6 +134,12 @@ MAX_OTHER_TEXT = 4000
 MAX_QUOTE = 4000
 MAX_TITLE = 120
 MAX_FILENAME = 200
+# 第 6 關的主張清單（ADR-0025 §3.2：寫之前在主張層級看）與分鏡的一張圖
+MIN_CLAIMS, MAX_CLAIMS = 1, 5
+MAX_CLAIM = 300
+MAX_FIGURES = 12
+MAX_SECTION = 80
+MAX_SHOWS = 200
 # 作者素材一份的上限：口述的逐字稿也放得下，又不會塞爆資料目錄
 MAX_MATERIAL_BYTES = 2_000_000
 
@@ -134,6 +154,16 @@ _DECIDED: frozenset[str] = frozenset({"decided", "changed", "kept"})
 # --- 事件 -------------------------------------------------------------------------------
 
 
+class Figure(BaseModel):
+    """圖文分鏡的一張圖：放在哪一節、哪一種、讀者這時要看到什麼（ADR-0025 §3.2、ADR-0027 §3.1）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    section: str
+    kind: FigureKind
+    shows: str | None = None
+
+
 class Option(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -141,6 +171,17 @@ class Option(BaseModel):
     description: str
     # 第 1 關文體、主題、角色卡的選項才有：文體或主題的 slug、角色名稱（照問題卡的 `kind`）
     value: str | None = None
+    # 第 6 關分鏡卡的選項才有：這個方案的每一張圖，照文章的順序（空的是整篇不配圖）
+    figures: tuple[Figure, ...] | None = None
+
+
+class Claim(BaseModel):
+    """第 6 關列給創作者看的一條主張，與它怎麼會被證明是錯的（ADR-0025 §3.2）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    claim: str
+    wrong_if: str
 
 
 class Question(BaseModel):
@@ -178,6 +219,8 @@ class QuestionsProposed(_Event):
     station: int
     questions: tuple[Question, ...]
     origin: Origin | None = None
+    # 第 6 關才有：文章會提出的主張（#110）。#110 之前的紀錄沒有這欄
+    claims: tuple[Claim, ...] | None = None
 
 
 class Answered(_Event):
@@ -330,6 +373,10 @@ class CardState(BaseModel):
     blocking: list[Blocking] = Field(default_factory=list)
     stations: list[StationState]
     materials: list[Material] = Field(default_factory=list)
+    # 第 6 關現在的決定的主張清單與分鏡（#110）；還沒決定、#110 之前的紀錄是空的與 None，
+    # 分鏡選「其他」自己寫的也是 None（寫稿照文字寫，圖位不查）
+    claims: list[Claim] = Field(default_factory=list)
+    storyboard: list[Figure] | None = None
 
 
 @dataclass(frozen=True)
@@ -548,6 +595,8 @@ class _Station:
     reconfirm: bool = False
     kept: KeptDecision | None = None
     reasked_at: datetime | None = None
+    # 問題卡 id → 提出它的那一筆帶的主張（第 6 關，#110）
+    claims: dict[str, tuple[Claim, ...]] = field(default_factory=dict)
 
     def latest(self) -> Submission | None:
         return self.submissions[-1] if self.submissions else None
@@ -592,6 +641,8 @@ def _compute(
                 for q in event.questions
             )
             station.current = tuple(q.id for q in event.questions)
+            if event.claims is not None:
+                station.claims.update((q.id, event.claims) for q in event.questions)
             # 已經送出過的一關又提出新的問題卡：回到還沒送出，原本的決定留著當預設。
             # 要重確認的關也一樣：重新問就是要重新送出，不再能沿用
             if station.submissions:
@@ -655,6 +706,8 @@ def _compute(
             )
         )
     blocking = [Blocking(station=s.station, status=s.status) for s in states if not s.decided]
+    last = stations[STORYBOARD_STATION]
+    claims, storyboard = _decided_plan(last) if last.status() in _DECIDED else ((), None)
     return CardState(
         card_id=card_id,
         conversation_id=conversation_id,
@@ -672,6 +725,8 @@ def _compute(
         blocking=blocking,
         stations=states,
         materials=materials,
+        claims=list(claims),
+        storyboard=None if storyboard is None else list(storyboard),
     )
 
 
@@ -689,6 +744,119 @@ def _decided_value(station: _Station, kind: QuestionKind) -> str | None:
             continue
         return next((o.value for o in question.options if o.label == answer.choice), None)
     return None
+
+
+def _decided_plan(station: _Station) -> tuple[tuple[Claim, ...], tuple[Figure, ...] | None]:
+    """第 6 關現在的決定：那一組問題卡帶的主張，與分鏡卡選的那個方案的圖。"""
+    answers = _decision_answers(station)
+    claims = next((station.claims[a.question] for a in answers if a.question in station.claims), ())
+    questions = {q.id: q for q in station.questions}
+    for answer in answers:
+        question = questions.get(answer.question)
+        if question is None or question.kind != "storyboard" or answer.choice is None:
+            continue
+        option = next((o for o in question.options if o.label == answer.choice), None)
+        if option is not None and option.figures is not None:
+            return claims, option.figures
+    return claims, None
+
+
+def figure_slots(card: CardState) -> list[tuple[int, Figure]]:
+    """分鏡裡要留圖位的圖（概念圖、數據圖），照順序編號 1 起；表格不留圖位（ADR-0027 §3.1）。"""
+    drawn = [f for f in card.storyboard or () if f.kind in DRAWN_KINDS]
+    return list(enumerate(drawn, start=1))
+
+
+def figure_path(number: int) -> str:
+    """第 N 張圖的圖位路徑（配圖照這個檔名產圖，ADR-0027）。"""
+    return f"./images/fig-{number}.webp"
+
+
+# 寫稿工單裡作者素材放的地方（ADR-0025 §3.4：照 sha256 放）
+SNAPSHOT_MATERIALS = "input/card/materials/"
+_ORIGIN_WORDS = {
+    "report_topic": "從分析報告的第 {topic} 個題材開始：有原文，參考來源第一條是原文",
+    "idea": "從創作者自己的想法開始：沒有原文",
+    "material": "從創作者的作者素材開始：沒有原文",
+}
+
+
+def writing_brief(card: CardState) -> str:
+    """寫稿工單讀的編輯卡（`input/card/card.md`）：只放現在的決定，給模型讀（ADR-0025 §3.4）。
+
+    完整的編輯卡與決策紀錄也放進快照，但那兩份很長（問過的、沒選的都在）；寫稿只要這一份。
+    不放時間、卡 id、送出編號：同一張卡的決定一樣，這一份就逐位元組一樣，快取與重播才對得上。
+    """
+    lines = ["# 編輯卡", ""]
+    if card.origin is not None:
+        lines.append("- 起點：" + _ORIGIN_WORDS[card.origin.kind].format(topic=card.origin.topic))
+        if card.origin.title:
+            lines.append(f"- 題材：{card.origin.title}")
+    else:
+        lines.append("- 起點：沒有記下（當成沒有原文）")
+    lines.append(f"- 文體：{card.genre or '（沒有記下）'}")
+    lines.append(f"- 主題：{card.theme or '（沒有記下）'}")
+    lines.append(f"- 角色：{card.persona or 'me'}")
+    materials = {m.id: m for m in card.materials}
+    for state in card.stations[1:]:
+        lines += ["", f"## 第 {state.station} 關：{state.name}", ""]
+        decision = next((s for s in state.submissions if s.submission == state.decision), None)
+        questions = {q.id: q for q in state.questions}
+        for answer in decision.answers if decision is not None else []:
+            question = questions.get(answer.question)
+            if question is None:
+                continue
+            lines.append(f"- {question.header}：{question.question}")
+            lines += [f"  - {part}" for part in _answer_lines(question, answer, materials)]
+    lines += ["", "## 主張（寫之前創作者看過的）", ""]
+    if card.claims:
+        lines += [f"{n}. {c.claim}（錯在：{c.wrong_if}）" for n, c in enumerate(card.claims, start=1)]
+    else:
+        lines.append("（這張卡沒有結構化的主張清單：照第 6 關「主張」那張卡的問題與回答）")
+    lines += ["", "## 圖文分鏡與圖位", ""]
+    if card.storyboard is None:
+        lines.append("（這張卡沒有結構化的分鏡：照第 6 關「圖文分鏡」那張卡的回答留圖位）")
+    elif not card.storyboard:
+        lines.append("整篇不配圖。")
+    else:
+        drawn = 0
+        for figure in card.storyboard:
+            shows = f"：{figure.shows}" if figure.shows else ""
+            if figure.kind in DRAWN_KINDS:
+                # 跟 `figure_slots` 同一種編法：概念圖與數據圖照順序 1、2…
+                drawn += 1
+                where = f"圖位 {figure_path(drawn)}"
+            else:
+                where = "寫成 Markdown 表格，不留圖位"
+            lines.append(f"- 「{figure.section}」那一節，{FIGURE_NAMES[figure.kind]}{shows}（{where}）")
+    if card.materials:
+        lines += ["", "## 作者素材", ""]
+        for material in card.materials:
+            name = f"，{material.filename}" if material.filename else ""
+            lines.append(
+                f"- {material.id}{name}：{SNAPSHOT_MATERIALS}{material.sha256}（{material.size} bytes）"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _answer_lines(question: StationQuestion, answer: Answer, materials: dict[str, Material]) -> list[str]:
+    """一張問題卡現在的回答，給寫稿讀的幾行。"""
+    found: list[str] = []
+    if answer.no_example:
+        found.append(f"作者自己說：{NO_EXAMPLE_LABEL}")
+    if answer.choice is not None:
+        option = next((o for o in question.options if o.label == answer.choice), None)
+        described = f"——{option.description}" if option is not None else ""
+        found.append(f"選了：{answer.choice}{described}")
+    if answer.other_text is not None:
+        found.append(f"創作者自己寫：{answer.other_text}")
+    if answer.material is not None:
+        material = materials.get(answer.material)
+        where = f"（{SNAPSHOT_MATERIALS}{material.sha256}）" if material is not None else ""
+        found.append(f"引用作者素材 {answer.material}{where}")
+    if answer.note is not None:
+        found.append(f"補充：{answer.note}")
+    return found
 
 
 def question_kind(question: Question) -> QuestionKind | None:
@@ -898,10 +1066,12 @@ def _parse_questions(
                 400, f"{where}要有 {MIN_OPTIONS}～{MAX_OPTIONS} 個選項（「{OTHER_LABEL}」一定有，不用給）"
             )
         raw_kind = item.get("kind")
-        if raw_kind is not None and raw_kind not in _KIND_NAMES:
-            raise ToolRejected(400, f"{where}：kind 要是 genre、theme 或 persona")
-        if raw_kind is not None and station != 1:
+        if raw_kind is not None and raw_kind not in (*_KIND_NAMES, "storyboard"):
+            raise ToolRejected(400, f"{where}：kind 要是 genre、theme、persona 或 storyboard")
+        if raw_kind in _KIND_NAMES and station != 1:
             raise ToolRejected(400, f"{where}：只有第 1 關的文體、主題、角色卡帶 kind")
+        if raw_kind == "storyboard" and station != STORYBOARD_STATION:
+            raise ToolRejected(400, f"{where}：圖文分鏡卡只在第 {STORYBOARD_STATION} 關")
         kind: QuestionKind | None = raw_kind
         parsed: list[Option] = []
         for option in options:
@@ -919,14 +1089,15 @@ def _parse_questions(
                 )
             if value is not None and station != 1:
                 raise ToolRejected(400, f"{where}：只有第 1 關的文體、主題、角色卡選項帶 value")
-            parsed.append(Option(label=label, description=description, value=value))
+            figures = _parse_figures(option.get("figures"), f"{where}的選項「{label}」", kind)
+            parsed.append(Option(label=label, description=description, value=value, figures=figures))
         if len({o.label for o in parsed}) != len(parsed):
             raise ToolRejected(400, f"{where}的選項名稱重複了")
         values = [o.value for o in parsed if o.value is not None]
         if kind is None and values:
             # 沒寫 kind 卻帶 value：#109 之前的文體卡寫法，照文體卡驗
             kind = "genre"
-        if kind is not None:
+        if kind is not None and kind != "storyboard":
             name = _KIND_NAMES[kind]
             if len(values) != len(parsed) or len(set(values)) != len(values):
                 raise ToolRejected(400, f"{where}：{name}卡的每個選項都要帶不同的 value")
@@ -965,7 +1136,65 @@ def _parse_questions(
         )
     if sum(1 for q in found if q.kind == "persona") > 1:
         raise ToolRejected(400, "第 1 關的角色卡只能一張")
+    # 寫稿照分鏡留圖位、配圖照它產圖（#110）：第 6 關一定有一張結構化的分鏡卡
+    if station == STORYBOARD_STATION and sum(1 for q in found if q.kind == "storyboard") != 1:
+        raise ToolRejected(
+            400,
+            f"第 {STORYBOARD_STATION} 關要有一張圖文分鏡卡（只能一張）：kind 是 storyboard，"
+            "每個選項帶 figures（每張圖的 section、kind：concept、chart 或 table）",
+        )
     return found
+
+
+def _parse_figures(raw: object, where: str, kind: QuestionKind | None) -> tuple[Figure, ...] | None:
+    """分鏡卡選項的圖：每張 `section`、`kind`（concept、chart、table）、`shows`（可以不給）。"""
+    if kind != "storyboard":
+        if raw is not None:
+            raise ToolRejected(400, f"{where}：只有圖文分鏡卡的選項帶 figures")
+        return None
+    if not isinstance(raw, list) or len(raw) > MAX_FIGURES:
+        raise ToolRejected(
+            400, f"{where}：分鏡卡的每個選項都要帶 figures（0～{MAX_FIGURES} 張；整篇不配圖就給空的）"
+        )
+    found: list[Figure] = []
+    for number, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ToolRejected(400, f"{where}的第 {number} 張圖要是物件")
+        figure_kind = item.get("kind")
+        if figure_kind not in FIGURE_KINDS:
+            raise ToolRejected(
+                400,
+                f"{where}的第 {number} 張圖：kind 要是 concept（概念圖）、chart（數據圖）或 table（表格）；"
+                "這個里程碑不排截圖",
+            )
+        section = _text(item.get("section"), f"{where}的第 {number} 張圖的 section", MAX_SECTION)
+        shows = _text(item.get("shows"), f"{where}的第 {number} 張圖的 shows", MAX_SHOWS, required=False)
+        assert section is not None
+        found.append(Figure(section=section, kind=figure_kind, shows=shows))
+    return tuple(found)
+
+
+def _parse_claims(raw: object, station: int) -> tuple[Claim, ...] | None:
+    """第 6 關的主張清單：1～5 條，每條有主張與怎麼會被證明是錯的（ADR-0025 §3.2）。別的關不帶。"""
+    if station != STORYBOARD_STATION:
+        if raw is not None:
+            raise ToolRejected(400, f"只有第 {STORYBOARD_STATION} 關帶主張清單（claims）")
+        return None
+    if not isinstance(raw, list) or not MIN_CLAIMS <= len(raw) <= MAX_CLAIMS:
+        raise ToolRejected(
+            400,
+            f"第 {STORYBOARD_STATION} 關要帶主張清單 claims：{MIN_CLAIMS}～{MAX_CLAIMS} 條，"
+            "每條是 claim（文章會提出的主張）與 wrong_if（怎麼會被證明是錯的）",
+        )
+    found: list[Claim] = []
+    for number, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ToolRejected(400, f"第 {number} 條主張要是物件")
+        claim = _text(item.get("claim"), f"第 {number} 條主張的 claim", MAX_CLAIM)
+        wrong_if = _text(item.get("wrong_if"), f"第 {number} 條主張的 wrong_if", MAX_CLAIM)
+        assert claim is not None and wrong_if is not None
+        found.append(Claim(claim=claim, wrong_if=wrong_if))
+    return tuple(found)
 
 
 def _parse_origin(data: DataDir, conversation_id: str, raw: object) -> Origin | None:
@@ -1000,8 +1229,11 @@ def propose_questions(
     *,
     now: datetime,
     origin: object = None,
+    claims: object = None,
 ) -> Written:
     """記下 agent 提出的問題卡（`source: agent`）；`card_id` 是 None 就開一張新卡。
+
+    第 6 關另外帶主張清單（`claims`，#110）；別的關不帶。
 
     一關一關往下：前面每一關都要有決定才能問這一關（ADR-0025 §3.2「這一關送出才往下」）。
     同一關再提出一次（重問、補問「尚待作者提供」那一題）可以，原本的回答留著當預設。
@@ -1014,6 +1246,7 @@ def propose_questions(
     # 開卡之前先驗問題卡：不合格的不留一張空卡（編號在寫進去時才照這張卡問過幾張決定）
     known_personas = personas(data)
     _parse_questions(questions, 1, number, known_personas)
+    parsed_claims = _parse_claims(claims, number)
     if card_id is None:
         if number != 1:
             raise ToolRejected(400, "新的編輯卡從第 1 關開始；要接著問，帶上 card")
@@ -1038,6 +1271,7 @@ def propose_questions(
                 station=number,
                 questions=tuple(parsed),
                 origin=parsed_origin,
+                claims=parsed_claims,
             )
         ], {}
 
@@ -1099,7 +1333,8 @@ def _parse_answers(
         if no_example and station.station != EXAMPLE_STATION:
             raise ToolRejected(400, f"只有第 {EXAMPLE_STATION} 關能答「{NO_EXAMPLE_LABEL}」")
         kind = question_kind(question)
-        if kind is not None and (choice is None or material is not None):
+        # 分鏡卡可以用「其他」自己寫（寫稿照文字寫，圖位不查）；第 1 關的三種卡只能選列出的
+        if kind in _KIND_NAMES and (choice is None or material is not None):
             raise ToolRejected(
                 400,
                 f"問題卡 {question.id} 是{_KIND_NAMES[kind]}卡：要選列出的其中一個"
