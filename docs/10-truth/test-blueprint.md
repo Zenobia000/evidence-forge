@@ -75,7 +75,7 @@ def test_重啟後前幾次呼叫回放不收費(tmp_path: Path) -> None:
 | FR-MD-01 | `local`／`strong`／`max` 別名在閘道；連續不合格才升級；基礎設施故障不升級 | 單元＋整合（SEAM-03、05）＋驗收 | presubmit／exit-gate | S0.4、S0.6 | 未寫／TC-RUNNER-04、09、TC-GATEWAY-04 |
 | FR-LG-01 | 每次模型、抓取、腳本呼叫在該單 `ledger.jsonl` 記一筆；還沒有工單的投入抓取記在 `$EF_DATA/ledger/intake.jsonl`；都只有閘道寫 | 單元＋整合（SEAM-02、04、09）＋驗收 | presubmit／exit-gate | S0.4、S0.5 | 未寫／TC-INTAKE-02、TC-LEDGER-01、02 |
 | FR-LG-02 | 單張 `bill.md`、每月總表（含訂閱源分項，S0 只有「手動」）、每篇通過文章的平均成本＝本月全部花費（含丟棄、失敗的單與投入抓取）÷ 本月通過篇數，全由帳本算 | 單元（SEAM-11）＋整合（SEAM-08、11）＋驗收 | presubmit／exit-gate | S0.10、S0.12 | 未寫／TC-BILL-01、02、03 |
-| NFR-COST-01 | 雲端呼叫先預留；工單預算或本月額度（預設 US$10，Asia/Taipei 日曆月）不夠就拒絕，「未完成：預算用完／本月額度用完」 | 單元＋整合（SEAM-04）＋驗收 | presubmit／exit-gate | S0.4 | 未寫／TC-LEDGER-02、03 |
+| NFR-COST-01 | 雲端呼叫先預留；工單預算或本月額度（有設才擋，預設不設，ADR-0027 §3.6；Asia/Taipei 日曆月）不夠就拒絕，「未完成：預算用完／本月額度用完」 | 單元＋整合（SEAM-04）＋驗收 | presubmit／exit-gate | S0.4 | 未寫／TC-LEDGER-02、03 |
 | NFR-COST-02 | 同段同次相同請求回放，當機重跑不重付 | 整合（SEAM-04、10）＋驗收 | presubmit／exit-gate | S0.4、S0.6 | 未寫／TC-RUNNER-03 |
 | NFR-COST-03 | 同網址抓取跨工單共用快取，期限是設定值（預設 7 天） | 單元（注入時鐘）＋整合（SEAM-02、09）＋驗收 | presubmit／exit-gate | S0.5 | 未寫／TC-INTAKE-02、05、13 |
 | NFR-COST-06 | 自動化測試一律重播，不打付費 API | 靜態（S0.13）＋整合（SEAM-04、pipeline）＋驗收 | presubmit／exit-gate | S0.4、S0.13 | 未寫／TC-GATEWAY-05 |

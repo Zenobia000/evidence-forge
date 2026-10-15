@@ -25,7 +25,7 @@ Feature: 帳本、預算與帳單
 
   @sad-path
   Scenario: 每月額度用完就拒絕
-    Given 每月上限是 US$10，依 Asia/Taipei 的日曆月計算，本月已花 US$9.98
+    Given 創作者設了每月上限 US$10（預設不設，ADR-0027），依 Asia/Taipei 的日曆月計算，本月已花 US$9.98
     And 這張工單自己的預算還很充足
     When 重構段送出一個估計最高花費 US$0.05 的請求
     Then 閘道拒絕，回傳 budget_exceeded，原因寫明是本月額度

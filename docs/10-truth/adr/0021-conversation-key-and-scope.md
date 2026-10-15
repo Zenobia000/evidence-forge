@@ -4,6 +4,7 @@
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **補充 ADR-0011 §3.6**（工單身分）與 **ADR-0019 §4**（對話要另外定義鑰匙與範圍）。
 > 草稿由 #80 的 spike 起草（分支 `spike/p2-pi-rpc-chat`，結論在 #80 的留言），#84 實作閘道這一半。
+> **後續修正：ADR-0025**——§3.4 的對話工具多三個：`propose_options`、`record_decision`、`read_card`。前兩個會寫這個對話的決策紀錄（`cards/<卡 id>/decisions.jsonl`），所以「對話沒有任何寫檔工具」改成：對話不能寫報告與文章，只能經閘道寫自己的決策紀錄；範圍照舊只到這個對話自己的資料夾。
 
 ## 1. 背景與問題
 
