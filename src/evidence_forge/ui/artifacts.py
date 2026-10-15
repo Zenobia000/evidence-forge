@@ -638,7 +638,7 @@ def report_view(data: DataDir, info: JobInfo) -> ReportView:
     if isinstance(brief, dict):
         genre = brief.get("genre")
         if isinstance(genre, dict) and isinstance(genre.get("primary"), str):
-            tags.append(f"文類：{genre_name(genre['primary'])}")
+            tags.append(f"文體：{genre_name(genre['primary'])}")
         tags += [f"主題：{t}" for t in brief.get("topics", []) if isinstance(t, str)]
     return ReportView(
         error=None,

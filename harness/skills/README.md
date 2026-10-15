@@ -36,18 +36,17 @@ Agent Skills 標準把 `schema.json` 列成可選，但我們的執行器用它�
 ## 2. agent 只看得到 `SKILL.md` 和工單資料夾
 
 `SKILL.md` 整份放進系統提示（ADR-0018），`read_file` 只能讀工單資料夾。所以 skill 資料夾裡的其他檔（`templates/`、範例）、
-`harness/genres/`、`harness/conversions/`、`$EF_DATA/authors/` agent 都讀不到。
+`harness/genres/`、`$EF_DATA/authors/` agent 都讀不到。
 
 要用到的參考資料由執行器開段前放進工單的 `input/`（`src/evidence_forge/runner/stage_inputs.py`）：
 
 | 路徑 | 內容 |
 | :--- | :--- |
 | `input/content.md` | 原文（分析工單才有；重構工單不放，FR-RW-01） |
-| `input/genres.md` | 12 種文類的定義接成一份 |
-| `input/target-genre.md` | 目標文類的定義 |
-| `input/author/voice.md` | 作家聲音 |
-| `input/author/genre-style.md` | 作家在目標文類的風格；沒有就是未校準 |
-| `input/conversions/<來源>--<目標>.md` | 轉換說明 |
+| `input/genres.md` | 7 種文體的通用定義接成一份（ADR-0026；主題清單 `themes.md` 不算） |
+| `input/target-genre.md` | 目標文體的定義 |
+| `input/author/voice.md` | 角色的聲音 |
+| `input/author/genre-style.md` | 角色在目標文體的風格；沒有就是未校準 |
 | `input/sources/S<n>.md` | 查證與找題材段找到的來源正文（`S2` 起；`S1` 是原文）。那一段合格後由執行器照 `sources.json` 從那一段真的抓過的網頁放（`src/evidence_forge/runner/sources.py`），agent 不能寫；重構工單從分析工單原樣帶過來 |
 | `input/headline-punchline.md` | 標題與金句規則（`$EF_DATA/style/headline-punchline-system.md`，創作者自己的寫作系統，不進 repo）；沒放就沒有這個檔 |
 | `input/report.md`、`input/brief.md`、`input/brief.json` | 從上一張工單（`ef new --from`）帶過來的分析報告與 brief：只帶過了程式檢查的那一份 |

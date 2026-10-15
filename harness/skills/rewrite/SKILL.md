@@ -17,12 +17,11 @@ You do not have the original's full text, and you must not try to get it. You wr
 2. `input/report.md`: the analysis report. 作者在說什麼 and 作者的看法 tell you what the original argues; 查證 tells you which facts hold up (each marked 【有爭議】, 【過時】, 【查不到】 or 【有佐證】); 可以寫的題材 lists the numbered topics, each with a working title, an angle, what the original lacks, the sources it uses and a suggested genre. (An older report may call these sections 事實與觀點 and 研究題材.)
 3. Call `list_files` on `input/sources/` and read every file there. Each starts with header lines (來源編號, 標題, 網址, 作者 when known, 抓取時間), then `---`, then the text. These are the related articles the analysis fetched.
 4. `input/brief.md`, if it is there: the analysis brief, with the original's genre.
-5. `input/target-genre.md`: the target genre. Its skeleton (the numbered sections) and its default structure formula are the order of your thinking, not your headings.
+5. `input/target-genre.md`: the target genre. Cover its 必要內容 (required content) and rest the piece on its 主證據 (main evidence) as far as the report and the sources allow; never invent the persona's own experience, use, tests or projects. Its skeleton (the numbered sections) and its recommended structure formula are the order of your thinking, not your headings.
 6. `input/author/voice.md`: how this persona talks. Follow its tone, wording, rhythm, examples and its list of things not to do.
 7. Call `list_files` on `input/author/`. If `genre-style.md` is there, read `input/author/genre-style.md` and follow it: it is how this persona writes this genre. If it is not there, write with the genre skeleton and the voice only.
 8. `input/headline-punchline.md`: the title and punchline rules. If reading it fails, the creator has not set any; go on without them. Use them for the title and the few lines readers will remember.
-9. Call `list_files` on `input/conversions/`. If there is a file named `<the original's genre from input/brief.md>--<target genre id>.md`, read it and follow it.
-10. **Revision only:** if `input/article.md` is there, it is the previous version. Read it.
+9. **Revision only:** if `input/article.md` is there, it is the previous version. Read it.
 
 Read only the files named above. Do not list or read anything else in the job folder: the other files are the runner's bookkeeping, not material.
 

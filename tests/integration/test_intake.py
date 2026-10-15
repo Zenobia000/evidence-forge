@@ -385,15 +385,15 @@ def _author(data: DataDir, default_genre: str) -> None:
 
 @pytest.mark.promise("FR-CP-03")
 def test_沒指定目標文類_用作家設定的預設文類_記在_job_md(data: DataDir) -> None:
-    _author(data, "opinion")
+    _author(data, "essay")
     intake = _submit(data, PastedText("文章"))
     job = read_job(data.job_dir(intake.job.id) / "job.md").job
-    assert job.target_genre == "opinion"
+    assert job.target_genre == "essay"
 
 
 @pytest.mark.promise("FR-CP-03")
 def test_有指定目標文類_不用作家的預設(data: DataDir) -> None:
-    _author(data, "opinion")
+    _author(data, "essay")
     intake = open_job(
         data, RECIPE, PastedText("文章"), goal="目標", now=NOW, genre="explainer"
     )

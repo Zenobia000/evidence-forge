@@ -97,7 +97,7 @@ One paragraph, at most 150 characters: the author's core argument and stance.
 - 角度：<one sentence: the creator's own angle>
 - 原文沒講的：<what this adds that the article does not have>
 - 會用到的資料：<the sources it uses, by name>
-- 建議文類：<one genre, e.g. 觀點文>
+- 建議文體：<one genre, written as its Chinese name and id, e.g. 研究評論（research-review）>
 
 ### 2. <working title>
 ...
@@ -107,9 +107,10 @@ One paragraph, at most 150 characters: the author's core argument and stance.
 - <each listed source: title and URL>
 ```
 
-- **查證**: one item per key claim, in the same order as `fact_checks` in `sources.json`: doubtful first (【有爭議】, then 【過時】, then 【查不到】) and 【有佐證】 last. Start each item with its mark. Write the fact itself, never its id. After the mark you may add a short caveat, for example 「但佐證偏弱，只有一篇轉述」.
+- **查證**: one item per key claim, in the same order as `fact_checks` in `sources.json`: doubtful first (【有爭議】, then 【過時】, then 【查不到】) and 【有佐證】 last. Start each item with its mark. Write the fact itself, never its id. After the mark you may add a short caveat, for example 「但佐證偏弱，只有一篇轉述」. Nothing else goes under 查證: no note, remark or closing paragraph; a remark about the sources as a whole belongs inside one of the items.
 - **作者的看法**: the author's opinions and judgements, kept apart from the facts.
-- **可以寫的題材**: 3 topics (at least 2), numbered `### 1.`, `### 2.`, `### 3.`, in the same order as `topics` in `sources.json`. Each is a new post the creator could write in their own voice on this subject. It is not a reply to the article and not a critique of its author. The genre is one of 新聞快訊, 熱點評論, 教學文, 清單技巧, 解說文, 深度長文, 筆記摘要, 評測比較, 案例拆解, 觀點文, 故事心得, 精選彙整.
+- **可以寫的題材**: 3 topics (at least 2), numbered `### 1.`, `### 2.`, `### 3.`, in the same order as `topics` in `sources.json`. Each is a new post the creator could write in their own voice on this subject. It is not a reply to the article and not a critique of its author.
+- **建議文體**: exactly one of these seven, written exactly as shown: 隨筆（essay）, 研究評論（research-review）, 產品個案（product-case）, 實證評測（benchmark）, 工程復盤（postmortem）, 理論教學（explainer）, 趨勢解讀（trend）. Pick by the main evidence the topic rests on: first-hand reports and data → research-review; a paper or a mechanism → explainer; a batch of new projects or announcements → trend. A topic built from fetched sources usually fits one of these three. Suggest essay, product-case, benchmark or postmortem only when the angle needs the creator's own experience, use of a product, test or project, and then say in 角度 what the creator would have to bring.
 - Put the real number of topics in the next-step line.
 
 The runner checks the report: a first line before the first `##` heading, the five headings in order, no `K<n>` or `S<n>` anywhere, at least 2 numbered topics, and every URL under 來源清單 is a page you fetched in this stage or the URL given under 原文出處.

@@ -1,0 +1,90 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg46rdD9iz8CS6B5YzrMF","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1688,"cache_read_input_tokens":4756,"cache_creation":{"ephemeral_5m_input_tokens":1688,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS9wcKEAgSGAI4AUIIdGhpbmtpbmcSDJNxtTT/NtEJlGUVmhoMH18Gf7EDCAYyfk1vIjATtQtr6qpBednQKhunTUKWrFjUSoNfzEI883nM/NIJVv9C0wz9FleQxHu2ZQlX+D0qlAfALvC7PfaB0F9OETck45RpoZcBTqJyjWXDRzcMW2xq3Mq9D2oFWY5MrNW0wsY33pMTnCbNzo9JaTXNuNAN2/AAHbuWfTSlb8ti9XJ+1ruRd55o+numMj4Oni5Vg/zSsxLZp8/Rt3pcosE8Gyb2TiYCJtpFcm9EFD7S1yd5AFLqAYE1JouqJqnR5Y6/RYUQcyGqbtfu/gHEmOQxr4pr61MdAxz8jid/ZUupRK+/MpfrHDlPlYbwYqGveZwgWs8UQHn4/cunoSr2Q5CvKCJkIDitBtT2qe6E9ysF0IqF6U3/OieKm6KT0VTo421ST9llZN8QSk7DoYwhO0wwhpiY+35R0IPNA4KN4p2KOLFIeqazn4l2wh1Mv4gfAJkGsvuixBN1w/qyy7h2sj5VvU5DVQlRdxUJHGj/evFSjzuESQO9Hs6i/kQJ5PzrTYisQGRpFCbCfGHjvMd8iogqN6xgOi7nchvx4BDvh1pyMhGJSscTJPaNDh3Mpz72Rnku3Uy5JLpLYojszsHmYhi6BSd81/keXM9prm+Mj3Ohdeh+YHWamcoGf07s4tRbAk6L+5Qw/wgAO6fDfdQp4fEmcVCIvNycYjSKjamxfzLMdGULcnfRP/u11pAU4rF4PcCHTBIy0h5arMmYdOt4KBVbXehDYlULxf1En5Y10wdxjKbW4Nqs7aF0ORfeNl/forh8/uHBE/vUKy93nloS5oFQ0ddMbfrwNaTZ4kbkps6jCdWvH0xwkTohY0vFEL2yNHF7/EvNHvmKl6nasa7619bUxEFOCyEIsmGPjSvIKDYwR8eFvS+Fj6BnWdbhrUe+zi72VMAGhbhK5DnS1cIW+bkVM95OdAB9ocFeHgLnIeI3rHCX4RkwAu8STsyv2pWiSvB3BqQyJX/dUXWpL+KTatDPvrWbYZ0xodhzUfW5akwE18z/GWva6OoAIC+hAa2biSQZPfNvQTmm0burO/W1ofS5dgcNGPWfOLt5ZDV8aEsQtahWgAGoMh19srLKKGFFABfSUN60M7iU3KJoHFPs4PULUpsNhphMunck12k+1DeRlom88qNyLoenXAmmAXN5p3LHJdxh9TtWN9XFqRL3rDHMxOrdR32MaS2O0obgfaGuiuB/OV7etvViFAxF/M/JudtRUz+wIQulfue8EAiMstF97Mhr9dxGUCGEJ4F9Or4uLAxEi9usbwhMx0Q+TjIVBAiryHKMN2DXVoUWGAE="}    }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0              }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_011eiZP91AuSizdjmRkBXZj1","name":"web_search","input":{},"caller":{"type":"direct"}}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"河"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"濱社區圖書館 "}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"延長開放 "}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"晚上十點"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"}"}       }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1               }
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_011WZgNXTWs1USYJDm1uZeYy","name":"web_search","input":{},"caller":{"type":"direct"}}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"public library"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" extended ev"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ening hours nightly vis"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"itors study"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" working"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" ad"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ults eva"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"luation"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"}"}               }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1688,"cache_read_input_tokens":4756,"output_tokens":324,"output_tokens_details":{"thinking_tokens":146}}             }
+
+event: message_stop
+data: {"type":"message_stop"  }
+

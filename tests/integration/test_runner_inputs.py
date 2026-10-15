@@ -40,7 +40,7 @@ def _author(world: World) -> None:
     author = world.data.authors / "me"
     author.mkdir(parents=True)
     (author / "voice.md").write_text(
-        "---\nid: me\ndefault_genre: opinion\n---\n聲音\n", encoding="utf-8"
+        "---\nid: me\ndefault_genre: essay\n---\n聲音\n", encoding="utf-8"
     )
 
 
@@ -66,7 +66,7 @@ def test_開段前文類與作家設定已經在_input_agent_經閘道讀得到(
     world.runner.run_once()
 
     job = world.read(job_id)
-    assert job.target_genre == "opinion"
+    assert job.target_genre == "essay"
     assert job.result is not None and job.result.outcome == "complete", job.result
 
 

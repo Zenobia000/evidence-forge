@@ -3,11 +3,11 @@
 // - analyze：開一張分析工單，開了就回（工單 id），不等它跑完。again: true 是重做（不拿回同一份素材的舊單）。
 // - read_report／read_article：讀這個對話開過的工單的報告／文章。
 // - job_status：一張工單現在跑到哪。
-// - list_personas：現有的角色與它們寫過的文類；創作者說「用 me 寫」時才聽得懂。
+// - list_personas：現有的角色與它們寫過的文體；創作者說「用 me 寫」時才聽得懂。
 // - read_lessons：一個角色 lessons.md 最近十筆（ADR-0026 §3.3），訪談開工前讀；只讀，對話從不寫角色資料夾。
-// - rewrite：從這個對話的一張分析（或上一版重構）開一張重構工單，開了就回，跟 analyze 一樣（#102）。
-//   #109 起「寫第 N 個」開的是訪談（編輯卡），不再叫 rewrite；照編輯卡寫稿接上之前（#110），
-//   提示詞只讓模型拿它改這個對話已有的文章（feedback 帶創作者的話）。閘道仍收從分析開的單，留給 #110 改接。
+// - rewrite：從這個對話的上一版重構開一張新的重構工單（改已經有的文章，feedback 帶創作者的話），
+//   開了就回，跟 analyze 一樣（#102）。#109 起「寫第 N 個」開的是訪談（編輯卡），從分析開一律被閘道拒絕
+//   （新文章從訪談開始）；照編輯卡寫稿是 #110。
 // - 編輯卡的 propose_questions、record_interpreted_answers、add_material、read_card 與 /ef-card 指令在 cards.ts
 //   （ADR-0025 §3.3），這裡一起註冊。
 // - /ef-job-done <工單 id>：對話主機在工單結束時送進來的指令（不是模型能叫的工具）。
@@ -127,15 +127,18 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "list_personas",
       label: "List personas",
       description:
-        "List the personas the creator has set up (whose voice an article can be written in), each with its default genre and the genres it has a calibrated style for. Use it to understand which persona the creator means, or to offer the choices when unclear.",
+        "List the personas the creator has set up (whose voice an article can be written in), each with its default genre, the genres it has a style for, and which of those are calibrated. Use it to understand which persona the creator means, or to offer the choices when unclear.",
       parameters: Type.Object({}),
       async execute() {
         const data = await callGateway("list_personas", {});
         const personas = Array.isArray(data.personas) ? (data.personas as Record<string, unknown>[]) : [];
         if (personas.length === 0) return text("(no personas set up yet)");
         const lines = personas.map((p) => {
-          const genres = Array.isArray(p.calibrated_genres) ? (p.calibrated_genres as string[]).join(", ") : "";
-          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; calibrated genres: ${genres || "none"}`;
+          const list = (value: unknown) => (Array.isArray(value) ? (value as string[]).join(", ") : "");
+          const written = list(p.written_genres);
+          const calibrated = list(p.calibrated_genres);
+          const note = typeof p.note === "string" ? ` (${p.note})` : "";
+          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; genres with a style: ${written || "none"}; calibrated: ${calibrated || "none"}${note}`;
         });
         return text(lines.join("\n"));
       },
@@ -174,13 +177,13 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         genre: Type.Optional(
           Type.String({
             description:
-              "Only a genre the creator explicitly asked for, as an id (opinion) or its Chinese name (觀點文). An unknown genre is refused with the list of genres",
+              "Only a genre the creator explicitly asked for, as an id (explainer) or its Chinese name (理論教學). An unknown genre is refused with the list of the seven genres",
           }),
         ),
         suggested_genre: Type.Optional(
           Type.String({
             description:
-              "The picked topic's 建議文類, copied from the report. If it matches no genre, the default genre is used and a note says so. Ignored when genre is given",
+              "The picked topic's 建議文體, copied from the report. If it matches no genre, the default genre is used and a note says so. Ignored when genre is given",
           }),
         ),
         goal: Type.Optional(
@@ -202,7 +205,7 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
         if (data.status === "rejected") {
           return text(`NOT STARTED: ${String(data.reason ?? "unknown reason")}`);
         }
-        // 文類對不上時閘道照預設文類開單，附一句說明：要讓模型轉告創作者
+        // 文體對不上時閘道照預設文體開單，附一句說明：要讓模型轉告創作者
         const note = data.note ? `\nnote: ${String(data.note)} (tell the creator)` : "";
         return text(
           `job_id: ${String(data.job_id)}\nstatus: ${String(data.status)}\nrecipe: ${String(data.recipe)} with ${String(data.stages)} stage(s)\npersona: ${String(data.persona ?? "me")}; genre: ${String(data.genre ?? "default")}${note}\nThe job runs in the background; an [ef-job] notice will arrive when it ends.`,

@@ -14,7 +14,7 @@ from evidence_forge.harness import Harness, default_harness
 
 # 配方檔 → {段 id: 錄音當時那一段的寫法}
 RECORDED_STAGES: dict[str, dict[str, str]] = {
-    # 2026-10-15 錄的 analyze-library（#100）：brief 在本機（不行才升 fast）、查證段直接用 fast。
+    # 2026-10-15 錄的 analyze-library（#106 重錄）：brief 在本機（不行才升 fast）、查證段直接用 fast。
     # 錄音只准用本機與 Haiku（月底額度），所以錄的時候把配方釘在這兩級，不讓它升到 strong
     "analyze.md": {
         "brief": "  - { id: brief, skill: brief, tier: local, escalate_to: [fast], "
@@ -22,7 +22,7 @@ RECORDED_STAGES: dict[str, dict[str, str]] = {
         "investigate": "  - { id: investigate, skill: investigate, tier: fast, "
         "output: [report.md, sources.json], tavily_credits: 12 }",
     },
-    # 2026-10-15 錄的 rewrite-library（#100）：重構段直接用 fast
+    # 2026-10-15 錄的 rewrite-library（#106 重錄）：重構段直接用 fast
     "rewrite.md": {
         "rewrite": "  - { id: rewrite, skill: rewrite, tier: fast, "
         "output: [article.md, article.json] }",

@@ -48,7 +48,7 @@ BRIEF_MD = """## 論點與立場
 - 其他店也該試試
 
 ## 文類
-opinion，0.8，有明確立場。
+essay，0.8，有明確立場。
 
 ## 主題標籤
 預約制、剩食
@@ -57,7 +57,7 @@ opinion，0.8，有明確立場。
 - 別家店改預約制之後的數字
 """
 BRIEF_JSON = {
-    "genre": {"primary": "opinion", "confidence": 0.8},
+    "genre": {"primary": "essay", "confidence": 0.8},
     "topics": ["預約制", "剩食"],
     "key_claims": [{"id": "K1", "claim": "改成預約制之後賣剩的麵包少了一半以上"}],
 }

@@ -104,7 +104,7 @@ def list_rows(summaries: list[dict[str, Any]], current: str | None, now: datetim
 
 
 def first_persona(data: DataDir) -> str:
-    """建議按鈕「用 me 寫一篇觀點文」裡的角色名：`authors/` 底下第一個角色，沒有就是 me。"""
+    """建議按鈕「用 me 寫一篇理論教學」裡的角色名：`authors/` 底下第一個角色，沒有就是 me。"""
     root = data.authors
     if root.is_dir():
         for folder in sorted(root.iterdir()):
