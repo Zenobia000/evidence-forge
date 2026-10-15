@@ -2,15 +2,28 @@
 # 閘道轉送前用這裡的 max_tokens 與 thinking 蓋掉 Pi 送來的值（aliases.py）。
 #
 # local：本機 GPU 一次一個；Qwen 的思考在這裡明確關掉，不看 Pi 送來什麼（S0.3 打通時就是關的）。
-# strong、max：Claude Sonnet 5.5 與 Opus 5.5 不收 {type: disabled} 也不收 budget_tokens，
-#   這裡用 adaptive（讓模型自己決定想多少）。max_tokens 含思考的 token；預留金額依它估，
-#   調高會讓每次呼叫預留得更多。
+# fast、strong、max：Claude Haiku 5.5、Sonnet 5.5、Opus 5.5 都不收 budget_tokens
+#   （Sonnet 5.5 連 {type: disabled} 也不收），這裡一律用 adaptive（讓模型自己決定想多少）。
+#   max_tokens 含思考的 token；預留金額依它估，調高會讓每次呼叫預留得更多。
+#   Haiku 5.5 另外不收非預設的 temperature、top_p、top_k 與 assistant prefill：
+#   Pi 的請求本來就不帶這些（錄音裡的請求都沒有），跟 Sonnet 一樣原樣轉送。
+# 配方只用 local → fast → strong（ADR-0022）；max 留著給舊工單與手動指定。
 local:
   backend: ollama
   model: "qwen3.5:9b"
   max_tokens: 16384
   thinking: { type: disabled }
   concurrency: 1
+  # 上下文長度（提示＋輸出）。Ollama 沒設 OLLAMA_CONTEXT_LENGTH 時依顯示卡記憶體自己決定
+  # 預設值（3090 的 24 GB 是 32768，/api/ps 的 context_length 看得到）。Ollama 實際的比這裡小，
+  # 閘道就擋不住被截掉的提示，所以開跑前檢查會讀 /api/ps 核對，小了就不開跑。
+  # 輸出留 max_tokens，提示估起來超過剩下的 16,384 token 就不送、升級（ADR-0022）
+  context_window: 32768
+fast:
+  backend: anthropic
+  model: claude-haiku-5-5
+  max_tokens: 16000
+  thinking: { type: adaptive }
 strong:
   backend: anthropic
   model: claude-sonnet-5-5

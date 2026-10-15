@@ -34,6 +34,7 @@ from evidence_forge.gateway.prices import load_prices
 from evidence_forge.ledger_models import IntakeEntry, LedgerEntry
 from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import JobKey
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import PastedText, open_job
 from evidence_forge.runner.recipes import load_recipes
@@ -218,7 +219,7 @@ def gateway(
 
 def _job(data: DataDir, budget_usd: float = 1.0, goal: str = "測試") -> str:
     harness = default_harness()
-    recipe = load_recipes(harness, tiers=["local", "strong", "max"])["echo"]
+    recipe = load_recipes(harness, tiers=TIER_ORDER)["echo"]
     return open_job(
         data,
         recipe,

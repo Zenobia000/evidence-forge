@@ -57,9 +57,9 @@ def load_recipe(harness: Harness, path: Path, tiers: Collection[str]) -> Recipe:
             )
         for tier_field, tier in (
             ("tier", stage.tier),
-            ("escalate_to", stage.escalate_to),
+            *(("escalate_to", upper) for upper in stage.escalate_to),
         ):
-            if tier is not None and tier not in tiers:
+            if tier not in tiers:
                 raise RecipeError(
                     f"{path.name} 的 stages[{index}].{tier_field}："
                     f"等級 {tier} 不在閘道的對照表（models.yaml）"

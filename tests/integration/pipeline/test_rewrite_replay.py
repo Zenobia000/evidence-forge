@@ -27,6 +27,7 @@ ADR-0014：錄音會進公開 repo，**種子、來源、作家設定、標題�
 2026-10-13 錄的這一份：一次就過（沒有回去修），花 US$0.067；文章結尾列了原文（貼上的文字，只有標題）
 與三份來源，跟原文、各來源的 8-gram 重疊率都在 1% 上下。
 
+ADR-0022 之後配方改成本機優先；重播用錄音當時的配方等級（`conftest.py`）。
 重播時模型回應從錄音回放；開單、放參考資料、程式檢查照樣真的跑。不需要 Ollama，不打任何付費 API。
 """
 
@@ -40,7 +41,7 @@ import pytest
 from evidence_forge.checks import ChecksReport
 from evidence_forge.cli import main
 from evidence_forge.documents import read_job
-from evidence_forge.harness import default_harness
+from evidence_forge.harness import Harness, default_harness
 from evidence_forge.ledger_models import LedgerEntry
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
@@ -95,14 +96,20 @@ def _new(capsys: pytest.CaptureFixture[str], *args: str) -> str:
 
 @pytest.fixture
 def jobs(
-    ef_data: Path, capsys: pytest.CaptureFixture[str], port: int
+    ef_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    port: int,
+    recorded_harness: Harness,
 ) -> tuple[Path, Path]:
-    # 錄音時用 shell 的 `$(cat …)` 開單，結尾換行被吃掉；多一個換行請求就對不上
+    # 錄音時用 shell 的 `$(cat …)` 開單，結尾換行被吃掉；多一個換行請求就對不上。
+    # 配方用錄音當時的等級（conftest.py）
     text = ARTICLE.read_text(encoding="utf-8").rstrip("\n")
-    analysis = _new(capsys, "--budget-usd", "3", "--text", text)
-    assert main(["serve", "--once", "--port", str(port)]) == 0
+    harness = ["--harness", str(recorded_harness.root)]
+    analysis = _new(capsys, *harness, "--budget-usd", "3", "--text", text)
+    assert main(["serve", *harness, "--once", "--port", str(port)]) == 0
     rewrite = _new(
         capsys,
+        *harness,
         "--from",
         analysis,
         "--persona",
@@ -114,7 +121,7 @@ def jobs(
         "--budget-usd",
         "0.5",
     )
-    assert main(["serve", "--once", "--port", str(port)]) == 0
+    assert main(["serve", *harness, "--once", "--port", str(port)]) == 0
     return ef_data / "jobs" / analysis, ef_data / "jobs" / rewrite
 
 

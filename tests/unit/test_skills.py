@@ -3,9 +3,11 @@
 - agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾（ADR-0018）：`SKILL.md` 提到的路徑
   都要是執行器真的放進工單的（`stage_inputs.PROVIDED`）或這一段的產出目錄。
 - skill 的腳本不准寫檔，結果只印到 stdout（PR #55 審查）。
-- 分析配方 `analyze`（#78）：brief 在本機、失敗升級 `strong`；查證與找題材用 `strong`、有搜尋額度。
+- 分析配方 `analyze`（#78）：兩段都先用本機，失敗照 `fast`、`strong` 往上升（ADR-0022）；
+  查證與找題材有搜尋額度，夠四次嘗試用。
   `brief.json` 不收逐字引句；`sources.json` 有來源清單、查證結果與研究題材。
-- 重構配方 `rewrite`（#79）：一段 `strong`、要從分析工單接著做（`needs: [report.md]`），
+- 重構配方 `rewrite`（#79）：一段，先用本機、失敗照 `fast`、`strong` 往上升；
+  要從分析工單接著做（`needs: [report.md]`），
   交 `article.md` 才會跑文章的程式檢查；SKILL.md 不叫 agent 讀原文全文。
 """
 
@@ -18,6 +20,7 @@ import pytest
 
 from evidence_forge.checks.format import check_schema
 from evidence_forge.harness import default_harness
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.runner import hard_checks, sources
 from evidence_forge.runner.recipes import load_recipes
 from evidence_forge.runner.stage_inputs import PROVIDED
@@ -260,19 +263,26 @@ def test_investigate_的_schema_擋下不合格的查證與題材(
 
 
 @pytest.mark.promise("FR-RC-01", "FR-AN-01", "FR-IV-01", "NFR-COST-07")
-def test_分析配方_brief_在本機失敗升級_查證用_strong_有搜尋額度() -> None:
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+def test_分析配方兩段都先用本機_失敗升_fast_再升_strong_搜尋額度夠四次嘗試() -> None:
+    recipe = load_recipes(HARNESS, TIER_ORDER)["analyze"]
     stages = {
         s.id: (s.skill, s.tier, s.escalate_to, s.tavily_credits, s.output)
         for s in recipe.stages
     }
     assert stages == {
-        "brief": ("brief", "local", "strong", 0, ("brief.md", "brief.json")),
+        "brief": (
+            "brief",
+            "local",
+            ("fast", "strong"),
+            0,
+            ("brief.md", "brief.json"),
+        ),
+        # skill 一次最多搜 6 次 × 4 次嘗試（本機兩次、fast、strong 各一次）
         "investigate": (
             "investigate",
-            "strong",
-            None,
-            12,
+            "local",
+            ("fast", "strong"),
+            24,
             ("report.md", "sources.json"),
         ),
     }
@@ -283,7 +293,7 @@ def test_分析配方_brief_在本機失敗升級_查證用_strong_有搜尋額�
 @pytest.mark.promise("FR-AN-01", "FR-IV-01")
 def test_分析配方兩段都有程式檢查_查證段交來源清單() -> None:
     # 執行器看產出檔名決定跑哪些檢查：配方改了產出名，這裡先壞，不會默默不檢查
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+    recipe = load_recipes(HARNESS, TIER_ORDER)["analyze"]
     brief, investigate = recipe.stages
     assert hard_checks.checked_output(brief) == hard_checks.BRIEF_OUTPUT
     assert hard_checks.checked_output(investigate) == hard_checks.REPORT_OUTPUT
@@ -295,15 +305,18 @@ def test_分析配方兩段都有程式檢查_查證段交來源清單() -> None
 
 
 @pytest.mark.promise("FR-RC-01", "FR-RW-01", "NFR-COST-07")
-def test_重構配方一段_strong_不搜尋_要從分析工單拿報告() -> None:
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["rewrite"]
+def test_重構配方一段_先用本機_失敗升_fast_再升_strong_不搜尋_要從分析工單拿報告() -> (
+    None
+):
+    recipe = load_recipes(HARNESS, TIER_ORDER)["rewrite"]
     [stage] = recipe.stages
-    assert (stage.id, stage.skill, stage.tier, stage.tavily_credits) == (
-        "rewrite",
-        "rewrite",
-        "strong",
-        0,
-    )
+    assert (
+        stage.id,
+        stage.skill,
+        stage.tier,
+        stage.escalate_to,
+        stage.tavily_credits,
+    ) == ("rewrite", "rewrite", "local", ("fast", "strong"), 0)
     assert stage.output == ("article.md", "article.json")
     assert recipe.needs == ("report.md",)
     assert recipe.default_goal and recipe.auto_fix >= 1
@@ -311,7 +324,7 @@ def test_重構配方一段_strong_不搜尋_要從分析工單拿報告() -> No
 
 @pytest.mark.promise("FR-RW-01")
 def test_重構段交文章_跑文章的程式檢查_沒過回這一段修() -> None:
-    [stage] = load_recipes(HARNESS, ("local", "strong", "max"))["rewrite"].stages
+    [stage] = load_recipes(HARNESS, TIER_ORDER)["rewrite"].stages
     assert hard_checks.checked_output(stage) == hard_checks.ARTICLE_OUTPUT
     assert hard_checks.fixable(stage)
     assert not sources.collects_sources(stage)

@@ -4,8 +4,9 @@
 - 開 Pi 之前記下版本（`provenance.py`）；Pi 跑的時候把「在等什麼」寫進 `job.md`。
 - Pi 結束後依序看：預算擋下 → `incomplete`；後端故障 → `failed`，不重試不升級；
   產出不合 schema、分析段的程式檢查沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
-  就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
-  重構段的程式檢查沒過 → 帶著結果回重構段修，到 `auto_fix` 次還沒過 → `incomplete`。
+  就照升級鏈一級各試一次，最後一級仍不行 → `failed`（附最後一次的錯誤）（ADR-0022）；
+  重構段的程式檢查沒過 → 帶著結果回重構段修，每一級最多 `auto_fix` 次；修完還沒過就升到
+  升級鏈的下一級重寫，最後一級也修不好 → `incomplete`（ADR-0022）。
 - 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
   後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
   Tavily 故障之後沒再搜成功過，就以 `incomplete` 進待審，都沒有才是 `complete`。
@@ -54,6 +55,7 @@ from evidence_forge.models import (
     RecipeStage,
     SearchFailure,
     StageProgress,
+    Tier,
     Waiting,
 )
 from evidence_forge.paths import DataDir
@@ -193,6 +195,8 @@ class _Tried:
     problems: list[str] = field(default_factory=list)
     stop: JobResult | None = None
     fix: ChecksReport | None = None
+    # 閘道擋下了提示：這一級的上下文放不下，同一級再試也沒用（ADR-0022）
+    too_long: bool = False
 
 
 def open_tool(log_path: Path) -> str | None:
@@ -228,7 +232,8 @@ BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily
 def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
     """搜尋沒做完整的原因（給待審看），照先後排；沒有就是空的。從帳本判斷：
 
-    - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
+    - credits 不夠被拒（`search` 的 `budget_exceeded`），而且是那一段最後一次被拒：`CREDITS_REASON`。
+      前面幾次的產出已經丟掉（重試、升級），它們搜不夠不影響交出去的產出（ADR-0022）。
     - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
       `OUTAGE_STATUSES`），而且那一段最後一次在故障之後沒有再搜成功過：產出就算合格，
       也只是用手上的資料湊的（#70）。查詢本身被 Tavily 退回的 400 不算。
@@ -238,17 +243,19 @@ def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
     """
     blobs = BlobStore(data.blobs)
     refused: list[str] = []
-    entries = [e for e in ledger.read(job_dir / "ledger.jsonl") if e.kind == "search"]
+    every = ledger.read(job_dir / "ledger.jsonl")
+    entries = [e for e in every if e.kind == "search"]
+    # 每一段最後一次：看全部的帳（含模型呼叫），最後一次沒有搜尋也算得對
     last_attempt: dict[str, int] = {}
-    for entry in entries:
+    for entry in every:
         last_attempt[entry.stage] = max(last_attempt.get(entry.stage, 0), entry.attempt)
     # 每一段最後一次：還沒恢復的 Tavily 故障（沒有就是 None）
     outages: dict[str, str | None] = {}
     for entry in entries:
-        if entry.status == "budget_exceeded" and entry.stage not in refused:
-            refused.append(entry.stage)
         if entry.attempt != last_attempt[entry.stage]:
             continue
+        if entry.status == "budget_exceeded" and entry.stage not in refused:
+            refused.append(entry.stage)
         if entry.status in ("ok", "cache_hit"):
             outages[entry.stage] = None
             continue
@@ -691,8 +698,10 @@ class Runner:
     ) -> tuple[JobDocument, JobResult | None]:
         """跑一段到合格，或到重試與升級都用完（NFR-RUN-03、ADR-0011 §3.3）。
 
-        同一級最多試 `max_attempts` 次；還不合格而配方有 `escalate_to`，升一級再試一次；
-        再不合格就回傳失敗的結果。每一次（含升級）的編號往上加，產出各自一個目錄。
+        配方這一段的等級最多試 `max_attempts` 次；還不合格而配方有升級鏈（`escalate_to`），
+        照順序往上一級各試一次；鏈的最後一級也不合格就回傳失敗的結果（ADR-0022）。
+        程式檢查沒過的「回去修」在當下那一級做；修完還沒過，有更高的一級就升上去重寫。
+        每一次（含升級）的編號往上加，產出各自一個目錄。
         回傳 None 表示這一段合格。
         """
         while True:
@@ -708,9 +717,27 @@ class Runner:
                 return doc, tried.stop
             problems = tried.problems
             if not problems and tried.fix is not None:
-                # 重構文章的程式檢查沒過：帶著結果回這一段修，最多 auto_fix 次
+                # 重構文章的程式檢查沒過：帶著結果回這一段修，每一級最多 auto_fix 次；
+                # 這一級修完還沒過，升級鏈還有更高的一級就升上去重寫（ADR-0022 §3.3）
                 failed = "、".join(tried.fix.failed_checks)
-                if progress.fixes >= recipe.auto_fix:
+                if progress.fixes < recipe.auto_fix:
+                    self._stage_event(
+                        job_dir,
+                        stage.id,
+                        progress.attempt,
+                        f"{label}的自動檢查沒過：{failed}，回 {stage.id} 段修",
+                    )
+                    progress = progress.model_copy(
+                        update={
+                            "attempt": progress.attempt + 1,
+                            "failures": 0,
+                            "fixes": progress.fixes + 1,
+                            "started_at": self.clock(),
+                        }
+                    )
+                    continue
+                upper = stage.tier_after(tier)
+                if upper is None:
                     return doc, JobResult(
                         outcome="incomplete",
                         reason=f"自動檢查沒過：{failed}（{label}，"
@@ -720,45 +747,53 @@ class Runner:
                     job_dir,
                     stage.id,
                     progress.attempt,
-                    f"{label}的自動檢查沒過：{failed}，回 {stage.id} 段修",
+                    f"{label}的自動檢查沒過：{failed}，{tier} 已自動修 "
+                    f"{progress.fixes} 次，升級到 {upper} 重寫",
                 )
-                progress = progress.model_copy(
-                    update={
-                        "attempt": progress.attempt + 1,
-                        "failures": 0,
-                        "fixes": progress.fixes + 1,
-                        "started_at": self.clock(),
-                    }
-                )
+                progress = self._climb(progress, upper)
                 continue
             if not problems:
                 return doc, None
             failures = progress.failures + 1
-            if not escalated and failures < recipe.max_attempts:
-                next_tier = tier
-            elif not escalated and stage.escalate_to is not None:
-                next_tier = stage.escalate_to
-                failures = 0
-            else:
+            if not escalated and failures < recipe.max_attempts and not tried.too_long:
+                self._stage_event(
+                    job_dir,
+                    stage.id,
+                    progress.attempt,
+                    f"{label}不合格，同一級再試：" + "；".join(problems),
+                )
+                progress = progress.model_copy(
+                    update={
+                        "attempt": progress.attempt + 1,
+                        "failures": failures,
+                        "started_at": self.clock(),
+                    }
+                )
+                continue
+            # 升級鏈的下一級；升上來的每一級只試一次
+            upper = stage.tier_after(tier)
+            if upper is None:
                 reason = f"{label}失敗：" + "；".join(problems)
                 return doc, JobResult(outcome="failed", reason=reason)
             self._stage_event(
                 job_dir,
                 stage.id,
                 progress.attempt,
-                f"{label}不合格，"
-                + (f"升級到 {next_tier} 再試" if next_tier != tier else "同一級再試")
-                + "："
-                + "；".join(problems),
+                f"{label}不合格，升級到 {upper} 再試：" + "；".join(problems),
             )
-            progress = progress.model_copy(
-                update={
-                    "attempt": progress.attempt + 1,
-                    "tier": next_tier,
-                    "failures": failures,
-                    "started_at": self.clock(),
-                }
-            )
+            progress = self._climb(progress, upper)
+
+    def _climb(self, progress: StageProgress, upper: Tier) -> StageProgress:
+        """升到升級鏈的下一級：新的一次、新的一級，重試與自動修的次數都從 0 算起。"""
+        return progress.model_copy(
+            update={
+                "attempt": progress.attempt + 1,
+                "tier": upper,
+                "failures": 0,
+                "fixes": 0,
+                "started_at": self.clock(),
+            }
+        )
 
     def _attempt(
         self,
@@ -834,6 +869,8 @@ class Runner:
             escalated_from=stage.tier if tier != stage.tier else None,
             # 配方沒給搜尋額度的段不准上網：閘道拒絕 fetch_url、web_search（#92 審查）
             online=stage.online,
+            # 這一次最多搜幾次：這一段的額度平分給每一次嘗試（ADR-0022）
+            search_credits=recipe.search_credits_per_attempt(stage),
         )
         try:
             result = self._run_pi(
@@ -895,9 +932,12 @@ class Runner:
             reason = f"{name} 沒回應（{stage.id} 段第 {attempt} 次：{outage.message}）"
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))
+        too_long = self.board.too_long(key) if self.board is not None else None
+        if problems and too_long is not None:
+            problems = [f"本機模型的上下文放不下：{too_long}", *problems]
         if problems:
             self._stage_event(job_dir, stage.id, attempt, "產出不合格")
-            return _Tried(problems)
+            return _Tried(problems, too_long=too_long is not None)
         try:
             report = hard_checks.run_hard_checks(
                 self.data,

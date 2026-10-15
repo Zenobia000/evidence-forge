@@ -55,6 +55,7 @@ GENRE_NAME = {
 
 TIER_LABEL: dict[Tier, str] = {
     "local": "本機",
+    "fast": "雲端（快）",
     "strong": "雲端（強）",
     "max": "雲端（最強）",
 }

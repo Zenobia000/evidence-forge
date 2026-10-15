@@ -111,7 +111,8 @@ def test_credits_用完_補料段照樣收尾_後面的段照跑_單子以未完
 
 
 def test_credits_夠用_單子完成(world_for: Callable[..., World]) -> None:
-    recipe = _recipe(_stage("research", credits=2), _stage("compose"))
+    # 這一段可能試 3 次（本級 2 次＋升到 strong 1 次），6 credits 平分，每一次 2 個（ADR-0022）
+    recipe = _recipe(_stage("research", credits=6), _stage("compose"))
     world = world_for(SEARCHES_TWICE, recipes={"search": recipe})
     job_id = world.job(recipe="search")
 
@@ -119,6 +120,43 @@ def test_credits_夠用_單子完成(world_for: Callable[..., World]) -> None:
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+@pytest.mark.promise("NFR-COST-01", "FR-MD-01")
+def test_前一次的搜尋上限用完但最後一次沒有_不算預算用完_單子完成(
+    world_for: Callable[..., World],
+) -> None:
+    # 每一次上限 1：第 1 次搜第二次被拒、產出又不合格；第 2 次只搜一次、產出合格。
+    # 被丟掉的那一次搜不夠，不影響最後交出去的產出
+    script = (
+        FAKE_PI_LIB
+        + """
+ask()
+if STAGE == "research" and ATTEMPT == "1":
+    for query in ("第一次", "第二次"):
+        call("/tools/web_search", {"query": query})
+    write("summary.json", {"x": 1})
+else:
+    if STAGE == "research":
+        call("/tools/web_search", {"query": "第三次"})
+    write("summary.json", {"summary": "用找到的資料寫的摘要。"})
+event(type="agent_end")
+"""
+    )
+    recipe = _recipe(_stage("research", credits=3), _stage("compose"))
+    world = world_for(script, recipes={"search": recipe})
+    job_id = world.job(recipe="search")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+    searches = [
+        (entry.attempt, entry.status)
+        for entry in world.ledger(job_id)
+        if entry.kind == "search"
+    ]
+    assert searches == [(1, "ok"), (1, "budget_exceeded"), (2, "ok")]
 
 
 def _search_fails_then_writes(summary: object) -> str:
@@ -238,9 +276,7 @@ def test_後面的段自己沒做完_原因也帶上補料段的搜尋額度用�
     world_for: Callable[..., World],
 ) -> None:
     # 補料在本機（不花錢）、二創在 strong：二創被美元預算擋下，單子本來就是未完成
-    compose = _stage("compose").model_copy(
-        update={"tier": "strong", "escalate_to": None}
-    )
+    compose = _stage("compose").model_copy(update={"tier": "strong", "escalate_to": ()})
     recipe = _recipe(_stage("research", credits=1), compose)
     world = world_for(SEARCHES_TWICE, recipes={"search": recipe})
     job_id = world.job(recipe="search", budget_usd=0.0001)

@@ -6,6 +6,7 @@
       "apiKey": "replaced-by-api-key-flag",
       "models": [
         { "id": "local", "reasoning": true, "input": ["text"] },
+        { "id": "fast", "reasoning": true, "input": ["text"] },
         { "id": "strong", "reasoning": true, "input": ["text"] },
         { "id": "max", "reasoning": true, "input": ["text"] }
       ]

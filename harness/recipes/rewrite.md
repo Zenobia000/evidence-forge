@@ -2,7 +2,7 @@
 name: rewrite
 description: 重構：從一份分析報告與它找到的來源，照指定的角色、文體與目標寫一篇新文章；再改是帶著一句意見與上一版開一張新的重構工單
 stages:
-  - { id: rewrite, skill: rewrite, tier: strong, output: [article.md, article.json] }
+  - { id: rewrite, skill: rewrite, tier: local, escalate_to: [fast, strong], output: [article.md, article.json] }
 needs: [report.md]
 on_feedback: rewrite
 default_goal: 以分析報告的論點與研究題材為起點，寫一篇給台灣讀者看、有自己觀點的文章
@@ -10,7 +10,12 @@ max_attempts: 2
 auto_fix: 1
 ---
 
-重構配方（PRD v3.0 FR-RW-01～03、ADR-0019、ADR-0020、ADR-0015）。一段 `rewrite`，`strong`。
+重構配方（PRD v3.0 FR-RW-01～03、ADR-0019、ADR-0020、ADR-0015、ADR-0022）。一段 `rewrite`。
+
+本機優先（ADR-0022）：先用本機模型試滿 `max_attempts` 次，產出不合格就照升級鏈 `[fast, strong]`，
+Claude Haiku 5.5、Sonnet 5.5 各試一次。輸入大到本機模型的上下文放不下時，閘道直接擋下這一次，
+不在本機再試，直接升到 `fast`。程式檢查沒過的「回去修」（`auto_fix`）在當下那一級做；
+修完還沒過，升到下一級重寫。
 
 開單：`ef new --from <分析工單> --persona me --genre opinion --goal "..."`（帶 `--from` 時 `--recipe` 預設就是 `rewrite`）。
 `needs: [report.md]`：一定要 `--from`，而且那張單要有過了程式檢查的分析報告，不然不開單。
@@ -26,7 +31,8 @@ auto_fix: 1
 原文出處（標題、作者、網址）由執行器寫進任務說明，文章結尾的參考來源照抄。
 
 執行器的程式檢查（`checks/article.py`）：文章是標準 Markdown、最後一節「參考來源」列了原文出處、
-`article.json` 合 schema；沒過就帶著結果回這一段修，最多 `auto_fix` 次，還沒過以未完成結束。
+`article.json` 合 schema；沒過就帶著結果回這一段修，每一級最多 `auto_fix` 次，還沒過就升到下一級重寫，
+最後一級也修不好以未完成結束。
 跟原文、跟每一份來源的逐字重疊率照樣算出來寫進檢查結果，只顯示、不擋。
 
 再改（FR-RW-03）：`ef new --from <上一版的重構工單> --feedback "開頭太長，直接講結論"`。

@@ -1,5 +1,5 @@
 Feature: 重構：用角色與文體，從分析報告寫一篇新文章
-  # 需求：FR-RW-01、FR-RW-02、FR-RW-03、NFR-COST-04｜故事：US-24、US-25｜決策：ADR-0015、ADR-0020
+  # 需求：FR-RW-01、FR-RW-02、FR-RW-03、NFR-COST-04、NFR-COST-07｜故事：US-24、US-25｜決策：ADR-0015、ADR-0020、ADR-0022
 
   @happy-path @smoke
   Scenario: 用指定的角色與文體寫一篇文章
@@ -49,3 +49,25 @@ Feature: 重構：用角色與文體，從分析報告寫一篇新文章
   Scenario: 角色不存在
     When 創作者要它用一個沒有資料夾的角色寫
     Then 不開工，對話的 agent 列出現有的角色
+
+  @sad-path
+  Scenario: 重構先用本機模型，不合格才一級一級往上
+    Given 重構段是 local，升級鏈是 fast、strong
+    And 本機模型兩次都交不出合格的文章
+    When 執行器處理第二次失敗
+    Then 改用 fast 再試一次，還不行再用 strong 試一次
+
+  @sad-path
+  Scenario: 輸入大到本機模型的上下文放不下，直接升級
+    Given 重構段是 local，升級鏈是 fast、strong
+    And 這一次的提示估起來超過本機模型的上下文
+    When 閘道擋下這一次
+    Then 不在本機再試，直接改用 fast
+
+  @sad-path
+  Scenario: 每一級修完還沒過，才升到下一級
+    Given 重構段是 local，升級鏈是 fast、strong，auto_fix 是 1
+    And 本機寫的文章沒列原文出處，修一次還是沒列
+    When 執行器處理修完的那一次
+    Then 改用 fast 重寫，重試與自動修的次數重新算
+    And strong 也修完還沒過，才以未完成結束

@@ -28,6 +28,7 @@ from runner_world import ARTICLE, FAKE_PI_LIB, GOAL, NOW, SSE, fake_pi
 from evidence_forge.documents import read_job
 from evidence_forge.harness import default_harness
 from evidence_forge.ledger_models import LedgerEntry
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import PastedText, open_job
 from evidence_forge.runner.recipes import load_recipes
@@ -65,8 +66,12 @@ def ollama(serve: Callable[[Any], AbstractContextManager[str]]) -> Iterator[Any]
 
     @stub.get("/api/ps")
     async def loaded() -> dict[str, Any]:
-        # 開跑前檢查問「模型載入了沒」
-        return {"models": [{"name": "qwen3.5:9b", "model": "qwen3.5:9b"}]}
+        # 開跑前檢查問「模型載入了沒」與載入時的上下文（ADR-0022）
+        return {
+            "models": [
+                {"name": "qwen3.5:9b", "model": "qwen3.5:9b", "context_length": 32768}
+            ]
+        }
 
     with serve(stub) as url:
         yield url, calls
@@ -128,7 +133,7 @@ def test_跑到一半殺掉_ef_serve_重開後從同一段同一次重跑_前面
     harness = _harness(tmp_path, marks)
     data = DataDir(tmp_path / "data")
     data.ensure()
-    recipes = load_recipes(default_harness(), tiers=("local", "strong", "max"))
+    recipes = load_recipes(default_harness(), tiers=TIER_ORDER)
     job_id = open_job(
         data,
         recipes["echo"],
@@ -232,7 +237,7 @@ def test_重開時舊的_Pi_還活著_重跑之前先被殺掉_它拿舊鑰匙�
     harness = _harness(tmp_path, marks, PI_KEEPS_KNOCKING)
     data = DataDir(tmp_path / "data")
     data.ensure()
-    recipes = load_recipes(default_harness(), tiers=("local", "strong", "max"))
+    recipes = load_recipes(default_harness(), tiers=TIER_ORDER)
     job_id = open_job(
         data,
         recipes["echo"],
