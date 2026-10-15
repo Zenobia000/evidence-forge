@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# git 原生 pre-push：push 之前掃「要推出去的 commit」有沒有創作者的私人內容（#126）。
+#
+# 啟用（每個 clone 一次，不會自動做）：  git config core.hooksPath .githooks
+# 為什麼要有這個：它是**主關卡**。這個 repo 是公開的，推出去的東西只有 GitHub 客服收得回來；
+# `gh pr create` 背後的 push 也會經過它。
+# git 把 `<本地 ref> <本地 sha> <遠端 ref> <遠端 sha>` 一行一行從標準輸入餵進來，$1 是遠端名稱；
+# 掃描只看「遠端還沒有的 commit」，所以洩漏的 commit 後面補一個刪掉它的 commit 也一樣擋。
+# 命中 exit 1、只印哪個 commit 哪個檔哪一行，不印命中的字。掃不了也擋（exit 2）。
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+py=$(command -v python3 || command -v python || true)
+if [ -z "$py" ]; then
+  echo "pre-push：私人內容掃描需要 python3，找不到。先擋下；裝好 python3 再 push。" >&2
+  exit 2
+fi
+exec "$py" "$here/../scripts/brand_guard.py" pre-push "${1:-}" "${2:-}"

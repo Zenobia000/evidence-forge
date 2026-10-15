@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# git 原生 commit-msg：commit message 有沒有創作者的私人內容（#126）。
+#
+# 啟用（每個 clone 一次，不會自動做）：  git config core.hooksPath .githooks
+# 為什麼要有這個：commit message 一樣會跟著 commit 推上公開的歷史。$1 是 git 給的訊息檔；
+# `#` 開頭的行是 git 加的說明，不掃。命中 exit 1、只印位置，不印命中的字。掃不了也擋（exit 2）。
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+py=$(command -v python3 || command -v python || true)
+if [ -z "$py" ]; then
+  echo "commit-msg：私人內容掃描需要 python3，找不到。先擋下；裝好 python3 再 commit。" >&2
+  exit 2
+fi
+exec "$py" "$here/../scripts/brand_guard.py" message "${1:?commit-msg 需要 git 給的訊息檔路徑}"
