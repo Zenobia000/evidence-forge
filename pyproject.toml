@@ -14,6 +14,9 @@ dependencies = [
     "jinja2>=3.1.6",
     "jsonschema>=4.26.0",
     "markdown-it-py>=4.2.0",
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+    "pillow>=12.3.0",
     "pydantic>=2.14.0",
     "pypdf>=6.20.0",
     "pyyaml>=6.0.3",
@@ -34,6 +37,7 @@ dev = [
     "types-jsonschema>=4.26.0.20261006",
     # FastAPI 的 TestClient 靠它（Starlette 1.x 改要 httpx2）；只在測試用。
     "httpx2>=2.13.1",
+    "pandas-stubs>=3.0.5.260914",
 ]
 
 # uv_build 預設找 src/<套件名>/，也就是 src/evidence_forge/。
