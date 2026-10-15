@@ -168,7 +168,24 @@ def test_詳細頁_連到角色資料夾外面的檔_不讀_內容不外洩(worl
 
     assert page.status_code == 200
     assert CANARY not in page.text
-    assert "指到角色資料夾之外" in page.text
+    assert "符號連結" in page.text
+
+
+def test_詳細頁_檔案太大_說太大_不是悄悄當成讀不出來(
+    world: tuple[str, ChatFolder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from evidence_forge import confined
+
+    url, folder = world
+    root = _write(folder, "me", FULL)
+    (root / "craft" / "huge.md").write_text("很大的檔 " + "字" * 100, encoding="utf-8")
+    monkeypatch.setattr(confined, "MAX_TEXT_BYTES", 100)
+
+    html = httpx.get(f"{url}/personas/me").text
+
+    assert "huge.md" in html and "檔案太大" in html and "這一頁不顯示" in html
+    assert "很大的檔" not in html  # 內容沒進畫面
+    assert "不是 UTF-8" not in html
 
 
 # --- 路徑穿越 -----------------------------------------------------------------

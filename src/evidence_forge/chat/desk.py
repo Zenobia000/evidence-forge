@@ -23,10 +23,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from evidence_forge import confined, cost_settings, persona
+from evidence_forge import confined, cost_settings
 from evidence_forge.documents import FrontmatterError, read_job, split_frontmatter
 from evidence_forge.gateway.fetch import Fetcher
 from evidence_forge.models import Recipe, RecipeStage
+from evidence_forge.persona_spec import genre_file
 from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import (
     PastedText,
@@ -329,8 +330,8 @@ def list_personas(data: DataDir) -> dict[str, Any]:
             default: str | None = None
             if real:
                 for slug in sorted(GENRE_NAME):
-                    kind, text = confined.read_text(folder, persona.genre_file(slug))
-                    if kind == "file":
+                    kind, text = confined.read_text(folder, genre_file(slug))
+                    if kind in ("file", "large"):  # 太大不讀內容，但檔案是寫過的
                         written.append(slug)
                         if text is not None and _calibrated(text):
                             calibrated.append(slug)

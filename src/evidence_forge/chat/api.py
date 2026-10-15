@@ -77,8 +77,9 @@ def _same_origin(origin: str, request: Request) -> bool:
     host = urlsplit(f"//{request.headers.get('host', '')}")
     scheme = request.url.scheme
     try:
-        origin_port = parts.port or _DEFAULT_PORT.get(parts.scheme)
-        own_port = host.port or _DEFAULT_PORT.get(scheme)
+        # 明寫的埠照字比對：`:0` 是 0，不是預設埠（所以不能用 `or`）
+        origin_port = parts.port if parts.port is not None else _DEFAULT_PORT.get(parts.scheme)
+        own_port = host.port if host.port is not None else _DEFAULT_PORT.get(scheme)
     except ValueError:  # 埠不是數字
         return False
     return (

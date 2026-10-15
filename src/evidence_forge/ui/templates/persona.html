@@ -7,7 +7,7 @@
 <details class="pr-file">
 <summary><span class="s0-mono">{{ f.path }}</span>
 {% for k, v in f.meta if k == "calibrated" %}{% if v == "true" %}<span class="s0-badge" data-tone="complete">校準過</span>{% else %}<span class="s0-badge" data-tone="genre">{{ icon("question") }}未校準</span>{% endif %}{% endfor %}
-{% if f.state == "unsafe" %}<span class="s0-badge" data-tone="failed">不讀：指到角色資料夾之外</span>{% elif f.state == "unreadable" %}<span class="s0-badge" data-tone="failed">不是 UTF-8 的文字檔，讀不出來</span>{% endif %}
+{% if f.state == "unsafe" %}<span class="s0-badge" data-tone="failed">不讀：是符號連結（不跟隨）或不是一般檔案</span>{% elif f.state == "large" %}<span class="s0-badge" data-tone="failed">檔案太大（超過 {{ max_mb }} MB），這一頁不顯示</span>{% elif f.state == "unreadable" %}<span class="s0-badge" data-tone="failed">不是 UTF-8 的文字檔，讀不出來</span>{% endif %}
 </summary>
 {% if f.state == "ok" %}
 {% if f.meta %}<dl class="pr-meta">{% for k, v in f.meta %}<div><dt class="s0-mono">{{ k }}</dt><dd>{{ v }}</dd></div>{% endfor %}</dl>{% endif %}

@@ -44,12 +44,13 @@ from evidence_forge.ui.format import GENRE_NAME
 RECENT_LESSONS = 10
 _MAX_CELL = 200
 
-State = Literal["ok", "unsafe", "unreadable"]
+State = Literal["ok", "unsafe", "unreadable", "large"]
 
 
 @dataclass(frozen=True)
 class FileView:
-    """角色資料夾裡的一個檔。`unsafe`：符號連結指到角色資料夾之外，不讀；`unreadable`：不是 UTF-8。"""
+    """角色資料夾裡的一個檔。`unsafe`：符號連結（不跟隨）或不是一般檔案，不讀；`unreadable`：不是 UTF-8；
+    `large`：超過 `confined.MAX_TEXT_BYTES`，不讀、畫面說太大。"""
 
     path: str
     state: State
@@ -115,6 +116,8 @@ def _paths(folder: Path, spec: PartSpec) -> list[str]:
 
 def _view_file(folder: Path, relative: str) -> FileView:
     kind, text = confined.read_text(folder, relative)
+    if kind == "large":
+        return FileView(relative, "large")
     if kind != "file":
         return FileView(relative, "unsafe")
     if text is None:
@@ -169,7 +172,7 @@ def genre_rows(folder: Path) -> tuple[GenreRow, ...]:
                 calibrated = split_frontmatter(text)[0].get("calibrated") is True
             except FrontmatterError:
                 calibrated = False
-        rows.append(GenreRow(slug, GENRE_NAME[slug], kind == "file", calibrated))
+        rows.append(GenreRow(slug, GENRE_NAME[slug], kind in ("file", "large"), calibrated))
     return tuple(rows)
 
 
@@ -375,6 +378,7 @@ def install(
                 "nav": "personas",
                 "new_count": count,
                 "d": detail,
+                "max_mb": confined.MAX_TEXT_BYTES // 1_000_000,
                 "page_title": (f"({count}) " if count else "") + f"Evidence Forge・角色 {detail.shown}",
             },
         )

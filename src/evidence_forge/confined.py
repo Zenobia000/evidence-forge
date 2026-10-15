@@ -15,14 +15,16 @@
 import errno
 import os
 import secrets
+import shutil
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import BinaryIO, Literal
 
 # 一節路徑是什麼：一般檔案、資料夾、符號連結、其他（FIFO、裝置…），或根本不存在
-Kind = Literal["file", "dir", "link", "other", "missing"]
+# `large` 只有 `read_text` 會給：是一般檔案，但超過 `MAX_TEXT_BYTES`，不讀
+Kind = Literal["file", "dir", "link", "other", "missing", "large"]
 
 SUPPORTED = (
     hasattr(os, "O_NOFOLLOW")
@@ -34,7 +36,8 @@ SUPPORTED = (
 
 # O_NONBLOCK：開到 FIFO 時不會卡住（開完用 fstat 就把它擋掉）
 _OPEN = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
-_MAX_TEXT_BYTES = 5_000_000
+# 角色檔都是小文字檔；超過這個大小就不讀、也不顯示（畫面說「太大」，不是悄悄當成讀不出來）
+MAX_TEXT_BYTES = 5_000_000
 
 
 class Unsupported(RuntimeError):
@@ -72,7 +75,11 @@ def open_entry(name: str, dir_fd: int) -> tuple[int | None, Kind]:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             return None, "link"
         return None, "other"
-    kind = _kind_of(os.fstat(fd).st_mode)
+    try:
+        kind = _kind_of(os.fstat(fd).st_mode)
+    except BaseException:
+        os.close(fd)  # 開好之後任何一步失敗，fd 都不能漏
+        raise
     if kind in ("file", "dir"):
         return fd, kind
     os.close(fd)
@@ -106,7 +113,11 @@ def _walk(root_fd: int, relative: str) -> tuple[int | None, Kind]:
     current = os.dup(root_fd)
     kind: Kind = "dir"
     for position, part in enumerate(parts):
-        fd, kind = open_entry(part, current)
+        try:
+            fd, kind = open_entry(part, current)
+        except BaseException:
+            os.close(current)
+            raise
         os.close(current)
         if fd is None:
             return None, kind
@@ -131,6 +142,8 @@ def kind_of(folder: Path, relative: str) -> Kind:
 def read_text(folder: Path, relative: str) -> tuple[Kind, str | None]:
     """讀 `folder` 底下的文字檔。回（種類, 內容）：內容只有在它是一般檔案、不太大、是 UTF-8 時才有。
 
+    種類 `large`：是一般檔案但超過 `MAX_TEXT_BYTES`（讀了前面一段就停，不會把整個檔讀進記憶體）。
+
     BOM 去掉、CRLF 換成 LF（跟 `documents` 讀檔一致）。
     """
     with open_root(folder) as root:
@@ -143,9 +156,9 @@ def read_text(folder: Path, relative: str) -> tuple[Kind, str | None]:
             os.close(fd)
             return kind, None
         with os.fdopen(fd, "rb") as handle:
-            raw = handle.read(_MAX_TEXT_BYTES + 1)
-    if len(raw) > _MAX_TEXT_BYTES:
-        return "file", None
+            raw = handle.read(MAX_TEXT_BYTES + 1)
+    if len(raw) > MAX_TEXT_BYTES:
+        return "large", None
     try:
         return "file", raw.decode("utf-8-sig").replace("\r\n", "\n")
     except UnicodeDecodeError:
@@ -189,25 +202,70 @@ def write_text_atomic(folder: Path, name: str, content: str) -> None:
     全程用 `folder` 的 fd：`folder` 在檢查之後被換成連結，這裡開不起來（丟 `FolderChanged`），
     不會寫到連結指到的地方。`name` 本身若是連結，換上去的是連結本身，不是它指的檔案。
     """
-    _require()
-    if not name or "/" in name or name in (".", ".."):
-        raise ValueError(f"檔名不對：{name!r}")
     with open_root(folder) as root:
         if root is None:
             raise FolderChanged(f"{folder.name} 不是一個真的資料夾（被換成連結或移走了）")
-        temporary = f".{name}.{secrets.token_hex(6)}.tmp"
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-        fd = os.open(temporary, flags, 0o666, dir_fd=root)
+        write_atomic_at(root, name, content)
+
+
+def write_atomic_at(dir_fd: int, name: str, content: str) -> None:
+    """同 `write_text_atomic`，但資料夾已經是開好的 fd。"""
+    _require()
+    if not name or "/" in name or name in (".", ".."):
+        raise ValueError(f"檔名不對：{name!r}")
+    temporary = f".{name}.{secrets.token_hex(6)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(temporary, flags, 0o666, dir_fd=dir_fd)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(content)
+        os.rename(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as out:
-                out.write(content)
-            os.rename(temporary, name, src_dir_fd=root, dst_dir_fd=root)
-        except BaseException:
-            try:
-                os.unlink(temporary, dir_fd=root)
-            except OSError:
-                pass
-            raise
+            os.unlink(temporary, dir_fd=dir_fd)
+        except OSError:
+            pass
+        raise
+
+
+def make_dir(dir_fd: int, name: str) -> int:
+    """在 `dir_fd` 底下建一個新資料夾（`mkdir` 搶位：已經有任何東西就丟 `FileExistsError`），回它的 fd。
+
+    建好之後用 `O_NOFOLLOW` 開：建與開之間被換成連結，這裡開不起來，丟 `FolderChanged`。
+    """
+    _require()
+    if not name or name in (".", "..") or "/" in name or "\x00" in name:
+        raise ValueError(f"資料夾名稱不對：{name!r}")
+    os.mkdir(name, 0o777, dir_fd=dir_fd)
+    try:
+        return os.open(name, _OPEN | os.O_DIRECTORY, dir_fd=dir_fd)
+    except OSError as exc:
+        raise FolderChanged(f"{name} 剛建好就被換掉了") from exc
+
+
+def create_file(dir_fd: int, name: str) -> BinaryIO:
+    """在 `dir_fd` 底下新建一個檔，回可寫的二進位檔案物件。`O_EXCL|O_NOFOLLOW`：已經有東西（含連結）就失敗，不覆蓋。"""
+    _require()
+    if not name or name in (".", "..") or "/" in name or "\x00" in name:
+        raise ValueError(f"檔名不對：{name!r}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    return os.fdopen(os.open(name, flags, 0o666, dir_fd=dir_fd), "wb")
+
+
+def remove_entry(dir_fd: int, name: str) -> None:
+    """移除 `dir_fd` 底下的一個東西（資料夾整個移除；連結只移除連結本身，不碰它指到的地方）。不存在就算了。"""
+    _require()
+    try:
+        mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode
+    except OSError:
+        return
+    if stat.S_ISDIR(mode):
+        shutil.rmtree(name, ignore_errors=True, dir_fd=dir_fd)
+    else:
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except OSError:
+            pass
 
 
 class FolderChanged(OSError):

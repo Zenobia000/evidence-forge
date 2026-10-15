@@ -140,6 +140,20 @@ def test_Origin_要跟這個請求自己的來源完全一樣_本機另一個埠
     assert httpx.get(f"{api}/api/conversations", headers={"origin": api}).status_code == 200
 
 
+def test_Origin_明寫的埠_0_不等於預設埠(api: str) -> None:
+    # Host 沒寫埠（預設 80）時，Origin 明寫 :0 是另一個來源；不能因為 `0` 是假值就當成預設埠
+    def get(origin: str) -> int:
+        return httpx.get(f"{api}/api/conversations", headers={"host": "127.0.0.1", "origin": origin}).status_code
+
+    assert get("http://127.0.0.1:0") == 403
+    assert get("http://127.0.0.1:80") == 200  # 明寫預設埠 = 沒寫
+    assert get("http://127.0.0.1") == 200
+    # 兩邊都明寫 :0：一模一樣的來源
+    same = httpx.get(f"{api}/api/conversations", headers={"host": "127.0.0.1:0", "origin": "http://127.0.0.1:0"})
+    assert same.status_code == 200
+    assert httpx.get(f"{api}/api/conversations", headers={"host": "127.0.0.1:0", "origin": "http://127.0.0.1"}).status_code == 403
+
+
 def test_跨站的_GET_也擋_它會開_Pi_花錢(api: str) -> None:
     cid = httpx.post(f"{api}/api/conversations", json={}).json()["id"]
     # 別的網站放一張 <img src=…/messages>：瀏覽器不帶 Origin，但會帶 Sec-Fetch-Site

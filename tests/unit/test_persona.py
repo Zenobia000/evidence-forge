@@ -270,10 +270,10 @@ def test_建立_authors_還不存在也能建(tmp_path: Path) -> None:
 def test_建立_寫到一半失敗_剛搶下的資料夾整個移除_下次可以再建(
     data: DataDir, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def boom(folder: Path, shown: str) -> None:
+    def boom(dir_fd: int, shown: str) -> None:
         raise OSError("磁碟滿了")
 
-    monkeypatch.setattr(persona, "_write_meta", boom)
+    monkeypatch.setattr(persona, "_write_meta_at", boom)
     with pytest.raises(OSError):
         persona.create_from_template(data, HARNESS, "half")
     assert not (data.authors / "half").exists()
@@ -433,7 +433,7 @@ def test_複製_複製到一半失敗_剛建的資料夾整個移除_原角色�
     def boom(*args: object, **kwargs: object) -> None:
         raise OSError("磁碟滿了")
 
-    monkeypatch.setattr(persona, "_retarget", boom)
+    monkeypatch.setattr(persona, "_write_meta_at", boom)
     with pytest.raises(OSError):
         persona.copy_persona(data, "src", "dup")
 
@@ -558,3 +558,102 @@ def test_複製_FIFO_與裝置這類不是檔案的東西_略過_不會卡住(da
     copied = persona.copy_persona(data, "src", "dup")
     assert not (data.authors / "dup" / "pipe").exists()
     assert copied.files == len(SOURCE_FILES)
+
+
+# --- 複製的目的地一側：建好之後被換掉 -----------------------------------------
+
+
+def test_複製_開始複製後新資料夾的路徑被換成連結_照樣寫進剛建的那個_外面沒被寫(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _persona(data, "src", SOURCE_FILES)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_copy_dir = persona._copy_dir
+    swapped: list[bool] = []
+
+    def swap_then_copy(*args: Any, **kwargs: Any) -> int:
+        if not swapped:  # 只在最上層那一次：新資料夾建好、還沒寫任何檔
+            swapped.append(True)
+            (data.authors / "dup").rename(tmp_path / "moved-away")
+            (data.authors / "dup").symlink_to(outside, target_is_directory=True)
+        return real_copy_dir(*args, **kwargs)
+
+    monkeypatch.setattr(persona, "_copy_dir", swap_then_copy)
+
+    persona.copy_persona(data, "src", "dup")
+
+    assert swapped
+    assert list(outside.iterdir()) == []  # 連結指到的地方一個檔都沒有
+    # 檔案寫進了建好的那個資料夾（現在叫 moved-away），不是路徑現在指到的地方
+    assert (tmp_path / "moved-away" / "voice.md").is_file()
+    assert (tmp_path / "moved-away" / "persona.json").is_file()
+
+
+def test_複製_mkdir_與開啟之間被換成連結_不複製_連結被清掉_外面沒被寫(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _persona(data, "src", SOURCE_FILES)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_mkdir = os.mkdir
+
+    def swap(path: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+        real_mkdir(path, mode, dir_fd=dir_fd)
+        if path == "dup":
+            os.rename(path, "moved", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.symlink(outside, path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", swap)
+
+    with pytest.raises(PersonaError) as caught:
+        persona.copy_persona(data, "src", "dup")
+
+    assert caught.value.status == 409
+    assert list(outside.iterdir()) == []
+    assert not os.path.lexists(data.authors / "dup")  # 換上去的連結已經被清掉
+
+
+def test_複製_子資料夾在建與寫之間被換成連結_外面沒被寫(
+    data: DataDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _persona(data, "src", SOURCE_FILES)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_mkdir = os.mkdir
+
+    def swap(path: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+        real_mkdir(path, mode, dir_fd=dir_fd)
+        if path == "craft":
+            os.rename(path, "moved-craft", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.symlink(outside, path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", swap)
+
+    with pytest.raises(PersonaError):
+        persona.copy_persona(data, "src", "dup")
+
+    assert list(outside.iterdir()) == []
+    assert not (data.authors / "dup").exists()  # 失敗了，整個新角色移除
+
+
+def test_複製_身分欄位在記憶體裡改好_每個檔只寫一次_不用路徑讀回來(
+    data: DataDir, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _persona(data, "src", SOURCE_FILES)
+    opened: list[str] = []
+    real_open = os.open
+
+    def spy(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        if flags & os.O_CREAT and dir_fd is not None:
+            opened.append(str(path))
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", spy)
+    persona.copy_persona(data, "src", "dup")
+
+    # 新建的每個檔只開一次（persona.json 是先寫暫存檔再換上去，暫存檔也只開一次）
+    created = [n for n in opened if not n.endswith(".tmp")]
+    assert sorted(created) == sorted(["voice.md", "themes.md", "essay.md", "titles.md", "lessons.md", "brand.yaml"])
+    assert len(created) == len(set(created))
+    assert read_frontmatter(data.authors / "dup" / "voice.md")["id"] == "dup"

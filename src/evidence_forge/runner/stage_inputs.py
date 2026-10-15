@@ -41,6 +41,7 @@ from evidence_forge.harness import Harness
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.models import Job
 from evidence_forge.paths import DataDir
+from evidence_forge.persona_spec import VOICE_FILE
 from evidence_forge.write_once import write_once
 
 # 工單沒指定角色時用創作者自己（舊的 job.md 沒有 persona 欄）
@@ -207,7 +208,7 @@ def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
 
     不跟隨符號連結（`confined`）：角色資料夾或 `voice.md` 是連結就當沒有，不讀連結指到的檔案。
     """
-    text = confined.text(author_dir(data, author), "voice.md")
+    text = confined.text(author_dir(data, author), VOICE_FILE)
     if text is None:
         return None
     try:
