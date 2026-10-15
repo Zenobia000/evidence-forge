@@ -10,8 +10,10 @@
 - `list_personas`：現有的角色與它們寫過的文類（#85；創作者說「用 me 寫」時對話的 agent 才聽得懂）。
 - `read_lessons`：一個角色 `lessons.md` 最近十筆（ADR-0026 §3.3：訪談開工前讀，#109）。只讀這一份，
   碰不到角色資料夾的其他檔；沒給角色就是創作者自己（`me`）。對話從不寫角色資料夾。
-- `rewrite`：從這個對話的一張分析或重構工單接著做，開一張重構工單（等同 `ef new --from`，#102），
+- `rewrite`：從這個對話的一張重構工單接著改，開一張新的重構工單（等同 `ef new --from`，#102），
   **開了就回**，跟 `analyze` 一樣。`from_job` 一定要是這個對話自己的單（跟讀報告同一條範圍，403 不說存不存在）。
+  #109 起只能改已經有的文章：`from_job` 是分析（或任何不是重構的單）一律 409「新文章從訪談開始」。
+  新文章要先訪談、照編輯卡寫（ADR-0025 §3.5，#110 接上），不能從分析直接花錢寫。
   記進 `jobs.jsonl` 時接上版本鏈（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）：`parent` 是 `from_job`；
   從同一個角色的上一版重構接著做是那條鏈的下一版，從分析開、或換了角色，是新的一條鏈的第 1 版。
 - 編輯卡的四個（ADR-0025 §3.3，規則在 `cards.py`）：`propose_questions`（記下提出的問題卡，沒給 `card` 就開新卡）、
@@ -83,6 +85,11 @@ class Desk(Protocol):
     @property
     def recipe_name(self) -> str:
         """`analyze` 開的配方：「這次是不是拿回在跑的那一張」只看這份配方的單。"""
+        ...
+
+    @property
+    def rewrite_recipe(self) -> str:
+        """`rewrite` 開的配方：`rewrite` 只能從這份配方的單（已經有的文章）接著改（#109）。"""
         ...
 
     def open_analysis(
@@ -309,6 +316,7 @@ class ChatTools:
     ) -> dict[str, Any]:
         # 跟讀報告同一條範圍：只從這個對話自己的單接著做，別的對話的不說存不存在（ADR-0021 §3.4）
         from_job = self._owned_job(key, body, "from_job")
+        self._require_article(desk, from_job)
         persona = _optional(body, "persona")
         genre = _optional(body, "genre")
         suggested_genre = _optional(body, "suggested_genre")
@@ -350,6 +358,23 @@ class ChatTools:
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             return await run_in_threadpool(open_and_record)
+
+    def _require_article(self, desk: Desk, from_job: str) -> None:
+        """`rewrite` 只改已經有的文章：`from_job` 要是重構的單（#109、ADR-0025 §3.5）。
+
+        從分析直接開重構等於跳過訪談、直接花錢寫；新文章從訪談開始，照編輯卡寫稿是 #110。
+        讀不到 `job.md` 的也擋：工作台也開不了。
+        """
+        try:
+            parent = read_job(self._config.data.job_dir(from_job) / "job.md").job
+        except (OSError, ValueError):
+            parent = None
+        if parent is None or parent.recipe != desk.rewrite_recipe:
+            raise ToolRejected(
+                409,
+                "新文章從訪談開始：rewrite 只能改這個對話已經有的文章（from_job 要是重構的單）；"
+                "要寫新的，用 propose_questions 從第 1 關開始",
+            )
 
     def _next_version(self, conversation_id: str, from_job: str, job: Job) -> int:
         """新的重構在版本鏈上是第幾版（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）。

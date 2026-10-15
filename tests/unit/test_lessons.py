@@ -60,3 +60,32 @@ def test_角色名稱不合格_400_不碰角色資料夾以外(tmp_path: Path, n
     with pytest.raises(ToolRejected) as caught:
         latest_lessons(_data(tmp_path), name)
     assert caught.value.status in (400, 404)
+
+
+def test_創作者自己還沒有資料夾_沒有_lessons_就不讀(tmp_path: Path) -> None:
+    data = DataDir(tmp_path / "data")
+    data.ensure()
+    assert latest_lessons(data, "me") == []
+
+
+def test_lessons_md_是符號連結_403_不讀到角色資料夾以外(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    outside = tmp_path / "secret.md"
+    outside.write_text("- 不該讀到的東西\n", encoding="utf-8")
+    (data.authors / "me" / "lessons.md").symlink_to(outside)
+
+    with pytest.raises(ToolRejected) as caught:
+        latest_lessons(data, "me")
+    assert caught.value.status == 403
+
+
+def test_角色資料夾是符號連結_403_不讀(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "lessons.md").write_text("- 不該讀到的東西\n", encoding="utf-8")
+    (data.authors / "linked").symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ToolRejected) as caught:
+        latest_lessons(data, "linked")
+    assert caught.value.status == 403

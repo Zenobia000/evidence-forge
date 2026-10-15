@@ -19,7 +19,9 @@
       「回答第 N 關：<文字>」→ 已經有決定的關先重新提出，再記這段話（「沒有例子」記成 `no_example`）。
     - 被閘道拒絕 → 「沒記：<原因>」；六關都有決定 → 「編輯卡六關都有決定了。」，不叫 `rewrite`。
   - 「直接重構第 N 個」而且有 `rewrite` → 叫 `rewrite(from_job=最近一張分析的工單, goal="題材 N")`
-    （分析的工單從「叫你讀報告」的 `[ef-job]` 通知拿）。只用來測工具接線：提示詞不再這樣寫新文章（#109）。
+    （分析的工單從「叫你讀報告」的 `[ef-job]` 通知拿）。用來證明閘道擋下：新文章從訪談開始（#109）。
+  - 「改寫 <工單 id>：<意見>」→ 叫 `rewrite(from_job=那張重構單, feedback=意見)`（改已經有的文章）。
+  - `rewrite` 被拒 → 「沒開：<原因>」；開了 → 「開始寫了。」
   - 其他 → 「回覆：<原句>」。
 - 段的 Pi（echo 這類 skill）：先 `read_file input/content.md`，再把摘要 `write_file` 到任務說明裡的輸出目錄，最後一句「寫好了。」
 
@@ -43,6 +45,7 @@ _CARD_ID = re.compile(r"card: (\S+)")
 _URL = re.compile(r"https?://\S+")
 _WRITE_TOPIC = re.compile(r"^寫第\s*(\d+)\s*個")
 _REWRITE_TOPIC = re.compile(r"直接重構第\s*(\d+)\s*個")
+_REVISE = re.compile(r"^改寫 (\S+)：(.+)$", re.DOTALL)
 _TYPED = re.compile(r"^回答第\s*([1-6])\s*關：(.+)$", re.DOTALL)
 _STATION_LINE = re.compile(r"^Station (\d) .*: (\w+)$")
 _QUESTION_LINE = re.compile(r"^  (q\d+) \[")
@@ -208,25 +211,31 @@ def station_questions(station: int, origin: str, personas: int = 1) -> list[dict
         genres = _START_GENRES.get(origin, _START_GENRES["report_topic"])
         cards: list[dict[str, Any]] = [
             {
+                "kind": "genre",
                 "header": "文體",
                 "question": "這篇的主證據是什麼、讀者讀完要做哪個決定？",
                 "options": [_option(_GENRE_NAMES[g], f"{g} 的主證據", g) for g in genres],
             },
             {
+                "kind": "theme",
                 "header": "主題",
                 "question": "讀者做決定時最在意哪一個？",
                 "options": [
-                    _option("tools", "工具與工作流程選型"),
-                    _option("builder-method", "做產品的方法與工程實務"),
+                    _option("工具與工作流程選型", "讀者要挑工具", "tools"),
+                    _option("做產品的方法與工程實務", "讀者要做產品", "builder-method"),
                 ],
             },
         ]
         if personas > 1:
             cards.append(
                 {
+                    "kind": "persona",
                     "header": "角色",
                     "question": "用誰的聲音寫？",
-                    "options": [_option("me", "創作者自己"), _option("ally", "另一個角色")],
+                    "options": [
+                        _option("創作者自己", "用 me 的聲音", "me"),
+                        _option("另一個角色", "用 ally 的聲音", "ally"),
+                    ],
                 }
             )
         return cards
@@ -473,6 +482,9 @@ def decide(body: dict[str, Any]) -> tuple[str, Any]:
         if answered == "analyze":
             return "text", "開始分析了。"
         if answered == "rewrite":
+            _, calls = _turn(messages)
+            if calls and calls[-1].error:
+                return "text", "沒開：" + calls[-1].result
             return "text", "開始寫了。"
         if answered == "read_report":
             return "text", "報告重點：" + last_text.strip()[-60:]
@@ -493,16 +505,12 @@ def decide(body: dict[str, Any]) -> tuple[str, Any]:
                 tool = "read_article" if "read_article" in _text(message) else "read_report"
                 return "tool", (tool, {"job_id": found.group(1)})
         topic = _REWRITE_TOPIC.search(last_text)
-        if topic and "rewrite" in tools:
-            analyses = [
-                found.group(1)
-                for message in messages
-                if "[ef-job]" in _text(message)
-                and "read_report" in _text(message)
-                and (found := _JOB_ID.search(_text(message)))
-            ]
-            if analyses:
-                return "tool", ("rewrite", {"from_job": analyses[-1], "goal": f"題材 {topic.group(1)}"})
+        analysis = _analysis_job(messages)
+        if topic and "rewrite" in tools and analysis is not None:
+            return "tool", ("rewrite", {"from_job": analysis, "goal": f"題材 {topic.group(1)}"})
+        revise = _REVISE.match(last_text.strip())
+        if revise and "rewrite" in tools:
+            return "tool", ("rewrite", {"from_job": revise.group(1), "feedback": revise.group(2)})
         url = _URL.search(last_text)
         if url:
             return "tool", ("analyze", {"url": url.group(0)})

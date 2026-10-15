@@ -46,6 +46,8 @@ export function describeCard(card: Row): string {
     `writable: ${card.writable ? "yes (all six stations decided)" : "no"}; current station: ${String(card.current_station ?? "none")}`,
   ];
   if (card.genre) lines.push(`genre: ${String(card.genre)}`);
+  if (card.theme) lines.push(`theme: ${String(card.theme)}`);
+  if (card.persona) lines.push(`persona: ${String(card.persona)}`);
   const origin = card.origin as Row | null | undefined;
   if (origin) {
     const from = origin.job_id ? ` job ${String(origin.job_id)} topic ${String(origin.topic)}` : "";
@@ -59,7 +61,8 @@ export function describeCard(card: Row): string {
     const answers = new Map<string, Row>();
     for (const answer of (latest?.answers ?? []) as Row[]) answers.set(String(answer.question), answer);
     for (const question of questions) {
-      const head = `  ${String(question.id)} [${String(question.header)}] ${String(question.question)}`;
+      const kind = question.kind ? ` (${String(question.kind)} card)` : "";
+      const head = `  ${String(question.id)} [${String(question.header)}]${kind} ${String(question.question)}`;
       const answer = answers.get(String(question.id));
       if (answer && station.status !== "asking") {
         const yours = latest.source === "agent" ? ` [recorded by you: ${String(latest.mode)}]` : "";
@@ -100,19 +103,26 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "propose_questions",
       label: "Propose questions",
       description:
-        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend). On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
+        "Record the question cards for one interview station of an editorial card. The creator's screen shows them one at a time; each card has a short header, a question and 2-4 options (label and a one-line description). Do not add an 其他 option: a free answer is always offered. Station 1 must have exactly one genre card (kind genre) whose every option has value set to a genre slug (essay, research-review, product-case, benchmark, postmortem, explainer, trend); it may also have one theme card (kind theme, values from worldview, builder-method, startup, tech-selection, adoption, education, tools, open-source) and one persona card (kind persona, values are persona names from list_personas). Labels on those cards can be plain Chinese names; the value is what gets recorded. On station 3 the options are only prompts (「你有沒有遇過……」): never list 沒有例子, the screen always offers it and only the author can pick it. Stations go in order: a station can be asked only when every earlier one is decided. Leave card out to open a new card (station 1 only). Records only, costs nothing. Then wait: when the creator answers on screen you get an [ef-card] notice.",
       parameters: Type.Object({
         card: Type.Optional(CardParam),
         station: StationParam,
         questions: Type.Array(
           Type.Object({
             header: Type.String({ description: "Short label of what this card asks, e.g. 文體 or 主題 (at most 24 characters)" }),
+            kind: Type.Optional(
+              Type.Union([Type.Literal("genre"), Type.Literal("theme"), Type.Literal("persona")], {
+                description: "Station 1 only: the genre, theme or persona card. Every option of such a card carries value",
+              }),
+            ),
             question: Type.String({ description: "The question" }),
             options: Type.Array(
               Type.Object({
                 label: Type.String({ description: "Option name" }),
                 description: Type.String({ description: "One sentence on what picking it means" }),
-                value: Type.Optional(Type.String({ description: "Station 1 genre card only: the genre slug this option stands for" })),
+                value: Type.Optional(
+                  Type.String({ description: "Station 1 genre, theme or persona card only: the genre slug, theme slug or persona name this option stands for" }),
+                ),
               }),
               { minItems: 2, maxItems: 4 },
             ),
@@ -148,7 +158,7 @@ export function registerCardTools(pi: ExtensionAPI, callGateway: CallGateway): v
       name: "record_interpreted_answers",
       label: "Record interpreted answers",
       description:
-        "Record the answers of one station that you interpreted; they are marked as yours (source: agent). Use it only when the creator answered by typing in the chat instead of clicking the question cards (give an answer for every current card of the station, plus quote: their words as typed), or said 「你幫我選」 (pick_for_me: true and no answers: the first option of each card is recorded; on the station 1 genre card the first genre that needs no author experience, and if there is none nothing is recorded and you must ask the creator; on station 3 only 「尚待作者提供」, which is not a decision, so then ask the creator for their own example). On station 3 an answer must carry the author's own content: other_text, a material reference, or a prompt choice with the example written in note; or no_example when the author said so. Only for a station that is being asked, pending or needs reconfirming: a decided station must be re-asked first. Never use it for answers the creator clicked: those are recorded already.",
+        "Record the answers of one station that you interpreted; they are marked as yours (source: agent). Use it only when the creator answered by typing in the chat instead of clicking the question cards (give an answer for every current card of the station, plus quote: their words as typed), or said 「你幫我選」 (pick_for_me: true and no answers: the first option of each card is recorded; on the station 1 genre card the first genre that needs no author experience, and if there is none nothing is recorded and you must ask the creator; the theme and persona cards get their first option; on station 3 only 「尚待作者提供」, which is not a decision, so then ask the creator for their own example). On station 3 an answer must carry the author's own content: other_text, a material reference, or a prompt choice with the example written in note; or no_example when the author said so. Only for a station that is being asked, pending or needs reconfirming: a decided station must be re-asked first. Never use it for answers the creator clicked: those are recorded already.",
       parameters: Type.Object({
         card: CardParam,
         station: StationParam,

@@ -17,9 +17,12 @@ ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：�
   事件標 `source: ui`。這三個不在閘道的 `/tools/` 裡，對話的 Pi 叫不到。
 
 **事件五種**（每筆都有 `n`（這張卡的第幾筆）、`type`、`ts`、`source`）：
-- `questions_proposed`：哪一關、問題卡（`id`、`header`、`question`、`options[{label, description, value?}]`）。
-  「其他」一定有，不記；第 3 關的「沒有例子」也是系統給的，不記。第 1 關一定有一張文體卡，選項的 `value`
-  是文體的 slug（`GENRES`）；第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
+- `questions_proposed`：哪一關、問題卡（`id`、`header`、`question`、`kind?`、`options[{label, description, value?}]`）。
+  「其他」一定有，不記；第 3 關的「沒有例子」也是系統給的，不記。第 1 關一定有一張文體卡（`kind: genre`），
+  選項的 `value` 是文體的 slug（`GENRES`）；也可以各有一張主題卡（`kind: theme`，`value` 是 `THEMES`）與
+  角色卡（`kind: persona`，`value` 是現有的角色），編輯卡由此讀得到 `theme`、`persona`（#109）。
+  #109 之前的文體卡沒有 `kind`：每個選項都帶 `value` 的那張就是文體卡（舊紀錄照樣讀得懂）。
+  第 1 關可以帶 `origin`（這張卡從哪裡開始，ADR-0025 §3.1）。
 - `answered`：一張問題卡一筆；一關送出時一批寫（同一個 `submission`，一次 write 寫完）。
   `choice`（選的選項名稱）、`other_text`（「其他」的文字）、`pending`（第 3 關「尚待作者提供」）、
   `no_example`（第 3 關「沒有例子」）四選一；`material`（引用作者素材 `M<n>`）可以單獨給或跟著前兩種；加 `note`。
@@ -67,6 +70,7 @@ from evidence_forge.gateway.ledger import append_line
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.paths import DataDir
+from evidence_forge.runner.stage_inputs import personas
 
 _log = logging.getLogger(__name__)
 
@@ -95,6 +99,21 @@ GENRES = frozenset(
 SELF_FREE_GENRES = frozenset({"research-review", "explainer", "trend"})
 # 主證據是作者自己的使用、測試或專案：第 3 關不能答「沒有例子」（ADR-0025 §3.2）
 AUTHOR_EVIDENCE_GENRES = frozenset({"product-case", "benchmark", "postmortem"})
+# 主題（ADR-0026 §3.2；通用說明在 `harness/genres/themes.md`，#106 加進來之前照這份驗）
+THEMES = frozenset(
+    {
+        "worldview",
+        "builder-method",
+        "startup",
+        "tech-selection",
+        "adoption",
+        "education",
+        "tools",
+        "open-source",
+    }
+)
+# 第 1 關帶結構化值的問題卡（#109）：選項的 `value` 是文體、主題的 slug，或角色名稱
+QuestionKind = Literal["genre", "theme", "persona"]
 
 MAX_QUESTIONS = 4
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
@@ -126,7 +145,7 @@ class Option(BaseModel):
 
     label: str
     description: str
-    # 第 1 關文體卡的選項才有：文體的 slug（`GENRES`）
+    # 第 1 關文體、主題、角色卡的選項才有：文體或主題的 slug、角色名稱（照問題卡的 `kind`）
     value: str | None = None
 
 
@@ -137,6 +156,8 @@ class Question(BaseModel):
     header: str
     question: str
     options: tuple[Option, ...]
+    # 第 1 關的文體、主題、角色卡；其他問題卡沒有。#109 之前的紀錄沒有這欄（`question_kind` 照舊規則認）
+    kind: QuestionKind | None = None
 
 
 class Origin(BaseModel):
@@ -301,6 +322,9 @@ class CardState(BaseModel):
     origin: Origin | None = None
     # 第 1 關現在的決定選的文體（slug）；還沒選是 None。寫稿（#110）與第 3 關的規則都讀它
     genre: str | None = None
+    # 第 1 關現在的決定選的主題（slug）與角色；沒問那張卡、或第 1 關還沒決定是 None（#109）
+    theme: str | None = None
+    persona: str | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
     events: int = 0
@@ -607,8 +631,11 @@ def _compute(
                     ts=event.ts,
                 )
             )
-    # 第 1 關正在重問（或還沒決定）時不給文體：舊答案不能拿來判斷第 3 關、也不能交給寫稿
-    genre = _decided_genre(stations[1]) if stations[1].status() in _DECIDED else None
+    # 第 1 關正在重問（或還沒決定）時不給文體、主題、角色：舊答案不能拿來判斷第 3 關、也不能交給寫稿
+    first_decided = stations[1].status() in _DECIDED
+    genre = _decided_value(stations[1], "genre") if first_decided else None
+    theme = _decided_value(stations[1], "theme") if first_decided else None
+    persona = _decided_value(stations[1], "persona") if first_decided else None
     states: list[StationState] = []
     for s in stations.values():
         status = s.status()
@@ -640,6 +667,8 @@ def _compute(
         title=origin.title if origin is not None else None,
         origin=origin,
         genre=genre,
+        theme=theme,
+        persona=persona,
         created_at=events[0].ts if events else None,
         updated_at=events[-1].ts if events else None,
         events=len(events),
@@ -657,19 +686,28 @@ def _decision_answers(station: _Station) -> list[Answer]:
     return found.answers if found is not None else []
 
 
-def _decided_genre(station: _Station) -> str | None:
-    """第 1 關現在的決定裡，文體卡選的那個選項的 slug。"""
+def _decided_value(station: _Station, kind: QuestionKind) -> str | None:
+    """第 1 關現在的決定裡，那一種卡（文體、主題、角色）選的那個選項的 `value`。"""
     questions = {q.id: q for q in station.questions}
     for answer in _decision_answers(station):
         question = questions.get(answer.question)
-        if question is None or not _is_genre_question(question):
+        if question is None or question_kind(question) != kind:
             continue
         return next((o.value for o in question.options if o.label == answer.choice), None)
     return None
 
 
+def question_kind(question: Question) -> QuestionKind | None:
+    """問題卡是哪一種結構化的卡。#109 之前的紀錄沒有 `kind`：每個選項都帶 `value` 的就是文體卡。"""
+    if question.kind is not None:
+        return question.kind
+    if question.options and all(o.value is not None for o in question.options):
+        return "genre"
+    return None
+
+
 def _is_genre_question(question: Question) -> bool:
-    return all(o.value is not None for o in question.options)
+    return question_kind(question) == "genre"
 
 
 def _example_problem(
@@ -838,7 +876,21 @@ def _text(value: object, name: str, limit: int, *, required: bool = True) -> str
     return stripped
 
 
-def _parse_questions(raw: object, next_id: int, station: int) -> list[Question]:
+def _value_domain(kind: QuestionKind, known_personas: list[str]) -> frozenset[str]:
+    if kind == "genre":
+        return GENRES
+    if kind == "theme":
+        return THEMES
+    return frozenset(known_personas)
+
+
+_KIND_NAMES: dict[QuestionKind, str] = {"genre": "文體", "theme": "主題", "persona": "角色"}
+
+
+def _parse_questions(
+    raw: object, next_id: int, station: int, known_personas: list[str]
+) -> list[Question]:
+    """`known_personas`：現有的角色（角色卡的 `value` 只能是這幾個）。"""
     if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_QUESTIONS:
         raise ToolRejected(400, f"questions 要是 1～{MAX_QUESTIONS} 張問題卡")
     found: list[Question] = []
@@ -851,6 +903,12 @@ def _parse_questions(raw: object, next_id: int, station: int) -> list[Question]:
             raise ToolRejected(
                 400, f"{where}要有 {MIN_OPTIONS}～{MAX_OPTIONS} 個選項（「{OTHER_LABEL}」一定有，不用給）"
             )
+        raw_kind = item.get("kind")
+        if raw_kind is not None and raw_kind not in _KIND_NAMES:
+            raise ToolRejected(400, f"{where}：kind 要是 genre、theme 或 persona")
+        if raw_kind is not None and station != 1:
+            raise ToolRejected(400, f"{where}：只有第 1 關的文體、主題、角色卡帶 kind")
+        kind: QuestionKind | None = raw_kind
         parsed: list[Option] = []
         for option in options:
             if not isinstance(option, dict):
@@ -865,18 +923,27 @@ def _parse_questions(raw: object, next_id: int, station: int) -> list[Question]:
                 raise ToolRejected(
                     400, f"{where}：「{NO_EXAMPLE_LABEL}」是系統的選項，只有作者能答，不用列成提示"
                 )
-            if value is not None and (station != 1 or value not in GENRES):
-                raise ToolRejected(
-                    400,
-                    f"{where}：只有第 1 關的文體卡選項帶 value，而且要是文體的 slug"
-                    f"（{'、'.join(sorted(GENRES))}）",
-                )
+            if value is not None and station != 1:
+                raise ToolRejected(400, f"{where}：只有第 1 關的文體、主題、角色卡選項帶 value")
             parsed.append(Option(label=label, description=description, value=value))
         if len({o.label for o in parsed}) != len(parsed):
             raise ToolRejected(400, f"{where}的選項名稱重複了")
         values = [o.value for o in parsed if o.value is not None]
-        if values and (len(values) != len(parsed) or len(set(values)) != len(values)):
-            raise ToolRejected(400, f"{where}：文體卡的每個選項都要帶不同的文體 slug（value）")
+        if kind is None and values:
+            # 沒寫 kind 卻帶 value：#109 之前的文體卡寫法，照文體卡驗
+            kind = "genre"
+        if kind is not None:
+            name = _KIND_NAMES[kind]
+            if len(values) != len(parsed) or len(set(values)) != len(values):
+                raise ToolRejected(400, f"{where}：{name}卡的每個選項都要帶不同的 value")
+            domain = _value_domain(kind, known_personas)
+            outside = [v for v in values if v not in domain]
+            if outside:
+                listed = "、".join(sorted(domain)) or "（還沒有任何角色）"
+                raise ToolRejected(
+                    400,
+                    f"{where}：{name}卡的 value 要是其中之一（{listed}），不認得 {'、'.join(outside)}",
+                )
         header = _text(item.get("header"), f"{where}的標籤（header）", MAX_HEADER)
         question = _text(item.get("question"), f"{where}的問題", MAX_QUESTION)
         assert header is not None and question is not None
@@ -886,13 +953,18 @@ def _parse_questions(raw: object, next_id: int, station: int) -> list[Question]:
                 header=header,
                 question=question,
                 options=tuple(parsed),
+                kind=kind,
             )
         )
-    if station == 1 and sum(1 for q in found if _is_genre_question(q)) != 1:
+    if station == 1 and sum(1 for q in found if q.kind == "genre") != 1:
         raise ToolRejected(
             400,
-            "第 1 關要有一張文體卡（只能一張）：每個選項帶文體的 slug（value，ADR-0026 的 7 種）",
+            "第 1 關要有一張文體卡（只能一張）：kind 是 genre，每個選項帶文體的 slug"
+            "（value，ADR-0026 的 7 種）",
         )
+    for single in ("theme", "persona"):
+        if sum(1 for q in found if q.kind == single) > 1:
+            raise ToolRejected(400, f"第 1 關的{_KIND_NAMES[single]}卡只能一張")
     return found
 
 
@@ -940,7 +1012,8 @@ def propose_questions(
     if parsed_origin is not None and number != 1:
         raise ToolRejected(400, "origin 只在第 1 關提出問題時給")
     # 開卡之前先驗問題卡：不合格的不留一張空卡（編號在寫進去時才照這張卡問過幾張決定）
-    _parse_questions(questions, 1, number)
+    known_personas = personas(data)
+    _parse_questions(questions, 1, number, known_personas)
     if card_id is None:
         if number != 1:
             raise ToolRejected(400, "新的編輯卡從第 1 關開始；要接著問，帶上 card")
@@ -956,7 +1029,7 @@ def propose_questions(
                 ),
             )
         asked = sum(len(e.questions) for e in events if isinstance(e, QuestionsProposed))
-        parsed = _parse_questions(questions, asked + 1, number)
+        parsed = _parse_questions(questions, asked + 1, number, known_personas)
         return [
             QuestionsProposed(
                 n=next_n,
@@ -1025,10 +1098,12 @@ def _parse_answers(
             )
         if no_example and station.station != EXAMPLE_STATION:
             raise ToolRejected(400, f"只有第 {EXAMPLE_STATION} 關能答「{NO_EXAMPLE_LABEL}」")
-        if _is_genre_question(question) and (choice is None or material is not None):
+        kind = question_kind(question)
+        if kind is not None and (choice is None or material is not None):
             raise ToolRejected(
                 400,
-                f"問題卡 {question.id} 是文體卡：要選列出的其中一種文體（不能用「{OTHER_LABEL}」或作者素材）",
+                f"問題卡 {question.id} 是{_KIND_NAMES[kind]}卡：要選列出的其中一個"
+                f"（不能用「{OTHER_LABEL}」或作者素材）；要的不在上面，就重新提出第 1 關",
             )
         found[question.id] = Answer(
             question=question.id,

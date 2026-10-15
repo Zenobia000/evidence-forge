@@ -8,8 +8,8 @@
 - Pi 正在回答時送訊息（`followUp`）排在後面，兩句都答。
 - 創作者在畫面上送出一關（`submit_station`，#107）：主機送 `/ef-card`，ef-tools 放一則 `ef-card` 通知、
   觸發一輪，模型叫 `read_card` 讀到創作者點的回答；畫面才能叫的入口不在模型的工具清單裡。
-- `rewrite` 的接線：模型叫它，經閘道開一張接在那張分析後面的重構單；它跑完時的通知叫模型讀文章（#102）。
-  「寫第 N 個」從 #109 起開的是訪談，不再叫 `rewrite`；照編輯卡寫稿是 #110。
+- `rewrite` 的接線：從分析開被閘道擋下（新文章從訪談開始，#109）；改已經有的文章才經閘道開單，
+  它跑完時的通知叫模型讀文章（#102）。照編輯卡寫稿是 #110。
 - 訪談（#109）：三種起點（報告的題材、一句想法、貼作者素材）都開一張編輯卡、先讀角色的 lessons；
   六關一關一關走到可以寫稿，中間有「你幫我選」（第 1 關選不需要作者經驗的文體、第 3 關只記「尚待作者提供」）、
   在主輸入框打字回答、第 3 關被擋（要作者經驗的文體不能沒有例子；不是從報告開始的隨筆也不能）、
@@ -46,6 +46,7 @@ from evidence_forge.gateway.config import GatewayConfig
 from evidence_forge.harness import default_harness
 from evidence_forge.models import JobResult, Recipe, RecipeStage
 from evidence_forge.paths import DataDir
+from evidence_forge.runner.intake import open_job_from
 from evidence_forge.runner.pi_launch import prepare_agent_dir
 
 PI_BIN = default_harness().pi.pi_bin
@@ -263,19 +264,33 @@ def _analysed(chat: Chat, cid: str) -> str:
 
 
 @pytest.mark.promise("FR-CH-01", "FR-RW-01")
-def test_rewrite_工具_從分析開出重構單_跑完通知讀文章(chat: Chat) -> None:
+def test_rewrite_從分析開被閘道擋下_改已經有的文章才開單_跑完通知讀文章(chat: Chat) -> None:
     cid = conversations.create(chat.data, NOW).id
     analysis = _analysed(chat, cid)
 
-    # 工具接線用的劇本（提示詞不再拿 rewrite 寫新文章，#109）
+    # 模型不照提示詞、直接從分析寫：閘道擋下，新文章從訪談開始（#109）
     chat.host.send(cid, "直接重構第 1 個")
+    wait_until(lambda: any(t.startswith("沒開：") for t in chat.texts(cid)), timeout_s=60, what="rewrite 被擋")
+    assert "新文章從訪談開始" in next(t for t in chat.texts(cid) if t.startswith("沒開："))
+    assert [r.job_id for r in conversations.jobs(chat.data, cid)] == [analysis]
+
+    # 第一版文章（照編輯卡寫稿是 #110；這裡直接用投入開、記進對話）
+    first = open_job_from(chat.data, REWRITE, analysis, goal="題材 1", now=NOW, conversation=cid)
+    conversations.add_job(
+        chat.data, cid, conversations.ConversationJob(job_id=first.id, ts=NOW, version=1, parent=analysis)
+    )
+    (chat.data.job_dir(first.id) / "input").mkdir()
+    (chat.data.job_dir(first.id) / "input" / "report.md").write_text("報告", encoding="utf-8")
+    _finish(chat.data, first.id, "# 夜班\n\n第一版。", stage="rewrite", name="article.md")
+
+    chat.host.send(cid, f"改寫 {first.id}：開頭短一點")
     wait_until(lambda: "開始寫了。" in chat.texts(cid), timeout_s=60, what="rewrite 開了單就回")
     rows = conversations.jobs(chat.data, cid)
-    assert [(r.version, r.parent) for r in rows] == [(1, None), (1, analysis)]
-    rewrite = rows[1].job_id
+    assert [(r.version, r.parent) for r in rows] == [(1, None), (1, analysis), (2, first.id)]
+    rewrite = rows[2].job_id
     job = read_job(chat.data.job_dir(rewrite) / "job.md").job
-    assert (job.recipe, job.parent, job.conversation, job.persona) == ("rewrite", analysis, cid, "me")
-    assert job.goal == "題材 1"
+    assert (job.recipe, job.parent, job.conversation, job.persona) == ("rewrite", first.id, cid, "me")
+    assert job.feedback == "開頭短一點"
 
     _finish(chat.data, rewrite, "# 夜班值不值得\n\n人力成本算給你看。", stage="rewrite", name="article.md")
     chat.host.job_changed(rewrite)
@@ -385,7 +400,11 @@ def test_寫第_1_個_開一張編輯卡_六關訪談到可以寫稿_不開重�
     assert card.origin is not None
     assert (card.origin.kind, card.origin.job_id, card.origin.topic) == ("report_topic", analysis, 1)
     station_1 = _current(card, 1)
-    assert [q.header for q in station_1] == ["文體", "主題", "角色"]
+    assert [(q.header, q.kind) for q in station_1] == [
+        ("文體", "genre"),
+        ("主題", "theme"),
+        ("角色", "persona"),
+    ]
     assert {o.value for o in station_1[0].options} <= cards.GENRES
     # 訪談開工前讀了角色最近的 lessons
     assert "標題不要用問句" in json.dumps(chat.model.requests, ensure_ascii=False)
@@ -396,7 +415,9 @@ def test_寫第_1_個_開一張編輯卡_六關訪談到可以寫稿_不開重�
     chat.host.send(cid, "你幫我選")
     _wait_said(chat, cid, "第 2 關的問題卡在畫面上了。")
     card = _the_card(chat, cid)
-    assert card.stations[0].decided and card.genre == "research-review"
+    assert card.stations[0].decided
+    # 文體只挑不需要作者經驗的；主題與角色選排第一的，都以結構化的值記下
+    assert (card.genre, card.theme, card.persona) == ("research-review", "tools", "me")
     assert {(e["source"], e["mode"]) for e in _answered(chat, cid, 1)} == {("agent", "pick_for_me")}
 
     _submit(chat, cid, 2)

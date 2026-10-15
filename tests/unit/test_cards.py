@@ -793,3 +793,127 @@ def test_第_1_關正在重問時_編輯卡不給文體_第_3_關不能答沒有
     with pytest.raises(ToolRejected) as caught:
         _answer_3(data, cid, card_id, no_example=True)
     assert caught.value.status == 409
+
+
+# --- 第 1 關的文體、主題、角色卡（#109）--------------------------------------------------------
+
+
+def _kinded(kind: str, header: str, *values: str) -> dict[str, Any]:
+    """帶 `kind` 的第 1 關問題卡：選項名稱用中文，結構化的值放 `value`。"""
+    return {
+        "kind": kind,
+        "header": header,
+        "question": f"{header}選哪個？",
+        "options": [{"label": f"{header}：{v}", "description": "說明", "value": v} for v in values],
+    }
+
+
+def _with_personas(data: DataDir, *names: str) -> None:
+    for name in names:
+        (data.authors / name).mkdir(parents=True, exist_ok=True)
+
+
+def test_第_1_關選好的文體_主題_角色_編輯卡都讀得到(data: DataDir, cid: str) -> None:
+    _with_personas(data, "me", "ally")
+    card_id = cards.propose_questions(
+        data,
+        cid,
+        None,
+        1,
+        [
+            _kinded("genre", "文體", "trend", "explainer"),
+            _kinded("theme", "主題", "tools", "adoption"),
+            _kinded("persona", "角色", "me", "ally"),
+        ],
+        now=NOW,
+    ).card_id
+    assert [q.kind for q in _current(data, cid, card_id, 1)] == ["genre", "theme", "persona"]
+
+    card = _submit(data, cid, card_id, 1, "文體：explainer", "主題：adoption", "角色：ally").card
+    assert (card.genre, card.theme, card.persona) == ("explainer", "adoption", "ally")
+
+    # 第 1 關重問中：舊的選擇不交出去
+    card = cards.reask_station(data, cid, card_id, 1, now=NOW).card
+    assert (card.genre, card.theme, card.persona) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        [_kinded("genre", "文體", "trend"), _kinded("theme", "主題", "tools", "cooking")],
+        [_kinded("genre", "文體", "trend"), _kinded("persona", "角色", "me", "nobody")],
+        [_kinded("genre", "文體", "trend"), _kinded("theme", "主題", "tools", "tools")],
+        [_kinded("genre", "文體", "trend"), _kinded("theme", "主題", "tools"), _kinded("theme", "主題二", "adoption")],
+        [_kinded("genre", "文體", "trend"), {**_question("主題", "甲", "乙"), "kind": "theme"}],
+        [_kinded("genre", "文體", "trend"), {**_question("主題", "甲", "乙"), "kind": "mood"}],
+        [_kinded("theme", "主題", "tools", "adoption")],
+    ],
+)
+def test_第_1_關的結構化問題卡_值不在範圍裡就拒絕(
+    data: DataDir, cid: str, bad: list[dict[str, Any]]
+) -> None:
+    _with_personas(data, "me")
+    with pytest.raises(ToolRejected) as caught:
+        cards.propose_questions(data, cid, None, 1, bad, now=NOW)
+    assert caught.value.status == 400
+    assert cards.list_cards(data, cid) == []
+
+
+def test_只有第_1_關的問題卡帶_kind(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 1)
+    with pytest.raises(ToolRejected) as caught:
+        cards.propose_questions(
+            data, cid, card_id, 2, [{**_question("觀點", "甲", "乙"), "kind": "theme"}], now=NOW
+        )
+    assert caught.value.status == 400
+
+
+def test_主題卡與角色卡不能用其他_要選列出的(data: DataDir, cid: str) -> None:
+    card_id = cards.propose_questions(
+        data, cid, None, 1,
+        [_kinded("genre", "文體", "trend", "explainer"), _kinded("theme", "主題", "tools", "adoption")],
+        now=NOW,
+    ).card_id
+    q1, q2 = _current(data, cid, card_id, 1)
+    with pytest.raises(ToolRejected) as caught:
+        cards.submit_station(
+            data, cid, card_id, 1,
+            [{"question": q1.id, "choice": "文體：trend"}, {"question": q2.id, "other_text": "烹飪"}],
+            now=NOW,
+        )
+    assert caught.value.status == 400
+
+
+def test_你幫我選只過濾文體卡_主題與角色選排第一的(data: DataDir, cid: str) -> None:
+    _with_personas(data, "me", "ally")
+    card_id = cards.propose_questions(
+        data,
+        cid,
+        None,
+        1,
+        [
+            _kinded("genre", "文體", "product-case", "trend"),
+            _kinded("theme", "主題", "tools", "adoption"),
+            _kinded("persona", "角色", "ally", "me"),
+        ],
+        now=NOW,
+    ).card_id
+
+    card = cards.record_interpreted_answers(data, cid, card_id, 1, now=NOW, pick_for_me=True).card
+
+    assert (card.genre, card.theme, card.persona) == ("trend", "tools", "ally")
+
+
+def test_109_之前沒有_kind_的文體卡_照樣認得出來(data: DataDir, cid: str) -> None:
+    # 舊的寫法：沒有 kind、每個選項都帶 value（#107 的工具說明就是這樣教的）
+    card_id = _start(data, cid)
+    assert _current(data, cid, card_id, 1)[0].kind == "genre"
+    _submit(data, cid, card_id, 1, "trend", "主題 A")
+
+    # 舊的紀錄根本沒有 kind 這一欄：重算編輯卡照樣讀得到文體
+    path = data.conversation_dir(cid) / "cards" / card_id / "decisions.jsonl"
+    path.write_text(path.read_text(encoding="utf-8").replace(',"kind":"genre"', ""), encoding="utf-8")
+    assert '"kind"' not in path.read_text(encoding="utf-8")
+    (path.parent / "card.json").unlink()
+    assert cards.read_card(data, cid, card_id).genre == "trend"
