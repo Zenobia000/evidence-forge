@@ -473,14 +473,23 @@ def unused_sources(source: SourceTree) -> list[str]:
 # --- 寫進角色資料夾 -------------------------------------------------------------
 
 
+def _inside_data(data: DataDir, path: Path) -> None:
+    """解析符號連結之後，`path` 必須還在 `$EF_DATA` 底下；不然私人資料會被寫到別處（例如公開的 repo）。"""
+    if not path.resolve().is_relative_to(data.root.resolve()):
+        raise PersonaImportError(
+            f"{path} 實際在 {path.resolve()}，不在資料目錄 EF_DATA（{data.root.resolve()}）底下，不寫"
+        )
+
+
 def _backup_root(data: DataDir) -> Path:
-    """`authors/.backup/`：必須就在 `authors/` 底下，不能是連到別處的符號連結。
+    """`authors/.backup/`：必須就在 `authors/` 底下、解析後仍在 `$EF_DATA` 裡，不能是連到別處的符號連結。
 
     備份會把私人的角色資料整份複製過去；它若被連到公開的 repo 裡，品牌內容就跟著被複製出去。
     """
     root = data.authors / _BACKUP_DIR
     if root.is_symlink() or (root.exists() and root.resolve() != data.authors.resolve() / _BACKUP_DIR):
         raise PersonaImportError(f"{root} 是符號連結或指到別處（{root.resolve()}），不備份也不寫")
+    _inside_data(data, root)
     return root
 
 
@@ -499,6 +508,8 @@ def import_persona(
 ) -> ImportResult:
     """先檢查每個要寫的位置都在角色資料夾裡，再備份（有東西的話），最後一個檔一個檔換上去。"""
     folder = persona_dir(data, persona)  # 角色名不合格、或資料夾是符號連結就丟錯
+    # authors/ 本身可以是連結（整個資料目錄搬家），但解析後角色資料夾一定要在 $EF_DATA 底下
+    _inside_data(data, folder)
     real = folder.resolve()
     for relative in files:
         target = folder / relative

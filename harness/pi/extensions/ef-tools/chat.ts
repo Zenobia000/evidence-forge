@@ -133,7 +133,8 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
           const list = (value: unknown) => (Array.isArray(value) ? (value as string[]).join(", ") : "");
           const written = list(p.written_genres);
           const calibrated = list(p.calibrated_genres);
-          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; genres with a style: ${written || "none"}; calibrated: ${calibrated || "none"}`;
+          const note = typeof p.note === "string" ? ` (${p.note})` : "";
+          return `- ${String(p.name)}: default genre ${String(p.default_genre ?? "none")}; genres with a style: ${written || "none"}; calibrated: ${calibrated || "none"}${note}`;
         });
         return text(lines.join("\n"));
       },

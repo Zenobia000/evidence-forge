@@ -427,6 +427,31 @@ def test_備份資料夾是符號連結_拒絕_私人資料不會被複製出去
     assert (me / "voice.md").read_text(encoding="utf-8") == "舊的聲音"
 
 
+def test_authors_資料夾連到資料目錄之外_拒絕_什麼都不寫(tmp_path: Path) -> None:
+    # authors/ 本身是連到別處（例如公開 repo 裡）的連結：角色資料夾與備份都會落在 $EF_DATA 之外
+    elsewhere = tmp_path / "public-repo" / "authors"
+    (elsewhere / "me").mkdir(parents=True)
+    (elsewhere / "me" / "voice.md").write_text("舊的聲音", encoding="utf-8")
+    data = DataDir(tmp_path / "data")
+    data.root.mkdir()
+    data.authors.symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(PersonaImportError, match="EF_DATA"):
+        import_persona(data, "me", _built(tmp_path), now=NOW)
+    assert sorted(p.name for p in elsewhere.iterdir()) == ["me"]
+    assert [p.name for p in (elsewhere / "me").iterdir()] == ["voice.md"]
+
+
+def test_資料目錄本身是連結_角色資料夾仍在它底下_照常匯入(tmp_path: Path) -> None:
+    # 整個資料目錄搬家、留一個連結：解析後角色資料夾仍在 $EF_DATA 底下，不擋
+    real = tmp_path / "moved-data"
+    real.mkdir()
+    (tmp_path / "data").symlink_to(real, target_is_directory=True)
+    data = DataDir(tmp_path / "data")
+    _existing(data)
+    result = import_persona(data, "me", _built(tmp_path), now=NOW)
+    assert result.backup is not None and result.backup.resolve().is_relative_to(real)
+
+
 def test_已有_lessons_md_不蓋掉_只把新的條目接在後面(tmp_path: Path, data: DataDir) -> None:
     me = data.authors / "me"
     me.mkdir(parents=True)

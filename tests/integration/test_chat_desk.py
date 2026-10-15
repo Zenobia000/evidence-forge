@@ -166,6 +166,9 @@ def test_列出角色_不含範本與備份_附預設文體與寫過的文體(da
     (me / "genres" / "_template.md").write_text("範本", encoding="utf-8")
     (data.authors / "b2b").mkdir()
     (data.authors / "_template").mkdir()
+    # 舊角色的預設文類還是 12 種的 id：不當成第 8 種文體列出來
+    (data.authors / "old").mkdir()
+    (data.authors / "old" / "voice.md").write_text("---\ndefault_genre: opinion\n---\n聲音", encoding="utf-8")
     # 匯入角色前的備份（scripts/import_persona.py）不是角色
     (data.authors / ".backup" / "me-20261015-120000").mkdir(parents=True)
 
@@ -177,6 +180,13 @@ def test_列出角色_不含範本與備份_附預設文體與寫過的文體(da
                 "default_genre": "essay",
                 "written_genres": ["essay", "explainer", "trend"],
                 "calibrated_genres": ["essay"],
+            },
+            {
+                "name": "old",
+                "default_genre": None,
+                "written_genres": [],
+                "calibrated_genres": [],
+                "note": "預設文體 opinion 不是現在的 7 種之一，當成沒有預設文體",
             },
         ]
     }

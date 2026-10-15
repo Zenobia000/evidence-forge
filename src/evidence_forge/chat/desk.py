@@ -259,16 +259,19 @@ class Desk:
                 written = [
                     slug for slug in sorted(GENRE_NAME) if (folder / "genres" / f"{slug}.md").is_file()
                 ]
-                found.append(
-                    {
-                        "name": folder.name,
-                        "default_genre": default_genre(self._data, folder.name),
-                        "written_genres": written,
-                        "calibrated_genres": [
-                            slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
-                        ],
-                    }
-                )
+                default = default_genre(self._data, folder.name)
+                persona: dict[str, Any] = {
+                    "name": folder.name,
+                    # 舊角色的預設文類可能還是 12 種的 id：不認得的不列，免得看起來像第 8 種文體
+                    "default_genre": default if default in GENRE_NAME else None,
+                    "written_genres": written,
+                    "calibrated_genres": [
+                        slug for slug in written if _calibrated(folder / "genres" / f"{slug}.md")
+                    ],
+                }
+                if default is not None and default not in GENRE_NAME:
+                    persona["note"] = f"預設文體 {default} 不是現在的 7 種之一，當成沒有預設文體"
+                found.append(persona)
         return {"personas": found}
 
     def _result(
