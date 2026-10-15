@@ -26,6 +26,7 @@ import pytest
 from chat_world import fake_chat_harness, pid_alive, wait_until
 
 from evidence_forge import conversations
+from evidence_forge.chat.desk import Desk
 from evidence_forge.chat.host import ConversationHost, ConversationNotFound, Subscription
 from evidence_forge.chat.pi_rpc import session_dir
 from evidence_forge.convkey import ConversationKey
@@ -217,6 +218,32 @@ def test_Pi_正在回答時送訊息_排在後面_兩句都答(world: World) -> 
     assert world.replies(cid) == ["回覆：第一句", "回覆：第二句"]
     prompts = [c for c in world.commands(cid) if c["type"] == "prompt"]
     assert all(c["streamingBehavior"] == "followUp" for c in prompts)
+
+
+def test_工單一開就跑完_記進對話之後才通知主機_通知照樣送到(world: World) -> None:
+    # 執行器很快：工單在閘道把它記進 jobs.jsonl 之前就跑完了，那一次變動主機看不到是誰的單。
+    # 工作台在記進去之後才通知主機（`recorded`），主機那時重看一次，跑完了就送通知
+    host = world.host()
+    cid = world.conversation()
+    desk = Desk(world.data, {"analyze": RECIPE}, "analyze", clock=lambda: NOW, on_opened=host.job_opened)
+    opened = desk.open_analysis(
+        conversation_id=cid, url=None, text="# 很快的\n\n內容", goal=None, again=False, before_create=lambda: None
+    )
+    job_id = opened["job_id"]
+    world.finish(job_id)
+    host.job_changed(job_id)
+    conversations.add_job(world.data, cid, conversations.ConversationJob(job_id=job_id, ts=NOW))
+    desk.recorded(cid, job_id)
+    wait_until(lambda: world.notices(cid, job_id) == 1, what="跑完的單照樣通知一次")
+
+
+def test_已經跑完的單_主機只收到開單的通知_也會送結束通知(world: World) -> None:
+    host = world.host()
+    cid = world.conversation()
+    job_id = world.job(cid)
+    world.finish(job_id)
+    host.job_opened(cid, job_id)
+    wait_until(lambda: world.notices(cid, job_id) == 1, what="一則通知")
 
 
 def test_工單跑完_通知對話一次_重複的變動與接回都不會多一則(world: World) -> None:

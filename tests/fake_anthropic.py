@@ -6,9 +6,12 @@
 
 劇本只看請求本身，不記狀態：
 - 對話的 Pi（工具清單裡有 `analyze`）：
-  - 最後一則是工具結果：`analyze` 的 → 「開始分析了。」；`read_report` 的 → 「報告重點：」加報告結尾；其他 → 「好。」
-  - 最後一則訊息有 `[ef-job]` → 叫 `read_report`（工單 id 從通知裡拿）。
+  - 最後一則是工具結果：`analyze` 的 → 「開始分析了。」；`rewrite` 的 → 「開始寫了。」；
+    `read_report` 的 → 「報告重點：」加報告結尾；`read_article` 的 → 「文章重點：」加文章結尾；其他 → 「好。」
+  - 最後一則訊息有 `[ef-job]` → 照通知說的叫 `read_report` 或 `read_article`（工單 id 從通知裡拿）。
   - 有網址 → 叫 `analyze(url)`；以「分析：」開頭 → 叫 `analyze(text)`。
+  - 「寫第 N 個」而且有 `rewrite` → 叫 `rewrite(from_job=最近一張分析的工單, goal="題材 N")`
+    （分析的工單從「叫你讀報告」的 `[ef-job]` 通知拿）。
   - 其他 → 「回覆：<原句>」。
 - 段的 Pi（echo 這類 skill）：先 `read_file input/content.md`，再把摘要 `write_file` 到任務說明裡的輸出目錄，最後一句「寫好了。」
 
@@ -29,6 +32,7 @@ from fastapi.responses import Response
 _OUTPUT_DIR = re.compile(r"stages/[A-Za-z0-9._-]+/\d+/")
 _JOB_ID = re.compile(r"job_id: (\S+)")
 _URL = re.compile(r"https?://\S+")
+_WRITE_TOPIC = re.compile(r"寫第\s*(\d+)\s*個")
 
 
 def _blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
@@ -81,8 +85,12 @@ def decide(body: dict[str, Any]) -> tuple[str, Any]:
     if "analyze" in tools:
         if answered == "analyze":
             return "text", "開始分析了。"
+        if answered == "rewrite":
+            return "text", "開始寫了。"
         if answered == "read_report":
             return "text", "報告重點：" + last_text.strip()[-60:]
+        if answered == "read_article":
+            return "text", "文章重點：" + last_text.strip()[-60:]
         if answered is not None:
             return "text", "好。"
         for message in reversed(messages):
@@ -90,7 +98,19 @@ def decide(body: dict[str, Any]) -> tuple[str, Any]:
                 break
             found = _JOB_ID.search(_text(message))
             if "[ef-job]" in _text(message) and found:
-                return "tool", ("read_report", {"job_id": found.group(1)})
+                tool = "read_article" if "read_article" in _text(message) else "read_report"
+                return "tool", (tool, {"job_id": found.group(1)})
+        topic = _WRITE_TOPIC.search(last_text)
+        if topic and "rewrite" in tools:
+            analyses = [
+                found.group(1)
+                for message in messages
+                if "[ef-job]" in _text(message)
+                and "read_report" in _text(message)
+                and (found := _JOB_ID.search(_text(message)))
+            ]
+            if analyses:
+                return "tool", ("rewrite", {"from_job": analyses[-1], "goal": f"題材 {topic.group(1)}"})
         url = _URL.search(last_text)
         if url:
             return "tool", ("analyze", {"url": url.group(0)})

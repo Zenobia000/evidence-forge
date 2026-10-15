@@ -6,6 +6,8 @@
   觸發一輪回答，模型叫 `read_report` 再整理。
 - ef-tools 照對話紀錄去重：接回之後再送一次同一張單，還是一則通知。
 - Pi 正在回答時送訊息（`followUp`）排在後面，兩句都答。
+- 分析跑完之後說「寫第 1 個」：模型叫 `rewrite`，經閘道開一張接在那張分析後面的重構單；
+  它跑完時的通知叫模型讀文章（#102）。
 
 要先用 nvm 的 Node 在 `harness/pi/` 跑 `npm ci`；沒裝就跳過。不打任何付費 API。
 """
@@ -26,6 +28,7 @@ from fake_anthropic import FakeAnthropic
 
 from evidence_forge import conversations
 from evidence_forge.chat.desk import Desk
+from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.chat.host import ConversationHost
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.gateway.active import ActiveStages
@@ -47,7 +50,16 @@ RECIPE = Recipe(
     on_feedback="investigate",
     default_goal="讀懂這篇",
 )
-CHAT_TOOLS = {"analyze", "read_report", "read_article", "job_status", "list_personas"}
+REWRITE = Recipe(
+    name="rewrite",
+    description="test",
+    stages=(RecipeStage(id="rewrite", skill="rewrite", tier="strong", output=("article.md",)),),
+    on_feedback="rewrite",
+    needs=("report.md",),
+    default_goal="寫一篇",
+)
+RECIPES = {"analyze": RECIPE, "rewrite": REWRITE}
+CHAT_TOOLS = {"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"}
 
 pytestmark = [
     pytest.mark.pipeline,
@@ -94,6 +106,7 @@ class Chat:
 def chat(tmp_path: Path, serve: Serve) -> Iterator[Chat]:
     data = DataDir(tmp_path / "data")
     data.ensure()
+    (data.authors / "me").mkdir(parents=True)
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / "anthropic").write_text(FAKE_KEY + "\n", encoding="utf-8")
@@ -109,7 +122,7 @@ def chat(tmp_path: Path, serve: Serve) -> Iterator[Chat]:
         holder: dict[str, ConversationHost] = {}
         desk = Desk(
             data,
-            {"analyze": RECIPE},
+            RECIPES,
             "analyze",
             clock=lambda: NOW,
             on_opened=lambda c, j: holder["host"].job_opened(c, j),
@@ -121,7 +134,7 @@ def chat(tmp_path: Path, serve: Serve) -> Iterator[Chat]:
             harness=harness,
             stages=stages,
             gateway_url=gateway_url,
-            recipes={"analyze": RECIPE},
+            recipes=RECIPES,
             clock=lambda: NOW,
             board=board,
             request_timeout_s=60,
@@ -132,11 +145,23 @@ def chat(tmp_path: Path, serve: Serve) -> Iterator[Chat]:
         yield Chat(data, host, model)
 
 
-def _finish(data: DataDir, job_id: str, report: str) -> None:
-    """執行器會做的事：寫報告、把工單標成跑完。"""
-    attempt = data.job_dir(job_id) / "stages" / "investigate" / "1"
+def _finish(
+    data: DataDir, job_id: str, report: str, *, stage: str = "investigate", name: str = "report.md"
+) -> None:
+    """執行器會做的事：寫產出與過了的檢查結果、把工單標成跑完。"""
+    attempt = data.job_dir(job_id) / "stages" / stage / "1"
     attempt.mkdir(parents=True)
-    (attempt / "report.md").write_text(report, encoding="utf-8")
+    (attempt / name).write_text(report, encoding="utf-8")
+    write_checks_report(
+        data.job_dir(job_id),
+        ChecksReport(
+            stage=stage,
+            attempt=1,
+            files=(f"stages/{stage}/1/{name}",),
+            created_at=NOW,
+            entries=(CheckEntry(check="C5", status="pass", reason="測試"),),
+        ),
+    )
     path = data.job_dir(job_id) / "job.md"
     job = read_job(path).job
     done = job.model_copy(
@@ -200,3 +225,40 @@ def test_Pi_正在回答時送訊息_排在後面_兩句都答(chat: Chat) -> No
         timeout_s=60,
         what="兩句照順序都答",
     )
+
+
+@pytest.mark.promise("FR-CH-01", "FR-RW-01")
+def test_分析跑完說寫第_1_個_開出重構單_跑完通知讀文章(chat: Chat) -> None:
+    cid = conversations.create(chat.data, NOW).id
+    chat.host.send(cid, "分析：# 圖書館的夜班\n\n夜班的人力成本與使用率。")
+    wait_until(lambda: "開始分析了。" in chat.texts(cid), timeout_s=60, what="analyze 開了單就回")
+    analysis = conversations.jobs(chat.data, cid)[0].job_id
+    _finish(chat.data, analysis, "## 可以寫的題材\n\n### 1. 夜班值不值得\n")
+    chat.host.job_changed(analysis)
+    wait_until(
+        lambda: any(t.startswith("報告重點：") for t in chat.texts(cid)),
+        timeout_s=60,
+        what="分析的通知：讀報告、整理",
+    )
+
+    chat.host.send(cid, "寫第 1 個")
+    wait_until(lambda: "開始寫了。" in chat.texts(cid), timeout_s=60, what="rewrite 開了單就回")
+    rows = conversations.jobs(chat.data, cid)
+    assert [(r.version, r.parent) for r in rows] == [(1, None), (1, analysis)]
+    rewrite = rows[1].job_id
+    job = read_job(chat.data.job_dir(rewrite) / "job.md").job
+    assert (job.recipe, job.parent, job.conversation, job.persona) == ("rewrite", analysis, cid, "me")
+    assert job.goal == "題材 1"
+
+    _finish(chat.data, rewrite, "# 夜班值不值得\n\n人力成本算給你看。", stage="rewrite", name="article.md")
+    chat.host.job_changed(rewrite)
+    wait_until(
+        lambda: any(t.startswith("文章重點：") for t in chat.texts(cid)),
+        timeout_s=60,
+        what="重構的通知：讀文章、整理",
+    )
+    assert chat.notices(cid, rewrite) == 1
+    assert "人力成本算給你看" in next(t for t in chat.texts(cid) if t.startswith("文章重點："))
+    # 畫面的結果卡照這份進度畫：重構那張跑完了
+    progress = {p["job_id"]: p for p in chat.host.jobs(cid)}
+    assert progress[rewrite]["finished"] and progress[rewrite]["outcome"] == "complete"

@@ -398,6 +398,7 @@ def open_job_from(
     feedback: str | None = None,
     budget_usd: float = 0.5,
     budget_credits: int | None = None,
+    conversation: str | None = None,
 ) -> Job:
     """從上一張工單接著做，開一張新的排隊中工單（重構、再改，之後的補查）。
 
@@ -406,6 +407,8 @@ def open_job_from(
     - 角色、文類、目標沒給：上一張單用同一份配方（再改）就沿用它的；不然角色是 `me`、
       文類是角色的預設文類、目標是配方的預設目標。角色一定要有資料夾。
     - 新工單沿用上一張的素材項目（出處、內容 hash），但不放原文全文（FR-RW-01）。不走去重。
+    - `conversation` 是開單的對話 id，記進 `job.md`（對話的 `rewrite`，#102）；命令列不給。
+      「上一張單是不是這個對話的」由閘道檢查，這裡不管。
 
     錯誤一律丟 `ValueError`，訊息寫明哪裡不對；都不開單。
     """
@@ -464,6 +467,7 @@ def open_job_from(
         persona=chosen_persona,
         parent=parent_id,
         feedback=feedback.strip() if feedback and feedback.strip() else None,
+        conversation=conversation,
         budget=budget,
         status="queued",
     )
