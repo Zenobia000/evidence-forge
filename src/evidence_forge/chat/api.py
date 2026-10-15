@@ -175,8 +175,8 @@ def create_app(
             return _error(400, "請求內容要是 JSON")
         if not isinstance(body, dict):
             return _error(400, "請求內容要是 JSON 物件")
-        # 關卡號碼不是數字就原樣交給 `cards.py`，由它回 400
-        number: object = int(station) if station.isdigit() else station
+        # 關卡號碼不是 1～6 就原樣交給 `cards.py`，由它回 400（`isdigit` 認得「²」，int 卻轉不了，所以只認 ASCII 一位數）
+        number: object = int(station) if station in ("1", "2", "3", "4", "5", "6") else station
         if action == "submit":
             answers = body.get("answers")
             return await _call(lambda: host.submit_station(conversation_id, card_id, number, answers))

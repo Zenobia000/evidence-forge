@@ -4,6 +4,7 @@
 再看 `decisions.jsonl` 與算出來的編輯卡。不打模型、不連網。
 """
 
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -477,3 +478,47 @@ def test_一個對話可以有好幾張卡(data: DataDir, cid: str) -> None:
     ).card_id
 
     assert [c.card_id for c in cards.list_cards(data, cid)] == sorted([first, second])
+
+
+def test_閘道與對話主機同時寫同一張卡_編號不撞_每筆都在(data: DataDir, cid: str) -> None:
+    # 閘道（agent 的工具）與對話主機（畫面的點選）在同一個程序的不同執行緒寫同一張卡
+    card_id = _start(data, cid)
+    writers = 8
+    barrier = threading.Barrier(writers)
+    errors: list[BaseException] = []
+
+    def write(number: int) -> None:
+        try:
+            barrier.wait()
+            cards.add_material(data, cid, card_id, f"第 {number} 份筆記", now=NOW)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(writers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    events = cards.read_events(data, cid, card_id)
+    assert sorted(e["n"] for e in events) == list(range(1, writers + 2))
+    materials = cards.read_card(data, cid, card_id).materials
+    assert sorted(m.id for m in materials) == sorted(f"M{i}" for i in range(1, writers + 1))
+
+
+def test_要重確認的關按重問_回到正在問_不能再沿用(data: DataDir, cid: str) -> None:
+    card_id = _start(data, cid)
+    _through(data, cid, card_id, 3)
+    cards.reask_station(data, cid, card_id, 1, now=NOW)
+    _submit(data, cid, card_id, 1, "trend", "主題 A")
+
+    card = cards.reask_station(data, cid, card_id, 2, now=NOW).card
+
+    assert (card.stations[1].status, card.stations[1].needs_reconfirm) == ("asking", False)
+    with pytest.raises(ToolRejected) as caught:
+        cards.keep_decision(data, cid, card_id, 2, now=NOW)
+    assert caught.value.status == 409
+    # 重新送出才有決定；第 3 關還是要重確認
+    after = _submit(data, cid, card_id, 2, "乙").card
+    assert [s.status for s in after.stations[:3]] == ["changed", "changed", "reconfirm"]

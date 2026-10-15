@@ -2,12 +2,15 @@
 
 ```
 $EF_DATA/conversations/<對話 id>/cards/<卡 id>/
-  decisions.jsonl     決策紀錄：一行一個事件，只增不改，只有閘道寫
+  decisions.jsonl     決策紀錄：一行一個事件，只增不改，只經這個模組寫
   card.json           編輯卡：由事件從頭算出來的當前狀態，只是快取，對不上以事件為準
   materials/<sha256>  作者素材的內容：寫一次就不再改，事件只記參照
 ```
 
-**誰會叫這裡**（範圍照 ADR-0021：路徑一律從對話資料夾拼，別的對話的卡根本拼不到）：
+**誰會叫這裡**（範圍照 ADR-0021：路徑一律從對話資料夾拼，別的對話的卡根本拼不到）。
+ADR-0025 說的「閘道直接記」，在 `ef serve` 裡就是這個模組：閘道與對話主機在同一個程序，
+畫面的入口由對話主機直接叫這裡，不再繞一趟閘道的 HTTP（那樣要另外發一把「畫面」的鑰匙）；
+同一張卡的寫入用程序內的鎖排隊（`_card_lock`）。
 - 對話的 agent 經閘道（`gateway/chat_tools.py`）：`propose_questions`、`record_interpreted_answers`、
   `add_material`、`read_card`。事件標 `source: agent`。
 - 畫面經對話主機（`chat/host.py`、`chat/api.py`）：`submit_station`、`keep_decision`、`reask_station`。
@@ -34,6 +37,7 @@ $EF_DATA/conversations/<對話 id>/cards/<卡 id>/
 """
 
 import hashlib
+import logging
 import os
 import secrets
 import threading
@@ -59,6 +63,8 @@ from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.paths import DataDir
 from evidence_forge.write_once import write_once
+
+_log = logging.getLogger(__name__)
 
 STATIONS: dict[int, str] = {
     1: "文體＋主題",
@@ -436,11 +442,19 @@ def _describe_blocking(blocking: list[Blocking]) -> str:
 
 
 def _save_cache(folder: Path, card: CardState) -> None:
-    """`card.json` 先寫暫存檔再整個換上去：讀的人只會讀到舊版或新版。"""
+    """`card.json` 先寫暫存檔再整個換上去：讀的人只會讀到舊版或新版。
+
+    只是快取：寫不進去（磁碟滿、唯讀）不算失敗。事件已經寫進去了，這時丟錯會讓呼叫的人以為沒記到、
+    再送一次，同一關就問兩次。下一次讀卡會再寫一次。
+    """
     path = folder / "card.json"
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    temporary.write_text(card.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(card.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        _log.warning("編輯卡的快取寫不進去：%s", path, exc_info=True)
+        temporary.unlink(missing_ok=True)
 
 
 # --- 算編輯卡 ----------------------------------------------------------------------------
@@ -501,8 +515,11 @@ def _compute(
                 for q in event.questions
             )
             station.current = tuple(q.id for q in event.questions)
-            # 已經送出過的一關又提出新的問題卡：回到還沒送出，原本的決定留著當預設
-            station.reopened = bool(station.submissions)
+            # 已經送出過的一關又提出新的問題卡：回到還沒送出，原本的決定留著當預設。
+            # 要重確認的關也一樣：重新問就是要重新送出，不再能沿用
+            if station.submissions:
+                station.reopened = True
+                station.reconfirm = False
             if event.origin is not None and origin is None:
                 origin = event.origin
         elif isinstance(event, Kept):
@@ -516,7 +533,9 @@ def _compute(
             station = stations.get(event.station)
             if station is None:
                 continue
+            # 重問壓過要重確認：回到還沒送出，要重新送出才有決定，不能再沿用
             station.reopened = True
+            station.reconfirm = False
             station.reasked_at = event.ts
         elif isinstance(event, MaterialAdded):
             materials.append(

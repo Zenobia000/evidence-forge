@@ -494,8 +494,12 @@ class ConversationHost:
     def _clicked(
         self, conversation_id: str, written: cards.Written, action: str, station: object
     ) -> dict[str, Any]:
-        """畫面寫完：推給畫面，再排一則 `/ef-card` 給這個對話的 Pi（工作執行緒送，不讓畫面等 Pi 開起來）。"""
-        self._emit(conversation_id, _card_event(written.card_id, written.events, written.card))
+        """畫面寫完：推給畫面，再排一則 `/ef-card` 給這個對話的 Pi（工作執行緒送，不讓畫面等 Pi 開起來）。
+
+        推給畫面的卡在推的當下重讀（`card_changed`），不用寫入時算的那一份：agent 剛好接著寫了一筆的話，
+        較舊的那一份不會晚到、蓋掉較新的。畫面另外可以照 `card.events` 丟掉筆數比手上少的。
+        """
+        self.card_changed(conversation_id, written.card_id, written.events)
         if written.events:
             last = written.events[-1]["n"]
             self._enqueue(("card", f"{conversation_id} {written.card_id} {last} {action} {station}"))
