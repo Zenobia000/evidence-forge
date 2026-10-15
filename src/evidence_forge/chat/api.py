@@ -17,10 +17,15 @@
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/submit` | 「確認並送出這一關」：`{"answers": [{"question", "choice"｜"other_text", "note"?}]}` → `{"card", "events"}` |
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/keep` | 「沿用」（要重確認的關）：`{}` → `{"card", "events"}` |
 | `POST /api/conversations/<id>/cards/<卡>/stations/<關>/reask` | 「重問這一關」：`{}` → `{"card", "events"}` |
+| `POST /api/conversations/<id>/cards/<卡>/write` | 「照這張編輯卡寫稿」：`{"confirmed_events": 確認時那張卡的 card.events}` → 202 `{"job_id", "status", "persona", "genre", "theme", "card_id", "events", …}` |
 
 編輯卡的三個 POST 是**只有畫面能叫的入口**（ADR-0025 §3.3）：主機直接寫進決策紀錄（`source: ui`），再用 `/ef-card` 通知對話的 Pi；
 閘道的 `/tools/` 沒有它們，對話的 agent 叫不到。卡不是這個對話的、或沒有這張卡一律 404，不說存不存在；
 不合規則（沒有要重確認卻按沿用、選項不在卡上、沒回答到每一張）是 409 或 400，什麼都不寫。
+
+`write` 也只有畫面能叫（#110）：工作台開寫稿單之前再查一次。卡還不能寫、確認之後又改過（筆數對不上，畫面要請創作者重新確認）、
+這個對話已經有單在跑、分析交不出報告都是 409，什麼都不開；`confirmed_events` 不是 0 以上的整數 400；
+`ef serve` 沒接上工作台 503。開了的單照一般工單推 `ef_job`。
 
 摘要的欄位：`id`、`title`、`created_at`、`last_activity`、`pi_running`、`busy`、`job_count`（幾張）、
 `latest_job`（最後一張的 `ef_job`，畫面據此標「分析中／有新結果／失敗」）、`spent_usd`（對話本身加它開的工單）、`budget_usd`、
@@ -211,6 +216,17 @@ def create_app(
         if action == "reask":
             return await _call(lambda: host.reask_station(conversation_id, card_id, number))
         return _error(404, f"沒有這個動作：{action}")
+
+    @app.post("/api/conversations/{conversation_id}/cards/{card_id}/write", status_code=202)
+    async def write_from_card(conversation_id: str, card_id: str, request: Request) -> Any:
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error(400, "請求內容要是 JSON")
+        if not isinstance(body, dict):
+            return _error(400, "請求內容要是 JSON 物件")
+        confirmed = body.get("confirmed_events")
+        return await _call(lambda: host.write_from_card(conversation_id, card_id, confirmed))
 
     @app.get("/api/conversations/{conversation_id}/events")
     async def events(conversation_id: str) -> Any:

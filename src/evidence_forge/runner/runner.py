@@ -815,8 +815,10 @@ class Runner:
         stage_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = self.harness.skill_dir(stage.skill)
         # 種子的素材項目：查證段認出種子、任務說明的原文出處、重構段的出處檢查與重疊率都用它
-        seed = sources.seed_item(self.data, doc.job.feed.item)
-        original = sources.original(self.data, job_dir, doc.job.feed.item)
+        # 照創作者自己的想法或作者素材寫的稿沒有素材項目，也就沒有原文（#110）
+        feed = doc.job.feed
+        seed = sources.seed_item(self.data, feed.item) if feed is not None else None
+        original = sources.original(self.data, job_dir, feed.item) if feed is not None else None
         record = provenance.record_path(job_dir, stage.id, attempt)
         if not record.exists():
             # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06）。放在 stages/ 外，
@@ -948,6 +950,7 @@ class Runner:
                 self.clock,
                 original,
                 upstream_outputs(job_dir, recipe, stage),
+                doc.job,
             )
         except hard_checks.ChecksUnavailable as exc:
             # 重跑模型修不好：不重試，帶著原因結束

@@ -3,6 +3,7 @@
 agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾，`harness/` 與 `$EF_DATA/authors/` 都讀不到。
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from evidence_forge.runner.stage_inputs import (
     default_genre,
     personas,
     prepare_inputs,
+    theme_stance,
     uncalibrated,
 )
 
@@ -409,3 +411,150 @@ def test_上一張工單的資料夾是指到_jobs_外面的連結_丟_InputErro
     with pytest.raises(InputError, match="jobs"):
         prepare_inputs(HARNESS, data, job_dir, _job("essay", parent="linked"))
     assert not (job_dir / "input" / "report.md").exists()
+
+
+# --- 照編輯卡寫稿：只送這一篇用得到的角色資料（ADR-0026 §3.3、#110）----------------------------
+
+THEMES_MD = """---
+author: me
+themes: [tools, adoption]
+---
+
+## 用哪幾個主題
+
+| slug | 這個角色怎麼稱呼它 | 常寫的文體 |
+|---|---|---|
+| `tools` | 工具挑選 | `benchmark` |
+| `adoption` | 導入現場 | `postmortem` |
+
+## 對每個主題的主張
+
+### tools
+
+挑工具先看退場成本。
+
+### adoption
+
+導入先算維運的人。
+"""
+
+
+def _card_job_dir(data: DataDir, theme: str = "tools", job_id: str = "j1") -> Path:
+    """照編輯卡開的寫稿工單：開單時已經放了 `input/card/`（`intake.open_job_from_card`）。"""
+    job_dir = _rewrite_job_dir(data, job_id)
+    card = job_dir / "input" / "card"
+    card.mkdir(parents=True)
+    (card / "card.json").write_text(
+        json.dumps({"card_id": "card-1", "conversation_id": "c-1", "theme": theme, "stations": []}),
+        encoding="utf-8",
+    )
+    (card / "card.md").write_text("# 編輯卡\n", encoding="utf-8")
+    (card / "materials").mkdir()
+    (card / "materials" / ("a" * 64)).write_text("作者的筆記", encoding="utf-8")
+    return job_dir
+
+
+def _persona_parts(data: DataDir, lessons: int = 12) -> None:
+    author = data.authors / "me"
+    (author / "craft").mkdir()
+    for name in ("openings", "titles", "golden-lines-and-endings", "layout", "figures", "charts"):
+        (author / "craft" / f"{name}.md").write_text(f"{name} 的規則", encoding="utf-8")
+    (author / "themes.md").write_text(THEMES_MD, encoding="utf-8")
+    (author / "lessons.md").write_text(
+        "".join(f"- 第 {n} 條\n" for n in range(1, lessons + 1)), encoding="utf-8"
+    )
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_照編輯卡寫稿_只送寫稿用得到的_craft_這個主題的主張與最近十筆_lessons(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _persona_parts(data)
+    data.headline_rules.parent.mkdir(parents=True)
+    data.headline_rules.write_text("共用的標題規則", encoding="utf-8")
+    job_dir = _card_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
+
+    author = job_dir / "input" / "author"
+    assert sorted(p.name for p in (author / "craft").iterdir()) == [
+        "golden-lines-and-endings.md",
+        "layout.md",
+        "openings.md",
+        "titles.md",
+    ]
+    theme = (author / "theme.md").read_text(encoding="utf-8")
+    assert "挑工具先看退場成本" in theme and "工具挑選" in theme
+    assert "導入先算維運的人" not in theme and "導入現場" not in theme
+    lessons = (author / "lessons.md").read_text(encoding="utf-8")
+    assert "第 3 條" in lessons and "第 12 條" in lessons and "第 2 條" not in lessons
+    # 角色有自己的標題與金句手藝：不再放共用的規則
+    assert not (job_dir / "input" / "headline-punchline.md").exists()
+
+
+def test_照編輯卡寫稿_角色沒有標題與金句的_craft_才讀共用的規則(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    data.headline_rules.parent.mkdir(parents=True)
+    data.headline_rules.write_text("共用的標題規則", encoding="utf-8")
+    job_dir = _card_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
+
+    assert (job_dir / "input" / "headline-punchline.md").read_text(encoding="utf-8") == "共用的標題規則"
+    author = job_dir / "input" / "author"
+    assert not (author / "craft").exists()
+    assert not (author / "theme.md").exists() and not (author / "lessons.md").exists()
+
+
+def test_不是照編輯卡寫的單_不放_craft_主題與_lessons(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _persona_parts(data)
+    job_dir = _rewrite_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
+
+    author = job_dir / "input" / "author"
+    assert not (author / "craft").exists() and not (author / "lessons.md").exists()
+
+
+def test_角色的_craft_或_lessons_是符號連結_不讀(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    _persona_parts(data)
+    secret = tmp_path / "secret.md"
+    secret.write_text("- 外面的檔", encoding="utf-8")
+    author = data.authors / "me"
+    (author / "craft" / "openings.md").unlink()
+    (author / "craft" / "openings.md").symlink_to(secret)
+    (author / "lessons.md").unlink()
+    (author / "lessons.md").symlink_to(secret)
+    job_dir = _card_job_dir(data)
+
+    prepare_inputs(HARNESS, data, job_dir, _job("essay"))
+
+    placed = job_dir / "input" / "author"
+    assert not (placed / "craft" / "openings.md").exists()
+    assert not (placed / "lessons.md").exists()
+
+
+@pytest.mark.promise("FR-RW-03")
+def test_再改照編輯卡寫的文章_編輯卡快照跟著帶過來(tmp_path: Path) -> None:
+    data = _data(tmp_path)
+    v1 = _card_job_dir(data, job_id="v1")
+    prepare_inputs(HARNESS, data, v1, _job("essay"))
+    _checked(v1, "rewrite", 1, {"article.md": "# 第一版", "article.json": "{}"}, passed=True)
+    v2 = _rewrite_job_dir(data, "v2")
+
+    prepare_inputs(HARNESS, data, v2, _job("essay", parent="v1", feedback="改短"))
+
+    card = v2 / "input" / "card"
+    assert (card / "card.md").read_text(encoding="utf-8") == "# 編輯卡\n"
+    assert (card / "materials" / ("a" * 64)).read_text(encoding="utf-8") == "作者的筆記"
+    assert (v2 / "input" / "article.md").read_text(encoding="utf-8") == "# 第一版"
+
+
+def test_主題的主張_挑出這個主題那一節與表格那一列() -> None:
+    found = theme_stance(THEMES_MD, "adoption")
+
+    assert found is not None
+    assert "導入先算維運的人" in found and "導入現場" in found
+    assert "挑工具先看退場成本" not in found
+    assert theme_stance(THEMES_MD, "startup") is None

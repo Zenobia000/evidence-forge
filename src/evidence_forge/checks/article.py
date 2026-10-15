@@ -7,13 +7,23 @@
   `article.json` 符合 `rewrite` 的 schema。
 - 只顯示、不擋（C3）：文章正文跟原文、跟每一份來源的逐字重疊，各算一份（`overlap.py`）。
   參考來源那一節不算：它本來就照抄標題與網址。
+- 照編輯卡寫的文章（`ArticleRules`，ADR-0025 §3.7、ADR-0026 §3.2、#110）另外擋：
+  front matter 有 `title`、`description`、`genre`、`theme`，文體與主題各一個、是合法的 slug、跟編輯卡一樣；
+  參考來源每一筆有網址，網址是這張單真的有的（原文、分析抓過的來源、作者素材裡寫的），不能自己編；
+  角色資料列出的句型（`voice.md` front matter 的 `sentence_patterns`，規則內容在角色資料，程式只照它數）；
+  圖文分鏡的每一張概念圖、數據圖都有圖位（`./images/fig-N.webp`，附圖說），沒有分鏡以外的圖。
+  沒有原文（從創作者自己的想法或作者素材開始）時，原文出處與「不提原文」都不查；
+  文體是 `essay` 而且從報告開始時，內文可以引用並回應原文，原文照樣要在參考來源第一條（ADR-0025 §3.4）。
 
 全部是純函式：檔案由執行器讀好傳進來，不讀檔、不寫檔、不呼叫模型。
 """
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
+
+import yaml
 
 from evidence_forge.checks.analysis import headings, strip_heading
 from evidence_forge.checks.format import check_markdown, check_schema
@@ -373,6 +383,239 @@ def check_reply_phrases(article: str, *, file: str) -> list[CheckEntry]:
     return [CheckEntry(check="C5", status="pass", reason="內文沒有回應原文的說法")]
 
 
+# --- 照編輯卡寫的文章（#110）------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SentencePattern:
+    """角色資料列的一條句型規則：名字、怎麼認、最多幾次（`voice.md` 的 `sentence_patterns`）。"""
+
+    name: str
+    pattern: re.Pattern[str]
+    max: int
+
+
+@dataclass(frozen=True)
+class ArticleRules:
+    """照編輯卡寫的文章多查的幾條（執行器從工單的編輯卡快照與角色資料讀好傳進來）。
+
+    - `genres`、`themes`：合法的文體與主題 slug；`genre`、`theme`：編輯卡定的（None 就只查合法）。
+    - `figures`：分鏡裡要有圖位的編號（`cards.figure_slots`）；None 是沒有結構化的分鏡，圖位不查。
+    - `patterns`：角色的句型規則。`known_urls`：參考來源准列的網址（正規化過）；None 就不查。
+    - `answers_original`：文體是 essay 而且從報告開始，內文可以引用並回應原文。
+    """
+
+    genres: frozenset[str]
+    themes: frozenset[str]
+    genre: str | None = None
+    theme: str | None = None
+    figures: tuple[int, ...] | None = None
+    patterns: tuple[SentencePattern, ...] = ()
+    known_urls: frozenset[str] | None = None
+    answers_original: bool = False
+
+
+# 角色資料的句型規則：一條的 pattern 最長幾個字（是創作者自己寫的正規表示式，長了就是寫錯）
+MAX_PATTERN = 200
+FRONT_MATTER_FIELDS = ("title", "description", "genre", "theme")
+_FRONT = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+
+
+def parse_sentence_patterns(meta: Mapping[str, Any]) -> tuple[SentencePattern, ...]:
+    """角色 `voice.md` front matter 的 `sentence_patterns`（ADR-0025 §3.7、ADR-0026 §3.3）。
+
+    格式：清單，每一條 `{name: 給人看的名字, pattern: 正規表示式, max: 最多幾次}`。沒有這一欄是空的。
+    寫錯（不是清單、少欄位、正規表示式不合法、max 不是 0 以上的整數）丟 `ValueError` 說是哪一條：
+    重寫文章修不好，要創作者改角色資料。
+    """
+    raw = meta.get("sentence_patterns")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("角色 voice.md 的 sentence_patterns 要是清單")
+    found: list[SentencePattern] = []
+    for number, item in enumerate(raw, start=1):
+        where = f"角色 voice.md 的 sentence_patterns 第 {number} 條"
+        if not isinstance(item, dict):
+            raise ValueError(f"{where}要是 name、pattern、max 三欄")
+        name, pattern, limit = item.get("name"), item.get("pattern"), item.get("max")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{where}少了 name")
+        if not isinstance(pattern, str) or not pattern or len(pattern) > MAX_PATTERN:
+            raise ValueError(f"{where}的 pattern 要是 1～{MAX_PATTERN} 字的正規表示式")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError(f"{where}的 max 要是 0 以上的整數")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"{where}的 pattern 不是合法的正規表示式：{exc}") from None
+        found.append(SentencePattern(name=name.strip(), pattern=compiled, max=limit))
+    return tuple(found)
+
+
+def check_front_matter(
+    article: str,
+    *,
+    file: str,
+    genres: frozenset[str],
+    themes: frozenset[str],
+    genre: str | None = None,
+    theme: str | None = None,
+) -> list[CheckEntry]:
+    """文章開頭的 front matter（ADR-0025 §3.7、ADR-0026 §3.2）：四欄都有，文體與主題各一個、合法、跟編輯卡一樣。"""
+    match = _FRONT.match(article)
+    if match is None:
+        return [_fail("文章開頭沒有 front matter（--- 包起來的 title、description、genre、theme）", file, 1)]
+    raw = match.group(1)
+    try:
+        meta = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return [_fail("文章的 front matter 讀不懂（不是合法的 YAML）", file, 1)]
+    if not isinstance(meta, dict):
+        return [_fail("文章的 front matter 要是 title、description、genre、theme 這幾欄", file, 1)]
+    failures: list[CheckEntry] = []
+    for name in FRONT_MATTER_FIELDS:
+        if not isinstance(meta.get(name), str) or not str(meta[name]).strip():
+            failures.append(_fail(f"front matter 少了 {name}（要是一段文字）", file, 1))
+    # YAML 同一欄寫兩次只留最後一個：照原文數，每篇只有一個文體、一個主題
+    for name in ("genre", "theme"):
+        count = len(re.findall(rf"^{name}\s*:", raw, flags=re.MULTILINE))
+        if count > 1:
+            failures.append(_fail(f"front matter 的 {name} 寫了 {count} 次：每篇只有一個", file, 1))
+    for name, allowed, wanted in (("genre", genres, genre), ("theme", themes, theme)):
+        value = meta.get(name)
+        if not isinstance(value, str):
+            continue
+        if value not in allowed:
+            failures.append(
+                _fail(f"front matter 的 {name} 是 {value}，不是合法的值（{'、'.join(sorted(allowed))}）", file, 1)
+            )
+        elif wanted is not None and value != wanted:
+            failures.append(_fail(f"front matter 的 {name} 要是編輯卡定的 {wanted}，現在是 {value}", file, 1))
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="front matter 齊全，文體與主題各一個、跟編輯卡一樣")]
+
+
+def _is_original(entry: str, url: str | None, title: str | None) -> bool:
+    if title is None:
+        return False
+    if url:
+        urls = {normalize_url(found.rstrip(").,")) for found in _URL.findall(entry)}
+        return normalize_url(url) in urls
+    text = normalize_for_match(_URL.sub(" ", entry))
+    return any(normalize_for_match(form) in text for form in _title_forms(title))
+
+
+def check_reference_urls(
+    article: str,
+    *,
+    file: str,
+    original_url: str | None,
+    original_title: str | None,
+    known_urls: frozenset[str] | None,
+) -> list[CheckEntry]:
+    """參考來源一節要有；清單的每一筆有網址，而且網址是這張單真的有的（不能自己編來源）。
+
+    原文是貼上的文字（沒有網址）時，原文那一筆不用網址。沒有原文、也沒用到外面的來源（照作者自己的經驗寫）時，
+    這一節可以只有一句說明、沒有清單。`known_urls` 是正規化過的網址；None 就只查有沒有網址。
+    """
+    _, references, line = split_references(article)
+    if references is None:
+        return [_fail(f"文章結尾沒有「{REFERENCES_HEADING}」一節", file)]
+    lines = [text for text in references.split("\n") if text.strip()]
+    entries = _entries(references) if any(_ITEM.match(text) for text in lines) else []
+    failures: list[CheckEntry] = []
+    for entry in entries:
+        urls = [found.rstrip(").,") for found in _URL.findall(entry)]
+        if not urls:
+            if original_url is None and _is_original(entry, None, original_title):
+                continue
+            failures.append(
+                _fail(f"「{REFERENCES_HEADING}」的這一筆沒有網址：{entry.strip()[:60]}", file, line)
+            )
+            continue
+        if known_urls is None:
+            continue
+        for url in urls:
+            if normalize_url(url) not in known_urls:
+                failures.append(
+                    _fail(
+                        f"「{REFERENCES_HEADING}」列的 {url} 不是這篇的來源（原文、分析抓過的來源、作者素材裡都沒有）："
+                        "只列真的有的來源，不要自己編",
+                        file,
+                        line,
+                    )
+                )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="參考來源每一筆都有網址，而且都是這篇真的有的來源")]
+
+
+def check_sentence_patterns(
+    article: str, *, file: str, patterns: Sequence[SentencePattern]
+) -> list[CheckEntry]:
+    """角色資料列的句型，正文（參考來源與程式碼以外）出現的次數不能超過它寫的上限。"""
+    if not patterns:
+        return []
+    body, _, _ = split_references(article)
+    match = _FRONT.match(body)
+    text = mask_code(body[match.end() :] if match else body)
+    failures: list[CheckEntry] = []
+    for rule in patterns:
+        found = list(rule.pattern.finditer(text))
+        if len(found) <= rule.max:
+            continue
+        failures.append(
+            CheckEntry(
+                check="C5",
+                status="fail",
+                reason=f"句型 {rule.name} 用了 {len(found)} 次，角色的規則最多 {rule.max} 次",
+                location=Location(file=file),
+                excerpt=found[rule.max].group(0)[:80],
+            )
+        )
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="角色列的句型都在次數以內")]
+
+
+# 文章裡的圖：![圖說](路徑)
+_IMAGE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
+
+
+def figure_path(number: int) -> str:
+    """第 N 張圖的圖位（跟 `cards.figure_path` 同一個寫法；配圖照這個檔名產圖）。"""
+    return f"./images/fig-{number}.webp"
+
+
+def check_figure_slots(article: str, *, file: str, slots: Sequence[int] | None) -> list[CheckEntry]:
+    """圖文分鏡的每一張圖都有圖位（`![圖說](./images/fig-N.webp)`，圖說不能空）；沒有分鏡以外的圖。
+
+    `slots` 是 None（分鏡不是結構化的，例如選「其他」自己寫）就不查。
+    """
+    if slots is None:
+        return []
+    body, _, _ = split_references(article)
+    images = [(m.group(1).strip(), m.group(2)) for m in _IMAGE.finditer(mask_code(body))]
+    wanted = {figure_path(n): n for n in slots}
+    failures: list[CheckEntry] = []
+    for path, number in wanted.items():
+        placed = [alt for alt, target in images if target == path]
+        if not placed:
+            failures.append(_fail(f"分鏡的第 {number} 張圖沒有圖位：要有一行 ![圖說]({path})", file))
+        elif len(placed) > 1:
+            failures.append(_fail(f"第 {number} 張圖的圖位 {path} 放了 {len(placed)} 次，只放一次", file))
+        elif not placed[0]:
+            failures.append(_fail(f"第 {number} 張圖的圖位 {path} 沒有圖說：寫在 ![ ] 的方括號裡", file))
+    for _, target in images:
+        if target not in wanted:
+            failures.append(_fail(f"文章裡的圖 {target} 不在圖文分鏡裡：只照分鏡留圖位，表格寫成 Markdown 表格", file))
+    if failures:
+        return failures
+    return [CheckEntry(check="C5", status="pass", reason="圖文分鏡的每一張圖都有圖位")]
+
+
 def article_checks(
     *,
     article: str,
@@ -381,37 +624,67 @@ def article_checks(
     output_file: str,
     schema: Mapping[str, Any],
     original_url: str | None,
-    original_title: str,
+    original_title: str | None,
     original_author: str | None,
     texts: Mapping[str, str],
     thresholds: OverlapThresholds,
     skeleton: Sequence[str] = (),
+    rules: ArticleRules | None = None,
 ) -> list[CheckEntry]:
     """重構段的產出：格式、原文出處（擋）與跟每一份文字的逐字重疊（只顯示）。
 
     `skeleton` 是目標文類骨架的每一項（`genre_skeleton`）；標題剛好等於其中一項就擋。
 
     `texts` 是要比重疊的文字：給人看的名字（「原文」「S2」）→ 正文，照給的順序各算一份。
+
+    `original_title` 是 None：沒有原文（照創作者自己的想法或作者素材寫），原文出處與「不提原文」都不查。
+    `rules` 是照編輯卡寫的文章多查的幾條（`ArticleRules`）；None 是舊的寫法（沒有編輯卡）。
     """
     body, _, _ = split_references(article)
+    answers_original = rules is not None and rules.answers_original
+    credit: list[CheckEntry] = []
+    voice: list[CheckEntry] = []
+    if original_title is not None:
+        credit = check_references(
+            article,
+            file=article_file,
+            original_url=original_url,
+            original_title=original_title,
+            original_author=original_author,
+        )
+        if not answers_original:
+            # 從報告開始的文章用角色自己的聲音寫，不提原文；只有 essay 可以回應原文（ADR-0025 §3.4）
+            voice = [
+                *check_original_not_in_body(
+                    article,
+                    file=article_file,
+                    original_title=original_title,
+                    original_author=original_author,
+                    original_url=original_url,
+                ),
+                *check_reply_phrases(article, file=article_file),
+            ]
+    card: list[CheckEntry] = []
+    if rules is not None:
+        card = [
+            *check_front_matter(
+                article, file=article_file, genres=rules.genres, themes=rules.themes,
+                genre=rules.genre, theme=rules.theme,
+            ),
+            *check_reference_urls(
+                article, file=article_file, original_url=original_url,
+                original_title=original_title, known_urls=rules.known_urls,
+            ),
+            *check_sentence_patterns(article, file=article_file, patterns=rules.patterns),
+            *check_figure_slots(article, file=article_file, slots=rules.figures),
+        ]
+    # 順序照舊（沒過的條目照這個順序寫進「回去修」的任務說明）：新的幾條接在後面
     return [
         *check_markdown(article, file=article_file),
-        *check_references(
-            article,
-            file=article_file,
-            original_url=original_url,
-            original_title=original_title,
-            original_author=original_author,
-        ),
+        *credit,
         *check_skeleton_headings(article, file=article_file, skeleton=skeleton),
-        *check_original_not_in_body(
-            article,
-            file=article_file,
-            original_title=original_title,
-            original_author=original_author,
-            original_url=original_url,
-        ),
-        *check_reply_phrases(article, file=article_file),
+        *voice,
+        *card,
         *check_schema(output, schema, file=output_file),
         *(
             entry

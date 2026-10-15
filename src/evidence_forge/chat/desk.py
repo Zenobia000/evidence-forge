@@ -11,6 +11,11 @@
 開不了單的原因會交給對話的模型：裡面資料目錄的絕對路徑換成相對路徑（`authors/<角色>/`）。
 開出來的單是「排隊中」，由同一個 `ef serve` 裡的執行器照配方跑（ADR-0019 §3.3）。
 
+「照這張編輯卡寫稿」（`write_from_card`，ADR-0025 §3.3～§3.4、#110）是創作者在畫面上按的，只由對話主機叫
+（閘道的 `/tools/` 一律拒絕）：再查一次卡能不能寫、事件筆數跟創作者確認時一樣，拿快照照 `rewrite` 配方開單
+（`runner.intake.open_job_from_card`），記進對話的 `jobs.jsonl`（版本鏈的第 1 版）。它不經閘道的工具，
+所以「數在跑的單 → 開單 → 記進去」在這裡做，跟閘道共用同一把對話的開單鎖（`chat_tools.opening_lock`）。
+
 報告與文章都是工單最後交出來的檔，只是看哪個檔：
 - 報告：產出 `report.md` 的那一段（分析配方的查證段，連同 `sources.json`）。
 - 文章：產出 `article.md` 的那一段（重構配方，#79）；不是重構的單就說沒有文章。
@@ -23,9 +28,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from evidence_forge import confined, cost_settings
+from evidence_forge import cards, confined, conversations, cost_settings
 from evidence_forge.documents import FrontmatterError, read_job, split_frontmatter
+from evidence_forge.gateway.chat_tools import opening_lock, running_jobs, too_many_running
 from evidence_forge.gateway.fetch import Fetcher
+from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Recipe, RecipeStage
 from evidence_forge.persona_spec import genre_file
 from evidence_forge.paths import DataDir
@@ -36,6 +43,7 @@ from evidence_forge.runner.intake import (
     WebPage,
     open_job,
     open_job_from,
+    open_job_from_card,
 )
 from evidence_forge.runner.stage_inputs import default_genre
 from evidence_forge.ui.format import GENRE_NAME
@@ -59,6 +67,7 @@ class Desk:
         on_opened: Callable[[str, str], None] | None = None,
         rewrite_recipe: str = "rewrite",
         on_card: Callable[[str, str, list[dict[str, Any]]], None] | None = None,
+        max_running_jobs: int = 1,
     ) -> None:
         """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
         找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
@@ -72,6 +81,9 @@ class Desk:
 
         `on_card(對話 id, 卡 id, 新事件)` 在閘道替對話的 agent 寫完編輯卡的事件之後呼叫（ADR-0025 §3.3）：
         對話主機據此推 `ef_card` 給畫面（例如 agent 剛提出的問題卡）。
+
+        `max_running_jobs`：「照這張編輯卡寫稿」開單時，這個對話同一時間最多幾張單在跑
+        （跟閘道的 `chat_max_running_jobs` 同一個數字，`ef serve` 傳進來）。
         """
         self._data = data
         self._recipes = recipes
@@ -82,6 +94,7 @@ class Desk:
         self._on_opened = on_opened
         self._rewrite_recipe = rewrite_recipe
         self._on_card = on_card
+        self._max_running_jobs = max_running_jobs
 
     @property
     def recipe_name(self) -> str:
@@ -211,6 +224,78 @@ class Desk:
             )
             opened["note"] = f"文體「{unknown_genre}」對不上，改用預設的{used}"
         return opened
+
+    def write_from_card(
+        self, conversation_id: str, card_id: str, confirmed_events: object
+    ) -> dict[str, Any]:
+        """「照這張編輯卡寫稿」：開一張寫稿工單，記進對話，通知對話主機。錯誤丟 `ToolRejected`（帶狀態碼）。
+
+        `confirmed_events` 是創作者按確認時畫面上那張卡的事件筆數（`card.events`）。開單前拿著卡的鎖讀一份快照
+        （`cards.snapshot`）：還不能寫（409，說是哪幾關）、筆數對不上（確認之後又有人改過，409，請他重新確認）
+        都不開。卡不是這個對話的 404。寫稿讀的就是這份快照，不再讀活的 `card.json`。
+        """
+        if (
+            isinstance(confirmed_events, bool)
+            or not isinstance(confirmed_events, int)
+            or confirmed_events < 0
+        ):
+            raise ToolRejected(400, "confirmed_events 要是創作者確認時那張卡的事件筆數（0 以上的整數）")
+        recipe = self._recipes.get(self._rewrite_recipe)
+        if recipe is None:
+            raise ToolRejected(409, f"沒有重構配方 {self._rewrite_recipe}（有：{'、'.join(sorted(self._recipes))}）")
+        # 最後一道關（ADR-0025 §3.3）：六關都有決定、沒有要重確認
+        cards.require_writable(self._data, conversation_id, card_id)
+        taken = cards.snapshot(self._data, conversation_id, card_id)
+        card = taken.card
+        if not card.writable:
+            # require_writable 與拿快照之間有人改了卡
+            raise ToolRejected(409, "還不能照這張編輯卡寫稿：編輯卡剛剛改過，請重新確認")
+        if card.events != confirmed_events:
+            raise ToolRejected(
+                409,
+                f"編輯卡在確認之後又改過（確認時 {confirmed_events} 筆，現在 {card.events} 筆）："
+                "請重新確認（看過最後的確認卡，再按一次「照這張編輯卡寫稿」）",
+            )
+        origin = card.origin
+        parent = origin.job_id if origin is not None and origin.kind == "report_topic" else None
+        if parent is not None and not conversations.owns_job(self._data, conversation_id, parent):
+            # 範圍照 ADR-0021：只從這個對話自己的分析接著寫
+            raise ToolRejected(403, "這張卡的分析工單不是這個對話開的")
+        with opening_lock(conversation_id):
+            running = running_jobs(self._data, conversation_id)
+            if len(running) >= self._max_running_jobs:
+                raise too_many_running(running, self._max_running_jobs)
+            try:
+                job = open_job_from_card(
+                    self._data,
+                    recipe,
+                    taken,
+                    now=self._clock(),
+                    budget_usd=self._budget("rewrite"),
+                    conversation=conversation_id,
+                    allowed_genres=GENRE_NAME,
+                )
+            except ValueError as exc:
+                raise ToolRejected(409, self._tidy(str(exc))) from None
+            # 新文章是一條新的版本鏈（CONTEXT.md〈版本鏈〉）；從報告開始時接在那張分析後面
+            conversations.add_job(
+                self._data,
+                conversation_id,
+                conversations.ConversationJob(job_id=job.id, ts=self._clock(), version=1, parent=parent),
+            )
+        self.recorded(conversation_id, job.id)
+        return {
+            "job_id": job.id,
+            "created": True,
+            "status": job.status,
+            "recipe": job.recipe,
+            "stages": len(recipe.stages),
+            "card_id": card.card_id,
+            "events": card.events,
+            "persona": job.persona,
+            "genre": job.target_genre,
+            "theme": card.theme,
+        }
 
     def recorded(self, conversation_id: str, job_id: str) -> None:
         """閘道已經把這張單記進對話的 `jobs.jsonl`：通知對話主機（見 `on_opened`）。"""

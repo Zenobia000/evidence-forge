@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from card_world import decided_card
 from runner_world import FAKE_PI_LIB, NOW, World, runner_world
 
+from evidence_forge import cards, conversations
 from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
 from evidence_forge.documents import JobDocument, read_job, write_job
 from evidence_forge.models import Item, JobResult
-from evidence_forge.runner.intake import PastedText, open_job, open_job_from
+from evidence_forge.runner.intake import PastedText, open_job, open_job_from, open_job_from_card
 
 SEED = "# 夜間圖書館\n\n市立圖書館延長開放到半夜之後，晚上來的多半是下班的上班族與準備考試的學生。\n"
 SEED_URL = "https://seed.example/night-library"
@@ -314,3 +316,84 @@ def test_agent_自己寫一份全部通過的_checks_json_執行器不採用(
     stage_dir = world.data.job_dir(job_id) / "stages" / "rewrite" / "1"
     assert json.loads((stage_dir / "checks.json").read_text(encoding="utf-8"))
     assert _reports(world, job_id)[-1].failed_checks == ("C5",)
+
+
+# --- 照編輯卡寫稿（#110）----------------------------------------------------------------------
+
+CARD_ARTICLE = (
+    "---\ntitle: 週三晚上的分館\ndescription: 夜間時段要等九個月才看得出真正的人流\n"
+    "genre: explainer\ntheme: tools\n---\n\n"
+    "# 週三晚上的分館\n\n我連續三個月在週三晚上去分館數人。\n\n"
+    "![白天與晚上的使用者](./images/fig-1.webp)\n\n人流先高後降。\n\n"
+    "![九個月的人流](./images/fig-2.webp)\n\n"
+    "| 項目 | 做法 |\n| --- | --- |\n| 排班 | 先看九個月 |\n\n"
+    "## 參考來源\n\n本文只根據作者自己的經驗與筆記。\n"
+)
+NO_FRONT = CARD_ARTICLE.split("---\n\n", 1)[1]
+
+CARD_PI_BODY = """
+ask()
+status, _ = call("/tools/read_file", {"path": "input/card/card.md"})
+assert status == 200, status
+# 從自己的想法開始：沒有報告、沒有原文
+status, _ = call("/tools/read_file", {"path": "input/report.md"})
+assert status == 404, status
+write("article.md", ARTICLE_BY_ATTEMPT.get(ATTEMPT, ARTICLE))
+write("article.json", {"title": "週三晚上的分館", "title_candidates": ["週三晚上的分館"]})
+event(type="agent_end")
+"""
+
+
+def _card_script(article: str = CARD_ARTICLE, by_attempt: dict[str, str] | None = None) -> str:
+    return (
+        FAKE_PI_LIB
+        + f"ARTICLE = {article!r}\nARTICLE_BY_ATTEMPT = {by_attempt or {}!r}\n"
+        + CARD_PI_BODY
+    )
+
+
+def _card_job(world: World) -> str:
+    _with_persona(world)
+    cid = conversations.create(world.data, NOW).id
+    card_id = decided_card(world.data, cid, genre="explainer", theme="tools")
+    return open_job_from_card(
+        world.data,
+        world.runner.recipes["rewrite"],
+        cards.snapshot(world.data, cid, card_id),
+        now=NOW,
+        conversation=cid,
+    ).id
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_照自己的想法寫稿_沒有原文_任務說明沒有原文出處_文章照編輯卡就完成(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_card_script())
+    job_id = _card_job(world)
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+    [prompt] = _prompts(world)
+    assert "原文出處" not in prompt and "input/card/card.md" in prompt
+    [report] = _reports(world, job_id)
+    reasons = [e.reason for e in report.entries if e.status == "pass"]
+    assert "圖文分鏡的每一張圖都有圖位" in reasons
+    assert any(r.startswith("front matter 齊全") for r in reasons)
+    # 沒有原文：不算跟原文的重疊，也不查原文出處
+    assert not [e for e in report.entries if e.check == "C3" and e.reason.startswith("原文")]
+
+
+@pytest.mark.promise("FR-RW-01", "NFR-RUN-03")
+def test_照編輯卡寫的文章少了_front_matter_帶著檢查結果回去修(
+    world_for: Callable[[str], World],
+) -> None:
+    world = world_for(_card_script(by_attempt={"1": NO_FRONT}))
+    job_id = _card_job(world)
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete", job.result
+    assert [r.passed for r in _reports(world, job_id)] == [False, True]
+    assert "front matter" in _prompts(world)[1]

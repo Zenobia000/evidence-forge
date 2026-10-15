@@ -27,7 +27,8 @@
 - 只碰得到列在這個對話 `jobs.jsonl` 裡的工單，別的對話的一律 403，而且不說那張單存不存在。
 - 段的工具（讀寫檔、抓網頁、搜尋、跑腳本）拿對話鑰匙來一律 403；對話的工具拿段的鑰匙來也是（`app.py`）。
 - 編輯卡只碰得到這個對話自己的：路徑從對話資料夾拼，別的對話的卡跟沒有這張卡一樣回 404。
-- 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1；`analyze`、`rewrite` 都算）：
+- 每個對話同一時間最多 `chat_max_running_jobs` 張工單在跑（排隊中也算，預設 1；`analyze`、`rewrite`、
+  畫面的「照這張編輯卡寫稿」（工作台的 `write_from_card`，#110）都算）：
   對話的 agent 可以一直開單，每張單各有預算，不擋的話總花費只剩月上限管得到。
   只擋「要開新單」：同一篇文章再丟一次（連按兩下）照樣拿回那一張，即使它還在跑。
   「在跑幾張」看 `job.md` 記的是哪個對話開的，不看 `jobs.jsonl`：開了單、還沒記進去就當掉的那張也算。
@@ -41,6 +42,7 @@
 """
 
 import asyncio
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -53,6 +55,7 @@ from evidence_forge.documents import read_job
 from evidence_forge.gateway.config import GatewayConfig
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Job
+from evidence_forge.paths import DataDir
 from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
 from evidence_forge.runner.stage_inputs import AUTHOR, job_persona
 
@@ -78,6 +81,49 @@ CHAT_TOOLS = (
 UI_ONLY_TOOLS = frozenset({"submit_station", "keep_decision", "reask_station", "write_from_card"})
 # 還會花錢的狀態：排隊中的單等一下就會跑
 _RUNNING = frozenset({"queued", "running"})
+
+
+# 「數在跑的單 → 開單 → 記進 jobs.jsonl」一個對話一次一個：閘道的工具（事件迴圈上的 asyncio 鎖之外）
+# 與畫面的「照這張編輯卡寫稿」（對話主機的 API，另一個伺服器的執行緒）共用這一把
+_opening_guard = threading.Lock()
+_opening: dict[str, threading.Lock] = {}
+
+
+def opening_lock(conversation_id: str) -> threading.Lock:
+    """這個對話開單用的鎖（跨執行緒；拿著它數在跑的單、開單、記進 `jobs.jsonl`）。"""
+    with _opening_guard:
+        return _opening.setdefault(conversation_id, threading.Lock())
+
+
+def running_jobs(data: DataDir, conversation_id: str) -> list[Job]:
+    """這個對話開的、還在排隊或在跑的工單。
+
+    看每張單 `job.md` 的 `conversation`（投入時在同一把鎖裡寫的），不看 `jobs.jsonl`：
+    開了單、還沒記進 `jobs.jsonl` 就當掉的那張，照樣算在跑。
+    讀不到 `job.md` 的不算：執行器也跑不了它。
+    """
+    jobs_root = data.jobs
+    if not jobs_root.is_dir():
+        return []
+    found: list[Job] = []
+    for job_dir in sorted(jobs_root.iterdir()):
+        try:
+            job = read_job(job_dir / "job.md").job
+        except (OSError, ValueError):
+            continue
+        if job.conversation == conversation_id and job.status in _RUNNING:
+            found.append(job)
+    return found
+
+
+def too_many_running(running: list[Job], limit: int) -> ToolRejected:
+    """對話的單已經滿了：409，說是哪幾張。"""
+    ids = "、".join(job.id for job in running)
+    return ToolRejected(
+        409,
+        f"這個對話已經有 {len(running)} 張工單在跑（{ids}），"
+        f"同一時間最多 {limit} 張；等它跑完再開，或請創作者決定",
+    )
 
 
 class Desk(Protocol):
@@ -274,6 +320,10 @@ class ChatTools:
                 raise self._full(running)
 
         def open_and_record() -> dict[str, Any]:
+            with opening_lock(conversation_id):
+                return open_and_record_locked()
+
+        def open_and_record_locked() -> dict[str, Any]:
             # 已經滿了，而這次也不會是拿回在跑的那一張（換了素材，或要重做）：
             # 抓網頁之前就擋下，不然每次都先對外抓、寫投入帳，最後才拒絕
             # 只看分析的單：重構單跟分析共用同一份素材項目，但丟同一篇文章不會拿回重構單
@@ -328,6 +378,10 @@ class ChatTools:
         conversation_id = key.conversation_id
 
         def open_and_record() -> dict[str, Any]:
+            with opening_lock(conversation_id):
+                return open_and_record_locked()
+
+        def open_and_record_locked() -> dict[str, Any]:
             # 重構不走去重，每次都是新單：滿了就擋，不叫工作台
             running = self._running_jobs(conversation_id)
             if len(running) >= self._config.chat_max_running_jobs:
@@ -395,32 +449,10 @@ class ChatTools:
         return (previous.version if previous is not None else 1) + 1
 
     def _full(self, running: list[Job]) -> ToolRejected:
-        ids = "、".join(job.id for job in running)
-        return ToolRejected(
-            409,
-            f"這個對話已經有 {len(running)} 張工單在跑（{ids}），"
-            f"同一時間最多 {self._config.chat_max_running_jobs} 張；等它跑完再開，或請創作者決定",
-        )
+        return too_many_running(running, self._config.chat_max_running_jobs)
 
     def _running_jobs(self, conversation_id: str) -> list[Job]:
-        """這個對話開的、還在排隊或在跑的工單。
-
-        看每張單 `job.md` 的 `conversation`（投入時在同一把鎖裡寫的），不看 `jobs.jsonl`：
-        開了單、還沒記進 `jobs.jsonl` 就當掉的那張，照樣算在跑。
-        讀不到 `job.md` 的不算：執行器也跑不了它。
-        """
-        jobs_root = self._config.data.jobs
-        if not jobs_root.is_dir():
-            return []
-        found: list[Job] = []
-        for job_dir in sorted(jobs_root.iterdir()):
-            try:
-                job = read_job(job_dir / "job.md").job
-            except (OSError, ValueError):
-                continue
-            if job.conversation == conversation_id and job.status in _RUNNING:
-                found.append(job)
-        return found
+        return running_jobs(self._config.data, conversation_id)
 
     def _check_opened_here(self, conversation_id: str, job_id: str) -> Job:
         """工作台回的工單真的是這個對話開的；不是就不記、回 500（ADR-0021 §3.4）。

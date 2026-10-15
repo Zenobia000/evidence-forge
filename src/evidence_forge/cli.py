@@ -223,7 +223,10 @@ def _serve(args: argparse.Namespace) -> int:
             on_opened=host.job_opened,
             # 閘道替 agent 寫了編輯卡：推給畫面（ADR-0025 §3.3）
             on_card=host.card_changed,
+            # 畫面的「照這張編輯卡寫稿」跟閘道的工具守同一個上限（#110）
+            max_running_jobs=config.chat_max_running_jobs,
         )
+        host.use_desk(desk)
         # 告示板一變（開始等、等完）就推進度；等完時花費已經進帳本
         board.listen(host.job_changed)
     gateway = _start_server(create_app(config, stages, board, desk=desk), args.port)

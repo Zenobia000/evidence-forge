@@ -5,6 +5,10 @@ name: 你的名字或筆名
 default_genre: explainer        # 工單與訂閱源都沒指定目標文體時用這一種；harness/genres/ 的 7 種 slug 之一
 samples: []                     # 學這份聲音用的範本，路徑相對於 $EF_DATA，例：style/diffusion-model.md
 calibrated: false               # 創作者確認過內容後改成 true
+sentence_patterns: []           # 程式擋得到的句型規則（ADR-0025 §3.7）：一條是 {name, pattern, max}，
+                                # name 給人看的名字、pattern 正規表示式（200 字以內）、max 正文最多出現幾次。
+                                # 寫稿的檢查照這裡數，超過就回去修。下面是為了示範格式虛構的：
+                                # - {name: 「說穿了」, pattern: "說穿了", max: 0}
 ---
 
 ## 語氣

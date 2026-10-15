@@ -17,6 +17,11 @@ agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（
   （`input/report.md`、`input/brief.md`、`input/brief.json`、上一版文章 `input/article.md`）
   與它的來源正文 `input/sources/S<n>.md`。上一張單自己也是接著做的，它帶來的也一起帶過來。
   原文全文（`input/content.md`）不帶：重構不讀原文全文（FR-RW-01）。
+- 照編輯卡寫稿（#110）：編輯卡快照 `input/card/` 是開單時放的（`intake.open_job_from_card`）；
+  再改時從上一版整份帶過來。這種單另外只放這一篇用得到的角色資料（ADR-0026 §3.3），本機的上下文才塞得下：
+  寫稿用的 craft（`input/author/craft/`，`persona_spec.WRITING_CRAFT`）、這篇的主題在角色 `themes.md` 裡的那一節
+  （`input/author/theme.md`）、最近十筆 lessons（`input/author/lessons.md`）。角色有自己的標題或金句 craft 時
+  不再放共用的標題與金句規則。角色資料一律不跟隨符號連結讀（`confined`）。
 
 查證段找到的來源正文（`input/sources/`）在分析工單裡不在這裡放：那一段結束後才知道有哪些，見 `sources.py`。
 
@@ -41,7 +46,14 @@ from evidence_forge.harness import Harness
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.models import Job
 from evidence_forge.paths import DataDir
-from evidence_forge.persona_spec import VOICE_FILE
+from evidence_forge.persona_spec import (
+    CRAFT_DIR,
+    HEADLINE_CRAFT,
+    THEMES_FILE,
+    VOICE_FILE,
+    WRITING_CRAFT,
+    genre_file,
+)
 from evidence_forge.write_once import write_once
 
 # 工單沒指定角色時用創作者自己（舊的 job.md 沒有 persona 欄）
@@ -53,6 +65,15 @@ TARGET_GENRE = "input/target-genre.md"
 AUTHOR_DIR = "input/author/"
 VOICE = AUTHOR_DIR + "voice.md"
 GENRE_STYLE = AUTHOR_DIR + "genre-style.md"
+# 照編輯卡寫稿才放的角色資料（#110）
+AUTHOR_CRAFT = AUTHOR_DIR + "craft/"
+AUTHOR_THEME = AUTHOR_DIR + "theme.md"
+AUTHOR_LESSONS = AUTHOR_DIR + "lessons.md"
+# 編輯卡快照（ADR-0025 §3.4）：開單時放，寫稿讀 `card.md`，另外兩份是留底；作者素材照 sha256 放在 materials/
+CARD_DIR = "input/card/"
+CARD_BRIEF = CARD_DIR + "card.md"
+CARD_JSON = CARD_DIR + "card.json"
+CARD_EVENTS = CARD_DIR + "decisions.jsonl"
 # 查證段之後，執行器照 sources.json 放的來源正文（`sources.py`，#70）
 SOURCES_DIR = "input/sources/"
 HEADLINE_RULES = "input/headline-punchline.md"
@@ -78,6 +99,7 @@ PROVIDED = (
     AUTHOR_DIR,
     SOURCES_DIR,
     HEADLINE_RULES,
+    CARD_DIR,
     *CARRIED.values(),
 )
 
@@ -167,6 +189,12 @@ def carried_files(parent_dir: Path) -> dict[str, Path]:
         # 上一版文章只算上一張單自己寫、過了檢查的那一份；它沒寫成，不拿更早那一版充數
         if target != PREVIOUS_ARTICLE and target not in found and inherited.is_file():
             found[target] = inherited
+    card = parent_dir / CARD_DIR
+    if card.is_dir() and not card.is_symlink():
+        # 編輯卡快照整份帶：再改照編輯卡寫的文章，讀的是同一張卡的同一份快照（#110）
+        for path in sorted(card.rglob("*")):
+            if path.is_file() and not path.is_symlink() and not path.name.startswith("."):
+                found[path.relative_to(parent_dir).as_posix()] = path
     sources = parent_dir / SOURCES_DIR
     if sources.is_dir():
         for path in sorted(sources.iterdir()):
@@ -218,6 +246,71 @@ def default_genre(data: DataDir, author: str = AUTHOR) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def _card_theme(job_dir: Path) -> str | None:
+    """照編輯卡寫的單（有 `input/card/card.json`）這一篇的主題；不是這種單、或讀不懂是 None。"""
+    path = job_dir / CARD_JSON
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        theme = json.loads(path.read_text(encoding="utf-8")).get("theme")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return theme if isinstance(theme, str) and theme else None
+
+
+def _latest_lessons(data: DataDir, persona: str) -> list[str]:
+    """角色最近十筆 lessons；沒有、或是符號連結（`lessons.py` 擋下）就是空的。"""
+    # lessons.py 從這個模組拿角色清單：在函式裡匯入，模組之間不互相卡住
+    from evidence_forge.gateway.scope import ToolRejected
+    from evidence_forge.lessons import latest_lessons
+
+    try:
+        return latest_lessons(data, persona)
+    except ToolRejected:
+        return []
+
+
+_HEADING = re.compile(r"^(#{2,3})\s+(.*?)\s*$")
+
+
+def theme_stance(themes: str, theme: str) -> str | None:
+    """角色 `themes.md` 裡跟這個主題有關的部分：表格裡這個主題的那一列，與標題提到它的那一節。
+
+    格式見 `harness/templates/author-themes.md`（`## 用哪幾個主題` 的表格、`## 對每個主題的主張` 底下
+    一個主題一節）。標題或表格第一格寫 slug 才認得；都沒有就是 None（不整份送，ADR-0026 §3.3）。
+    """
+    try:
+        body = split_frontmatter(themes)[1]
+    except FrontmatterError:
+        body = themes
+    marker = f"`{theme}`"
+    found: list[str] = []
+    table_head: list[str] = []
+    lines = body.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("|") and index + 1 < len(lines) and re.match(r"^\|[\s:|-]+\|$", lines[index + 1]):
+            table_head = [line, lines[index + 1]]
+        if line.startswith("|") and marker in line.split("|")[1]:
+            found += [*table_head, line, ""]
+    section: list[str] | None = None
+    for line in lines:
+        heading = _HEADING.match(line)
+        if heading is not None:
+            if section:
+                found += [*section, ""]
+            words = heading.group(2).replace("`", " ").split()
+            section = [line] if len(heading.group(1)) == 3 and theme in words else None
+            continue
+        if section is not None:
+            section.append(line)
+    if section:
+        found += section
+    text = "\n".join(found).strip()
+    if not text:
+        return None
+    return f"# 角色對主題 `{theme}` 的看法\n\n{text}\n"
+
+
 def put_once(job_dir: Path, relative: str, data: str | bytes) -> None:
     """放一個檔進工單：先寫暫存檔再用 `os.link` 換成正式檔名；已經有了就沿用那一份。"""
     target = job_dir / relative
@@ -259,17 +352,6 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
             raise InputError(f"目標文體 {target} 不在 harness/genres/ 的 7 種裡")
         put(TARGET_GENRE, definition.read_bytes())
 
-    author = author_dir(data, job_persona(job))
-    voice = author / "voice.md"
-    if voice.is_file():
-        put(VOICE, voice.read_bytes())
-    if target is not None:
-        style = author / "genres" / f"{target}.md"
-        if style.is_file():
-            put(GENRE_STYLE, style.read_bytes())
-    if data.headline_rules.is_file():
-        put(HEADLINE_RULES, data.headline_rules.read_bytes())
-
     if job.parent is not None:
         parent = parent_dir(data, job.parent)
         if not parent.is_dir():
@@ -279,6 +361,40 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
                 # 沒有意見就不是再改（例：換角色重寫）：不放上一版，免得照著上一版抄
                 continue
             put(relative, source.read_bytes())
+
+    persona = job_persona(job)
+    author = author_dir(data, persona)
+    # 角色資料不跟隨符號連結（`confined`）：連結可以指到資料目錄以外
+    voice = confined.text(author, VOICE_FILE)
+    if voice is not None:
+        put(VOICE, voice)
+    if target is not None:
+        style = confined.text(author, genre_file(target))
+        if style is not None:
+            put(GENRE_STYLE, style)
+    theme = _card_theme(job_dir)
+    headline_craft = False
+    if theme is not None:
+        # 照編輯卡寫稿：只送這一篇用得到的（ADR-0026 §3.3）
+        for name in WRITING_CRAFT:
+            craft = confined.text(author, f"{CRAFT_DIR}/{name}")
+            if craft is not None:
+                put(AUTHOR_CRAFT + name, craft)
+                headline_craft = headline_craft or name in HEADLINE_CRAFT
+        themes = confined.text(author, THEMES_FILE)
+        stance = theme_stance(themes, theme) if themes is not None else None
+        if stance is not None:
+            put(AUTHOR_THEME, stance)
+        lessons = _latest_lessons(data, persona)
+        if lessons:
+            put(
+                AUTHOR_LESSONS,
+                "# 最近的 lessons（創作者退件或指正後累積的規則，舊的在前）\n\n"
+                + "".join(f"- {entry}\n" for entry in lessons),
+            )
+    if not headline_craft and data.headline_rules.is_file():
+        # 角色還沒有自己的標題與金句手藝：讀舊的共用規則（ADR-0026 §3.3）
+        put(HEADLINE_RULES, data.headline_rules.read_bytes())
 
     # 最後才寫：寫之前當機，下次重開會從頭再放一次（已經放好的檔沿用）
     write_once(job_dir / PREPARED, json.dumps({"files": placed}, ensure_ascii=False))

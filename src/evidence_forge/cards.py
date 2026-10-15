@@ -1598,6 +1598,13 @@ def _store_material(target: Path, digest: str, payload: bytes) -> None:
     os.replace(temporary, target)
 
 
+def material_file(data: DataDir, conversation_id: str, card_id: str, sha256: str) -> Path:
+    """這張卡照 sha256 存的作者素材內容檔（寫稿快照照快照裡的編輯卡拿，不再讀一次卡）。"""
+    if len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
+        raise ToolRejected(400, "作者素材的 sha256 不合格")
+    return _card_dir(data, conversation_id, card_id) / "materials" / sha256
+
+
 def material_path(data: DataDir, conversation_id: str, card_id: str, material_id: str) -> Path:
     """一份作者素材的內容檔（寫稿快照要複製它，#110）。"""
     card = read_card(data, conversation_id, card_id)

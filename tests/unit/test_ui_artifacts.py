@@ -342,6 +342,21 @@ def test_文章讀_article_md_角色文類字數都在(folder: ChatFolder) -> No
     assert view.text == ARTICLE_V1
 
 
+def test_照編輯卡寫的文章有_front_matter_面板不顯示它_字數也不算(folder: ChatFolder) -> None:
+    cid = folder.conversation()
+    folder.analysis(cid, "a1")
+    front = "---\ntitle: 長上下文不會取代檢索\ndescription: 一句話\ngenre: explainer\ntheme: tools\n---\n\n"
+    folder.article(cid, "w1", parent="a1", text=front + ARTICLE_V1)
+    info = [j for j in _jobs(folder, cid) if j.kind == "rewrite"][0]
+    plain = artifacts.count_words(ARTICLE_V1)
+
+    view = artifacts.article_view(folder.data, info, None)
+
+    assert "genre:" not in view.html and "description" not in view.html
+    assert view.words == plain
+    assert view.text == front + ARTICLE_V1
+
+
 def test_重疊率顯示所有來源裡最高的那一個_標出是哪一份_含原文(folder: ChatFolder) -> None:
     cid = folder.conversation()
     folder.analysis(cid, "a1")
