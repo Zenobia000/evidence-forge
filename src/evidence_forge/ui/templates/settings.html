@@ -5,7 +5,7 @@
 {% macro money(name, value, hint) %}
 <div class="s0-field">
 <label for="f-{{ name }}">{{ caller() }}</label>
-<div class="s0-row"><span class="s0-mono">US$</span><input id="f-{{ name }}" type="number" name="{{ name }}" value="{{ value }}" min="0" step="0.01" inputmode="decimal" required style="max-width: 160px"></div>
+<div class="s0-row"><span class="s0-mono">US$</span><input id="f-{{ name }}" type="number" name="{{ name }}" value="{{ value }}" min="0.01" max="1000000" step="0.01" inputmode="decimal" required style="max-width: 160px"></div>
 <span class="s0-field__hint">{{ hint }}</span>
 </div>
 {% endmacro %}
@@ -19,7 +19,7 @@
 </div>
 
 {% if cap.problem %}
-<div class="s0-alert" role="alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">設定檔讀不懂，現在用的是預設值</p><p class="s0-small" style="margin: 0">{{ cap.problem }}。下面按一次「存設定」就會寫回一份好的。</p></div></div>
+<div class="s0-alert" role="alert" style="margin-bottom: 16px">{{ icon("warn") }}<div><p style="margin: 0 0 4px; font-weight: 600">設定檔讀不懂</p><p class="s0-small" style="margin: 0">{{ cap.problem }}。閘道與開單現在照這些數字：每月上限 {% if settings.monthly_cap_usd is none %}不設{% else %}{{ usd(settings.monthly_cap_usd) }}{% endif %}、分析每張 {{ usd(settings.analysis_budget_usd) }}、寫稿每張 {{ usd(settings.rewrite_budget_usd) }}、生圖每張 {{ usd(settings.image_cap_usd) }}；下面的表單也填好了這一份。</p></div></div>
 {% endif %}
 
 <div class="s0-stats" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
@@ -34,8 +34,11 @@
 <h2 class="s0-h2" id="consoles-h">真正的硬上限設在雲端平台</h2>
 <p class="s0-small" style="margin: 0 0 12px">EF 的上限擋的是自己送出去的請求；金鑰外流或別的程式在用時，只有平台自己的後台擋得住。每個平台都去設一次。</p>
 <ul style="margin: 0; padding-left: 20px; display: grid; gap: 6px">
-{% for c in consoles %}<li><a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.name }} 後台</a> <span class="s0-small">— {{ c.what }}</span></li>
-{% endfor %}</ul>
+{# 這三個是給人點的連結，不是載入的資源（tests/test_ui_assets.py 只擋 src= 與 <link href=） #}
+<li><a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noopener noreferrer">Anthropic 後台</a> <span class="s0-small">— 模型（Claude）</span></li>
+<li><a href="https://platform.openai.com/settings/organization/limits" target="_blank" rel="noopener noreferrer">OpenAI 後台</a> <span class="s0-small">— 生圖（封面）</span></li>
+<li><a href="https://app.tavily.com/home" target="_blank" rel="noopener noreferrer">Tavily 後台</a> <span class="s0-small">— 網路搜尋</span></li>
+</ul>
 </section>
 
 <form class="s0-panel" id="cost-settings" aria-labelledby="form-h" novalidate>
@@ -43,8 +46,8 @@
 <fieldset class="s0-field" style="border: 0; padding: 0; margin: 0 0 20px">
 <legend class="s0-field__label" style="padding: 0; margin-bottom: 6px">每月上限</legend>
 <label class="s0-row"><input type="radio" name="cap_mode" value="none"{% if settings.monthly_cap_usd is none %} checked{% endif %}> 不設</label>
-<label class="s0-row"><input type="radio" name="cap_mode" value="set"{% if settings.monthly_cap_usd is not none %} checked{% endif %}> 設上限 <span class="s0-mono">US$</span><input type="number" name="monthly_cap_usd" value="{{ settings.monthly_cap_usd if settings.monthly_cap_usd is not none else '' }}" min="0" step="0.01" inputmode="decimal" aria-label="每月上限（美元）" style="max-width: 160px"></label>
-<span class="s0-field__hint">依台北時間的日曆月算，模型、搜尋、生圖、對話全部算進去；到了上限，工單停下並標「本月額度用完」。</span>
+<label class="s0-row"><input type="radio" name="cap_mode" value="set"{% if settings.monthly_cap_usd is not none %} checked{% endif %}> 設上限 <span class="s0-mono">US$</span><input type="number" name="monthly_cap_usd" value="{{ settings.monthly_cap_usd if settings.monthly_cap_usd is not none else '' }}" min="0" max="1000000" step="0.01" inputmode="decimal" aria-label="每月上限（美元）" style="max-width: 160px"></label>
+<span class="s0-field__hint">依台北時間的日曆月算，模型、搜尋、生圖、對話全部算進去；到了上限，工單停下並標「本月額度用完」；設 0 就是什麼都不准花。單張預算與生圖上限要大於 0，每個數字最多 US$1,000,000。</span>
 </fieldset>
 <div style="display: grid; gap: 20px; margin-bottom: 20px">
 {% call money("analysis_budget_usd", settings.analysis_budget_usd, "對話開的分析、ef new 沒帶 --budget-usd 時用這個；已經開的單不受影響。") %}分析每張工單的預算{% endcall %}

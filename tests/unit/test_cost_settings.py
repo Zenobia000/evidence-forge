@@ -131,3 +131,108 @@ def test_壞掉的設定檔存一次就修好_舊值記成當時實際用的預�
     assert _changes(data) == [
         {"ts": "2026-10-15T09:30:00+08:00", "field": "monthly_cap_usd", "old": None, "new": 5.0}
     ]
+
+
+# --- 審查第 1 輪（T3）：金額上限、壞編碼、壞檔沿用最後存的值、先換檔再記、預算不能是 0 ----------------
+
+
+@pytest.mark.promise("FR-LG-03")
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"monthly_cap_usd": 1e25}',
+        '{"analysis_budget_usd": 1e308}',
+        '{"image_cap_usd": 1000000.01}',
+        '{"analysis_budget_usd": 0}',
+        '{"rewrite_budget_usd": 0.0}',
+        '{"image_cap_usd": 0}',
+    ],
+    ids=["上限太大", "預算太大", "生圖上限剛好超過", "分析預算是0", "寫稿預算是0", "生圖上限是0"],
+)
+def test_金額超過一百萬或預算是_0_都算讀不懂(data: DataDir, text: str) -> None:
+    # 太大的數字換成微美元時會丟例外，每個付費請求都會 500；預算是 0 的單一開就失敗
+    _write(data, text)
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.settings == CostSettings()
+    assert loaded.problem is not None
+
+
+def test_每月上限可以是_0_也可以剛好一百萬(data: DataDir) -> None:
+    _write(data, '{"monthly_cap_usd": 0, "analysis_budget_usd": 1000000}')
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.problem is None
+    assert (loaded.settings.monthly_cap_usd, loaded.settings.analysis_budget_usd) == (0.0, 1_000_000.0)
+
+
+def test_設定檔不是_UTF_8_算讀不懂_不當掉(data: DataDir) -> None:
+    path = data.root / "settings" / "costs.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"monthly_cap_usd": \xff\xfe}')
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.settings == CostSettings()
+    assert loaded.problem is not None
+
+
+@pytest.mark.parametrize("value", ["1e25", "1000000.5", "1e400"])
+def test_環境變數的每月上限超過一百萬就不啟動(value: str) -> None:
+    with pytest.raises(ValueError, match="EF_MONTHLY_BUDGET_USD"):
+        cost_settings.env_monthly_cap({"EF_MONTHLY_BUDGET_USD": value})
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_設定檔壞掉_沿用改動紀錄裡每個欄位最後存的值_沒記過的用預設值(data: DataDir) -> None:
+    cost_settings.save(data, CostSettings(monthly_cap_usd=10.0, rewrite_budget_usd=0.9), now=NOW)
+    cost_settings.save(data, CostSettings(monthly_cap_usd=12.0, rewrite_budget_usd=0.9), now=NOW)
+    # 紀錄裡壞掉的一行跳過
+    with (data.root / "settings" / "changes.jsonl").open("a", encoding="utf-8") as log:
+        log.write("{半行\n")
+    _write(data, "{壞掉")
+
+    loaded = cost_settings.load(data)
+
+    assert loaded.settings == CostSettings(monthly_cap_usd=12.0, rewrite_budget_usd=0.9)
+    assert loaded.problem is not None and "最後一次存的值" in loaded.problem
+
+
+def test_設定檔壞掉_改動紀錄裡的值不合法就那一欄用預設值(data: DataDir) -> None:
+    path = data.root / "settings" / "changes.jsonl"
+    path.parent.mkdir(parents=True)
+    lines = [
+        {"ts": "2026-10-15T09:30:00+08:00", "field": "monthly_cap_usd", "old": None, "new": 8.0},
+        {"ts": "2026-10-15T09:30:00+08:00", "field": "analysis_budget_usd", "old": 0.5, "new": -3},
+    ]
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    _write(data, "{壞掉")
+
+    assert cost_settings.load(data).settings == CostSettings(monthly_cap_usd=8.0)
+
+
+def test_設定檔壞掉時存檔_舊值記成當時實際在用的那一份_一樣的值不記(data: DataDir) -> None:
+    cost_settings.save(data, CostSettings(monthly_cap_usd=10.0), now=NOW)
+    _write(data, "{壞掉")
+    later = datetime(2026, 10, 16, 8, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+    cost_settings.save(data, CostSettings(monthly_cap_usd=10.0, image_cap_usd=0.3), now=later)
+
+    assert cost_settings.load(data).problem is None
+    assert _changes(data)[1:] == [
+        {"ts": "2026-10-16T08:00:00+08:00", "field": "image_cap_usd", "old": 0.25, "new": 0.3}
+    ]
+
+
+def test_換檔失敗就不記改動(data: DataDir, monkeypatch: pytest.MonkeyPatch) -> None:
+    def disk_full(*_: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("evidence_forge.cost_settings.os.replace", disk_full)
+
+    with pytest.raises(OSError):
+        cost_settings.save(data, CostSettings(monthly_cap_usd=3.0), now=NOW)
+    assert not (data.root / "settings" / "changes.jsonl").exists()
+    assert cost_settings.load(data).settings == CostSettings()

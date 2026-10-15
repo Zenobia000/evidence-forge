@@ -128,10 +128,26 @@ def test_存設定_每月上限可以改回不設_只給要改的欄位也行(wo
         {"rewrite_budget_usd": True},
         {"image_cap_usd": None},
         {"monthly_cap_usd": 1e400},
+        {"monthly_cap_usd": 1e25},
+        {"analysis_budget_usd": 1e308},
+        {"rewrite_budget_usd": 0},
+        {"image_cap_usd": 0.0},
         {"monthly_budget": 5},
         [1, 2],
     ],
-    ids=["負數", "字串", "布林", "生圖上限不能不設", "無限大", "不認得的欄位", "不是物件"],
+    ids=[
+        "負數",
+        "字串",
+        "布林",
+        "生圖上限不能不設",
+        "無限大",
+        "上限超過一百萬",
+        "預算超過一百萬",
+        "寫稿預算是0",
+        "生圖上限是0",
+        "不認得的欄位",
+        "不是物件",
+    ],
 )
 def test_存設定_不合法的值都拒絕_設定檔與改動紀錄不動(world: tuple[str, ChatFolder], body: Any) -> None:
     url, folder = world
@@ -160,6 +176,34 @@ def test_設定頁與存設定只接受本機同源的請求_表單偷送也擋(
     form = httpx.post(f"{url}/api/settings/costs", data={"monthly_cap_usd": "0"})
     assert form.status_code == 415
     assert not (folder.data.root / "settings" / "costs.json").exists()
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_每月上限可以設成_0_表示什麼都不准花(world: tuple[str, ChatFolder]) -> None:
+    url, folder = world
+
+    saved = httpx.post(f"{url}/api/settings/costs", json={"monthly_cap_usd": 0})
+
+    assert saved.status_code == 200
+    assert cost_settings.load(folder.data).settings.monthly_cap_usd == 0.0
+
+
+@pytest.mark.promise("FR-LG-03")
+def test_設定檔壞掉_設定頁沿用最後一次存的值_警告說清楚_帳單也照它算(world: tuple[str, ChatFolder]) -> None:
+    url, folder = world
+    _spend(folder, 0.3)
+    httpx.post(f"{url}/api/settings/costs", json={"monthly_cap_usd": 10.0, "rewrite_budget_usd": 0.9})
+    (folder.data.root / "settings" / "costs.json").write_text('{"monthly_cap_usd": 1e25}', encoding="utf-8")
+
+    settings = httpx.get(f"{url}/settings")
+    bills = httpx.get(f"{url}/bills")
+
+    assert settings.status_code == 200 and bills.status_code == 200
+    assert "最後一次存的值" in settings.text
+    assert "寫回一份好的" not in settings.text
+    assert 'name="monthly_cap_usd" value="10.0"' in settings.text
+    assert 'name="rewrite_budget_usd" value="0.9"' in settings.text
+    assert "剩 US$9.70" in settings.text and "剩 US$9.70" in bills.text
 
 
 @pytest.mark.promise("FR-LG-03")

@@ -5,7 +5,11 @@
 
 - **沒有檔就是預設值：不設每月上限**（創作者 2026-10-15：雲端平台自己的後台有硬上限），單張預算照舊 US$0.5。
 - **「不設」是 `null`**，不是一個很大的數字：閘道看到 `None` 就不檢查月額度，帳單寫「未設每月上限」。
-- **讀不懂的檔不讓任何東西當掉**：用預設值，原因交給設定頁標出來（`Loaded.problem`）。
+- **金額有上下限**：每月上限 0～US$1,000,000（0 是什麼都不准花）；單張預算與生圖上限要大於 0
+  （0 的單一開就失敗）、最多 US$1,000,000（再大換成微美元會出錯，每個付費請求都會失敗）。
+- **讀不懂的檔不讓任何東西當掉**：每個欄位沿用 `changes.jsonl` 裡最後一次存的值（創作者設過的上限不會
+  因為檔案壞掉就悄悄不見），沒記過的用預設值；原因交給設定頁標出來（`Loaded.problem`）。
+  沒有檔（不是壞掉）照樣是預設值。
 - **每次要用都重讀**（檔很小）：改了設定不用重開 `ef serve`。
 - 環境變數 `EF_MONTHLY_BUDGET_USD` 蓋過設定檔的每月上限（給測試與 CI，`env_monthly_cap`）。
 """
@@ -18,17 +22,22 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from evidence_forge.budget import Amount
 from evidence_forge.paths import DataDir
 
 ENV_MONTHLY_CAP = "EF_MONTHLY_BUDGET_USD"
 DEFAULT_JOB_BUDGET_USD = 0.5
 # 生圖每張的上限（#112 用）：比 OpenAI 高品質大圖一張的價錢再寬一點
 DEFAULT_IMAGE_CAP_USD = 0.25
+# 任何一個金額的上限：遠超過真的會用到的數字，又離微美元換算出錯的範圍很遠
+MAX_USD = 1_000_000.0
+
+# 每月上限：0 以上（0 是什麼都不准花）；單張預算與生圖上限：大於 0
+CapUsd = Annotated[float, Field(ge=0, le=MAX_USD, allow_inf_nan=False)]
+BudgetUsd = Annotated[float, Field(gt=0, le=MAX_USD, allow_inf_nan=False)]
 
 _log = logging.getLogger(__name__)
 # 同一個讀不懂的原因只記一次警告：閘道每次預留都會讀設定
@@ -37,16 +46,16 @@ _write_lock = threading.Lock()
 
 
 class CostSettings(BaseModel):
-    """設定檔的內容。金額是美元，不能是負的、無限大或 NaN。"""
+    """設定檔的內容。金額是美元，範圍見模組說明；不能是無限大或 NaN。"""
 
     # 不認得的欄位略過：之後的版本多一個欄位，舊版讀到也不會整份當成壞掉、把每月上限丟掉
     model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
 
     # None：不設每月上限
-    monthly_cap_usd: Amount | None = None
-    analysis_budget_usd: Amount = DEFAULT_JOB_BUDGET_USD
-    rewrite_budget_usd: Amount = DEFAULT_JOB_BUDGET_USD
-    image_cap_usd: Amount = DEFAULT_IMAGE_CAP_USD
+    monthly_cap_usd: CapUsd | None = None
+    analysis_budget_usd: BudgetUsd = DEFAULT_JOB_BUDGET_USD
+    rewrite_budget_usd: BudgetUsd = DEFAULT_JOB_BUDGET_USD
+    image_cap_usd: BudgetUsd = DEFAULT_IMAGE_CAP_USD
 
 
 @dataclass(frozen=True)
@@ -65,20 +74,23 @@ def changes_file(data: DataDir) -> Path:
 
 
 def load(data: DataDir) -> Loaded:
-    """讀設定檔；沒有檔用預設值，讀不懂也用預設值並說明原因。"""
+    """讀設定檔；沒有檔用預設值。讀不懂就沿用改動紀錄裡最後存的值（見 `_last_saved`），並說明原因。
+
+    閘道每次預留都讀這裡，所以什麼例外都不能丟出去，丟了每個模型請求都會失敗。
+    """
     path = costs_file(data)
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
     except FileNotFoundError:
         return Loaded(CostSettings())
     except OSError as exc:
-        return _broken(path, f"讀不到：{exc.strerror or exc}")
+        return _broken(data, f"讀不到：{exc.strerror or exc}")
     try:
-        return Loaded(CostSettings.model_validate(json.loads(raw)))
+        return Loaded(CostSettings.model_validate(json.loads(raw.decode("utf-8"))))
     except (ValueError, RecursionError) as exc:
-        # json 的錯誤與 pydantic 的 ValidationError 都是 ValueError；極深的巢狀是 RecursionError。
-        # 閘道每次預留都讀這裡，丟出去的話每個模型請求都會失敗
-        return _broken(path, _reason(exc))
+        # 不是 UTF-8（UnicodeDecodeError）、json 的錯誤、pydantic 的 ValidationError 都是 ValueError；
+        # 極深的巢狀是 RecursionError
+        return _broken(data, _reason(exc))
 
 
 def _reason(exc: ValueError | RecursionError) -> str:
@@ -87,12 +99,42 @@ def _reason(exc: ValueError | RecursionError) -> str:
             f"{'.'.join(str(p) for p in error['loc']) or '整份'}：{error['msg']}"
             for error in exc.errors()
         )
+    if isinstance(exc, UnicodeDecodeError):
+        return "不是 UTF-8 的文字檔"
     return f"不是 JSON（{exc}）"
 
 
+def _last_saved(data: DataDir) -> dict[str, Any]:
+    """`changes.jsonl` 裡每個欄位最後一次存的值（`new`），只留各自讀得懂、合法的。讀不到紀錄就是空的。
+
+    設定檔只經 `update` 寫，每次寫都把跟原本不同的欄位記進來，所以這就是壞掉之前最後一份好的設定
+    （有人手改過設定檔又沒留紀錄的話例外，那時就以紀錄為準）。
+    """
+    try:
+        lines = changes_file(data).read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return {}
+    found: dict[str, Any] = {}
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue  # 寫到一半的半行
+        if isinstance(row, dict) and row.get("field") in CostSettings.model_fields and "new" in row:
+            found[row["field"]] = row["new"]
+    valid: dict[str, Any] = {}
+    for name, value in found.items():
+        try:
+            CostSettings.model_validate({name: value})
+        except ValidationError:
+            continue
+        valid[name] = value
+    return valid
+
+
 def env_monthly_cap(environ: Mapping[str, str]) -> float | None:
-    """`EF_MONTHLY_BUDGET_USD`：設了就蓋過設定檔的每月上限；沒設是 None。不是 0 以上的有限金額就丟 ValueError
-    （`ef serve` 啟動時就報錯）。"""
+    """`EF_MONTHLY_BUDGET_USD`：設了就蓋過設定檔的每月上限；沒設是 None。不是 0～`MAX_USD` 的金額就丟
+    ValueError（`ef serve` 啟動時就報錯）。"""
     value = environ.get(ENV_MONTHLY_CAP, "").strip()
     if not value:
         return None
@@ -100,8 +142,8 @@ def env_monthly_cap(environ: Mapping[str, str]) -> float | None:
         cap = float(value)
     except ValueError:
         raise ValueError(f"{ENV_MONTHLY_CAP} 要是美元金額：{value}") from None
-    if not 0 <= cap < float("inf"):
-        raise ValueError(f"{ENV_MONTHLY_CAP} 要是 0 以上的有限金額：{value}")
+    if not 0 <= cap <= MAX_USD:
+        raise ValueError(f"{ENV_MONTHLY_CAP} 要是 0 到 {MAX_USD:,.0f} 的美元金額：{value}")
     return cap
 
 
@@ -139,10 +181,11 @@ def update(
     data: DataDir, change: Callable[[CostSettings], CostSettings], *, now: datetime
 ) -> list[dict[str, Any]]:
     """讀出現在的設定、交給 `change` 改、寫回去，三步在同一把鎖裡（同時改不同欄位不會互相蓋掉）。
-    每個改到的欄位在 `changes.jsonl` 記一筆；回傳記下的那幾筆。`change` 丟的例外原樣丟出，什麼都不寫。
+    跟寫之前實際在用的值（檔案讀不懂時就是 `load` 沿用的那一份）不同的欄位，在 `changes.jsonl` 各記一筆；
+    回傳記下的那幾筆。`change` 丟的例外原樣丟出，什麼都不寫。
 
-    舊值是寫之前實際在用的值：檔案讀不懂時就是預設值。先記改動再換檔：
-    換檔失敗的話紀錄多一筆沒生效的，總比生效了卻沒有紀錄好。
+    先換檔再記改動：換檔失敗就什麼都沒記（紀錄裡不會有沒生效的改動）。換好檔、還沒記到紀錄就當掉的話，
+    設定已經生效、紀錄少這一筆——接受：比紀錄說改了、其實沒改好查。
     """
     with _write_lock:
         old = load(data).settings
@@ -155,19 +198,27 @@ def update(
         ]
         path = costs_file(data)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # 先寫暫存檔再整個換上去：閘道讀的時候只會讀到舊版或新版
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            temporary.write_text(new.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
         if changes:
             with changes_file(data).open("a", encoding="utf-8") as log:
                 log.write("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in changes))
-        # 先寫暫存檔再整個換上去：閘道讀的時候只會讀到舊版或新版
-        temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        temporary.write_text(new.model_dump_json(indent=2) + "\n", encoding="utf-8")
-        os.replace(temporary, path)
         return changes
 
 
-def _broken(path: Path, reason: str) -> Loaded:
-    problem = f"{path.name} 讀不懂，先用預設值（不設每月上限）：{reason}"
+def _broken(data: DataDir, reason: str) -> Loaded:
+    saved = _last_saved(data)
+    settings = CostSettings.model_validate(saved)
+    used = "changes.jsonl 裡最後一次存的值" if saved else "預設值"
+    if len(saved) < len(CostSettings.model_fields) and saved:
+        used += "（沒存過的欄位用預設值）"
+    problem = f"{costs_file(data).name} 讀不懂（{reason}），先用{used}"
     if problem not in _reported:
         _reported.add(problem)
         _log.warning("費用設定 %s", problem)
-    return Loaded(CostSettings(), problem)
+    return Loaded(settings, problem)

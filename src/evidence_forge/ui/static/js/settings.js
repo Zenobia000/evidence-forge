@@ -2,28 +2,33 @@
 // costBody 是純函式，node 直接測（tests/js/settings.test.mjs）；下面接 DOM 的部分只在瀏覽器跑。
 
 const MONEY_FIELDS = ["analysis_budget_usd", "rewrite_budget_usd", "image_cap_usd"];
+// 跟伺服器的 cost_settings.MAX_USD 同一個數字；伺服器照樣會再驗一次
+const MAX_USD = 1_000_000;
 
-function money(raw) {
+// 表單裡的字串換成金額；空的、不是數字、超過 MAX_USD、是負數（`strict` 時 0 也不行）回 null
+function money(raw, { strict }) {
   const text = String(raw ?? "").trim();
   if (text === "") return null;
   const value = Number(text);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  if (!Number.isFinite(value) || value > MAX_USD) return null;
+  return (strict ? value > 0 : value >= 0) ? value : null;
 }
 
 // values：{cap_mode: "none"｜"set", monthly_cap_usd, analysis_budget_usd, …}（表單裡的字串）
-// 回 {body} 或 {error}：每月上限選「不設」送 null；其他金額要是 0 以上的數字
+// 回 {body} 或 {error}：每月上限選「不設」送 null、設了可以是 0（什麼都不准花）；
+// 單張預算與生圖上限要大於 0（0 的單一開就失敗）
 export function costBody(values) {
   const body = {};
   if (values.cap_mode === "none") {
     body.monthly_cap_usd = null;
   } else {
-    const cap = money(values.monthly_cap_usd);
-    if (cap === null) return { error: "每月上限要填 0 以上的金額，或選「不設」" };
+    const cap = money(values.monthly_cap_usd, { strict: false });
+    if (cap === null) return { error: "每月上限要填 0 到 1,000,000 的金額，或選「不設」" };
     body.monthly_cap_usd = cap;
   }
   for (const name of MONEY_FIELDS) {
-    const value = money(values[name]);
-    if (value === null) return { error: "預算與生圖上限都要填 0 以上的金額" };
+    const value = money(values[name], { strict: true });
+    if (value === null) return { error: "預算與生圖上限都要填大於 0、最多 1,000,000 的金額" };
     body[name] = value;
   }
   return { body };

@@ -1204,7 +1204,7 @@ def test_月上限的環境變數蓋過設定檔_金鑰位置從環境變數讀(
 
 
 @pytest.mark.promise("FR-LG-03")
-@pytest.mark.parametrize("value", ["十塊", "-1", "inf", "nan"])
+@pytest.mark.parametrize("value", ["十塊", "-1", "inf", "nan", "1e25"])
 def test_月上限的環境變數不是_0_以上的有限金額就不啟動(data: DataDir, value: str) -> None:
     from evidence_forge.gateway.config import config_from_env
 
@@ -1255,6 +1255,29 @@ def test_設定頁改了每月上限_閘道不用重開就照新的擋(
     assert stop == "month"
     assert again.status_code == 200
     assert len(anthropic.received) == 2
+
+
+@pytest.mark.promise("FR-LG-03", "NFR-COST-01")
+def test_設定檔壞掉_閘道沿用最後一次存的每月上限_照樣擋(
+    gateway: Callable[..., AbstractContextManager[Gateway]],
+    data: DataDir,
+    anthropic: Backend,
+) -> None:
+    # 創作者設過 US$10；檔案後來被改壞（還是一個大到會讓金額換算出錯的數字）：上限不能悄悄不見，也不能 500
+    cost_settings.save(data, CostSettings(monthly_cap_usd=10.0), now=NOW)
+    (data.root / "settings" / "costs.json").write_text('{"monthly_cap_usd": 1e25}', encoding="utf-8")
+    append_intake(
+        data,
+        IntakeEntry(ts=NOW, kind="fetch", url="https://example.com/a", cost_usd=9.9, latency_ms=10, status="ok"),
+    )
+    key = JobKey(_job(data, budget_usd=5.0), "echo", 1)
+    with gateway(_active(key), clock=lambda: NOW) as gw:
+        response = _post(gw.url, key, _body("strong"))
+        stop = gw.board.budget_stop(key)
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "budget_exceeded"
+    assert stop == "month"
+    assert anthropic.received == []
 
 
 @pytest.mark.promise("FR-LG-03", "NFR-COST-01")

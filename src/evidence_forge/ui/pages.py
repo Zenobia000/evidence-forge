@@ -388,7 +388,6 @@ def install(
                 "spent_usd": view.total_usd,
                 "cap": costs.cap_status(state, view.total_usd, current_month=True),
                 "settings": state.loaded.settings,
-                "consoles": costs.CONSOLES,
                 "env_name": cost_settings.ENV_MONTHLY_CAP,
                 "page_title": (f"({count}) " if count else "") + "Evidence Forge・設定",
             },

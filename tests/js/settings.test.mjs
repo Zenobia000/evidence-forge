@@ -25,7 +25,14 @@ test("設上限卻沒填、填負數或不是數字，就不送並說明", () =>
   }
 });
 
-test("預算沒填或是負數就不送", () => {
+test("預算沒填、是負數或是 0 就不送（0 的單一開就失敗）", () => {
   assert.ok(costBody({ cap_mode: "none", ...BUDGETS, rewrite_budget_usd: "" }).error);
   assert.ok(costBody({ cap_mode: "none", ...BUDGETS, image_cap_usd: "-0.1" }).error);
+  assert.ok(costBody({ cap_mode: "none", ...BUDGETS, analysis_budget_usd: "0" }).error);
+});
+
+test("金額超過一百萬就不送，剛好一百萬可以", () => {
+  assert.match(costBody({ cap_mode: "set", monthly_cap_usd: "1e25", ...BUDGETS }).error, /每月上限/);
+  assert.ok(costBody({ cap_mode: "none", ...BUDGETS, rewrite_budget_usd: "1000000.01" }).error);
+  assert.equal(costBody({ cap_mode: "set", monthly_cap_usd: "1000000", ...BUDGETS }).body.monthly_cap_usd, 1000000);
 });

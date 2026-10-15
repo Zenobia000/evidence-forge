@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from evidence_forge.budget import micros_to_usd, usd_to_micros
-from evidence_forge.cost_settings import CostSettings, Effective
+from evidence_forge.cost_settings import MAX_USD, CostSettings, Effective
 
 # 欄位在畫面上的名字（錯誤訊息也用這一份）
 FIELD_LABELS = {
@@ -17,22 +17,6 @@ FIELD_LABELS = {
     "rewrite_budget_usd": "寫稿每張工單的預算",
     "image_cap_usd": "生圖每張的上限",
 }
-
-
-@dataclass(frozen=True)
-class Console:
-    """雲端平台自己的後台：真正的硬上限設在那裡（ADR-0027 §3.6）。"""
-
-    name: str
-    what: str
-    url: str
-
-
-CONSOLES = (
-    Console("Anthropic", "模型（Claude）", "https://console.anthropic.com/settings/limits"),
-    Console("OpenAI", "生圖（封面）", "https://platform.openai.com/settings/organization/limits"),
-    Console("Tavily", "網路搜尋", "https://app.tavily.com/home"),
-)
 
 
 @dataclass(frozen=True)
@@ -63,7 +47,8 @@ def cap_status(state: Effective, spent_usd: float, *, current_month: bool) -> Ca
 def parse_update(body: object, current: CostSettings) -> CostSettings:
     """設定頁送來的 JSON：只給要改的欄位也行，其餘照現在的。不合法就丟 ValueError（訊息給人看）。
 
-    金額要是 0 以上的有限數字（JSON 的數字，不收字串、布林）；只有每月上限可以是 null（不設）。
+    金額要是 JSON 的數字（不收字串、布林），範圍照 `CostSettings`：每月上限 0～US$1,000,000 或 null（不設），
+    單張預算與生圖上限大於 0、最多 US$1,000,000。
     不認得的欄位直接拒絕：打錯欄位名不能被當成「沒改」悄悄放過。
     """
     if not isinstance(body, dict):
@@ -75,9 +60,11 @@ def parse_update(body: object, current: CostSettings) -> CostSettings:
         return CostSettings.model_validate({**current.model_dump(), **body})
     except ValidationError as exc:
         fields = sorted({str(error["loc"][0]) for error in exc.errors() if error["loc"]})
+        top = f"{MAX_USD:,.0f}"
         problems = [
-            f"{FIELD_LABELS.get(name, name)}要是 0 以上的金額（美元）"
-            + ("，或 null（不設）" if name == "monthly_cap_usd" else "")
+            f"{FIELD_LABELS.get(name, name)}要是 0 到 {top} 的美元金額，或 null（不設）"
+            if name == "monthly_cap_usd"
+            else f"{FIELD_LABELS.get(name, name)}要大於 0、最多 {top} 美元"
             for name in fields
         ]
         raise ValueError("；".join(problems) or "設定的格式不對") from None

@@ -33,10 +33,30 @@ def test_no_hard_coded_colors(path: Path) -> None:
     assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", text)
 
 
+def _outside_loads(text: str) -> list[str]:
+    """會讓瀏覽器自己去外面載東西的寫法：任何標籤的 `src=`、`<link href=>`（樣式、字型、預載）。
+
+    `<a href>` 是給人點的連結，不是載入，照樣准（費用設定頁連到雲端平台的後台，票 115）。
+    """
+    loaded = re.findall(r'\bsrc="https?://[^"]*"', text)
+    linked = re.findall(r'<link\b[^>]*\bhref="https?://[^"]*"', text)
+    return loaded + linked
+
+
+def test_outside_loads_catches_loaded_resources_but_not_links() -> None:
+    # 擋住「規則改寬了、底下的檢查變空轉」
+    assert _outside_loads('<script src="https://cdn.example/x.js"></script>')
+    assert _outside_loads('<img alt="" src="http://cdn.example/a.png">')
+    assert _outside_loads('<link rel="stylesheet" href="https://fonts.example/a.css">')
+    assert _outside_loads('<iframe src="https://evil.example/"></iframe>')
+    assert not _outside_loads('<a href="https://console.anthropic.com/settings/limits">Anthropic</a>')
+    assert not _outside_loads('<link rel="stylesheet" href="/static/css/s0.css">')
+
+
 @pytest.mark.parametrize("path", [*TEMPLATES, *SCRIPTS], ids=lambda p: p.name)
 def test_loads_nothing_from_outside(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    assert not re.findall(r'(?:src|href)="https?://', text)
+    assert not _outside_loads(text)
     assert "fonts.googleapis" not in text and "Noto" not in text
     assert not re.search(r"import\s+.*from\s+['\"]https?://", text)
 
