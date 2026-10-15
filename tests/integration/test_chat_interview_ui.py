@@ -26,6 +26,7 @@ from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.ui import interview
 
 GENRE_CARD = {
+    "kind": "genre",
     "header": "文體",
     "question": "這篇要寫成哪一種？",
     "options": [
@@ -35,11 +36,12 @@ GENRE_CARD = {
     ],
 }
 THEME_CARD = {
+    "kind": "theme",
     "header": "主題",
     "question": "放在哪個主題底下？",
     "options": [
-        {"label": "[主題 A]", "description": "最貼近原文。"},
-        {"label": "[主題 B]", "description": "比較冷門。"},
+        {"label": "[主題 A]", "description": "最貼近原文。", "value": "tech-selection"},
+        {"label": "[主題 B]", "description": "比較冷門。", "value": "worldview"},
     ],
 }
 NAME_CARD = {
@@ -593,7 +595,7 @@ def test_點選之後對話串流沒有假的使用者訊息_主機通知_Pi_的
 def test_無障礙_問題卡是一組有名字的群組_選項是真的單選鈕_按鈕有字(world: World) -> None:
     cid = world.conversation()
     card_id = world.through(cid, 1)
-    world.propose(cid, card_id, 2, [NAME_CARD, {**THEME_CARD, "header": "強度"}], minutes=4)
+    world.propose(cid, card_id, 2, [NAME_CARD, {"header": "強度", "question": "要講得多硬？", "options": THEME_CARD["options"]}], minutes=4)
 
     html = world.thread(cid)
     active = html[html.index("data-qset") - 40 :]

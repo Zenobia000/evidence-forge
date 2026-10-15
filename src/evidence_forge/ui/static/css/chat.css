@@ -340,6 +340,7 @@ ins.ch-ins { text-decoration: none; background: var(--diff-insert); }
 .ch-qopts > li { display: flex; flex-direction: column; gap: 6px; }
 .ch-qopts > li > .ch-qopt__other { margin: 0 0 0 44px; width: calc(100% - 44px); }
 .ch-qset:focus-visible, .ch-dec__item:focus-visible { outline: 2px solid var(--color-accent-action-line); outline-offset: 2px; border-radius: var(--radius-md); }
+.ch-card-topic__picks { display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: 13px; }
 /* 決策分頁：這一關問過的紀錄（舊的組與舊的答案） */
 .ch-dec__hist ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
 .ch-dec__hist ul { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }

@@ -18,7 +18,8 @@ from datetime import datetime
 from typing import Any
 
 from evidence_forge import cards
-from evidence_forge.ui.format import clock, format_usd
+from evidence_forge.harness import default_harness
+from evidence_forge.ui.format import clock, format_usd, genre_name
 
 # 選項的種類：agent 列的、第 3 關系統給的「沒有例子」、一定有的「其他」
 OPTION = "option"
@@ -193,6 +194,11 @@ class Line:
 Item = ActiveSet | AnsweredSet | Line
 
 
+def _structured(question: dict[str, Any]) -> bool:
+    """是不是文體、主題、角色卡：選項的 value 是系統認得的值，不能用「其他」自己寫。"""
+    return question.get("kind") is not None or all(o.get("value") is not None for o in question["options"])
+
+
 def _options(station: dict[str, Any], card: dict[str, Any], question: dict[str, Any]) -> tuple[QOption, ...]:
     options = [QOption(o["label"], o.get("description", "")) for o in question["options"]]
     # 第 3 關的選項只是提示：作者自己的例子寫在「其他」或備註；系統另外給「沒有例子」
@@ -200,8 +206,9 @@ def _options(station: dict[str, Any], card: dict[str, Any], question: dict[str, 
         card.get("genre"), cards.Origin.model_validate(card["origin"]) if card.get("origin") else None
     ):
         options.append(QOption(cards.NO_EXAMPLE_LABEL, "我手上沒有可以講的例子。", NO_EXAMPLE))
-    # 文體卡（每個選項都帶文體的 value）一定要選列出的文體：沒有「其他」（`cards._parse_answers` 會拒絕）
-    if not all(o.get("value") is not None for o in question["options"]):
+    # 第 1 關的文體、主題、角色卡（`kind`；舊紀錄沒有 kind 時每個選項都帶 value 的是文體卡）一定要選列出的選項：
+    # 沒有「其他」（`cards._parse_answers` 會拒絕）
+    if not _structured(question):
         options.append(QOption(cards.OTHER_LABEL, "自己寫一個答案。", OTHER))
     return tuple(options)
 
@@ -421,6 +428,8 @@ class DecisionView:
     reconfirm: int
     writable: bool
     stations: tuple[DecisionStation, ...] = field(default_factory=tuple)
+    # 第 1 關選好之後寫在標題底下的：文體、主題、角色（中文名在前，slug 在後）；還沒選的不列
+    picks: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -618,6 +627,23 @@ def _station_view(station: dict[str, Any], card: dict[str, Any]) -> DecisionStat
     return shown
 
 
+def _picks(card: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    found: list[tuple[str, str]] = []
+    if card.get("genre"):
+        found.append(("文體", _named(genre_name(card["genre"]), card["genre"])))
+    if card.get("theme"):
+        label = default_harness().theme_labels().get(card["theme"], "")
+        found.append(("主題", _named(label, card["theme"])))
+    if card.get("persona"):
+        # 角色目前只有資料夾名；之後有顯示名稱（角色管理）再換
+        found.append(("角色", card["persona"]))
+    return tuple(found)
+
+
+def _named(name: str, slug: str) -> str:
+    return f"{name}（{slug}）" if name and name != slug else slug
+
+
 def decision_view(card: dict[str, Any], job_labels: dict[str, str]) -> DecisionView:
     stations = tuple(_station_view(s, card) for s in card["stations"])
     current = card.get("current_station")
@@ -635,6 +661,7 @@ def decision_view(card: dict[str, Any], job_labels: dict[str, str]) -> DecisionV
         reconfirm=sum(1 for s in stations if s.status == "reconfirm"),
         writable=writable,
         stations=stations,
+        picks=_picks(card),
     )
 
 

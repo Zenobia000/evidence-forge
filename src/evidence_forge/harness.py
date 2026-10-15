@@ -16,6 +16,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 THEMES_FILE = "themes.md"
 # 主題清單表格的一列：| `slug` | 說明 |
 _THEME_ROW = re.compile(r"^\|\s*`([a-z0-9-]+)`\s*\|")
+_THEME_LABEL_ROW = re.compile(r"^\|\s*`([a-z0-9-]+)`\s*\|\s*(.+?)\s*\|\s*$")
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,11 @@ class Harness:
         """主題清單裡的 slug（`themes.md` 表格的第一欄）。"""
         text = self.themes.read_text(encoding="utf-8")
         return frozenset(m.group(1) for line in text.splitlines() if (m := _THEME_ROW.match(line)))
+
+    def theme_labels(self) -> dict[str, str]:
+        """主題的中文名：slug → `themes.md` 表格的「說明」欄（畫面上顯示用）。"""
+        text = self.themes.read_text(encoding="utf-8")
+        return {m.group(1): m.group(2) for line in text.splitlines() if (m := _THEME_LABEL_ROW.match(line))}
 
     def genre_files(self) -> list[Path]:
         """7 種文體的定義檔，依檔名排序。主題清單跟它們放在同一個資料夾，但不是文體，要跳過。"""

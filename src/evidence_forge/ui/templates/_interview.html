@@ -86,6 +86,7 @@
 <div class="ch-card-topic" style="margin-bottom: 24px">
 <span class="ch-card-topic__k">這張編輯卡在寫</span>
 <span class="ch-card-topic__v">{{ v.title or "（還沒有題目）" }}</span>
+{% if v.picks %}<span class="ch-card-topic__picks">{% for k, name in v.picks %}<span><span class="ch-card-topic__k">{{ k }}</span> {{ name }}</span>{% endfor %}</span>{% endif %}
 <span class="s0-small">{% if v.origin %}{{ v.origin }}{% if v.started %}・{% endif %}{% endif %}{% if v.started %}<span class="s0-mono">{{ v.started }}</span> 開始{% endif %}</span>
 </div>
 <ol class="ch-dec" aria-label="六關">
