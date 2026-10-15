@@ -195,10 +195,9 @@ def test_本月累計會讀到之後新寫的行_還沒寫完的那行先不算(
 # --- 預留 -------------------------------------------------------------------
 
 
-def _guard(data: DataDir, cap_usd: float = 10.0) -> BudgetGuard:
-    return BudgetGuard(
-        data, monthly_cap_micros=usd_to_micros(cap_usd), clock=lambda: OCT
-    )
+def _guard(data: DataDir, cap_usd: float | None = 10.0) -> BudgetGuard:
+    cap = usd_to_micros(cap_usd) if cap_usd is not None else None
+    return BudgetGuard(data, monthly_cap_micros=lambda: cap, clock=lambda: OCT)
 
 
 @pytest.mark.promise("NFR-COST-01")
@@ -216,6 +215,31 @@ def test_工單剩下的預算不夠就拒絕_原因是工單預算(data: DataDi
 def test_本月剩下的額度不夠就拒絕_原因是本月額度(data: DataDir) -> None:
     _intake(data, _line(OCT, 9.95))
     guard = _guard(data)
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("a", job_budget_micros=5_000_000, micros=100_000)
+    assert refused.value.limit == "month"
+
+
+@pytest.mark.promise("NFR-COST-01", "FR-LG-03")
+def test_不設每月上限_本月花再多都不擋_工單預算照擋(data: DataDir) -> None:
+    _intake(data, _line(OCT, 900.0))
+    guard = _guard(data, cap_usd=None)
+    held = guard.reserve("a", job_budget_micros=1_000_000, micros=600_000)
+    # 預留中的金額照樣算進工單預算
+    with pytest.raises(BudgetExceeded) as refused:
+        guard.reserve("a", job_budget_micros=1_000_000, micros=600_000)
+    assert refused.value.limit == "job"
+    guard.release(held)
+    guard.reserve("a", job_budget_micros=1_000_000, micros=600_000)
+
+
+@pytest.mark.promise("NFR-COST-01", "FR-LG-03")
+def test_每月上限每次預留都重問_改了馬上生效(data: DataDir) -> None:
+    _intake(data, _line(OCT, 9.95))
+    cap: list[int | None] = [None]
+    guard = BudgetGuard(data, monthly_cap_micros=lambda: cap[0], clock=lambda: OCT)
+    guard.release(guard.reserve("a", job_budget_micros=5_000_000, micros=100_000))
+    cap[0] = usd_to_micros(10.0)
     with pytest.raises(BudgetExceeded) as refused:
         guard.reserve("a", job_budget_micros=5_000_000, micros=100_000)
     assert refused.value.limit == "month"
@@ -251,7 +275,7 @@ def test_帳本寫不進去的花費只算進那個月的額度_工單預算一�
     # 10 月有一筆 US$0.80 寫不進帳本；閘道一路跑到 11 月，11 月還一毛都沒花
     now = [OCT]
     guard = BudgetGuard(
-        data, monthly_cap_micros=usd_to_micros(1.0), clock=lambda: now[0]
+        data, monthly_cap_micros=lambda: usd_to_micros(1.0), clock=lambda: now[0]
     )
     spent = guard.reserve("a", job_budget_micros=5_000_000, micros=900_000)
     guard.release(spent, unbooked_micros=800_000)

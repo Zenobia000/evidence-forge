@@ -19,6 +19,7 @@
 <nav class="s0-nav" aria-label="主導覽">
 <a href="/"{% if nav == "chat" %} aria-current="page"{% endif %}>聊天室 <span class="s0-nav__count" data-new-count{% if not new_count %} hidden{% endif %}>有新結果 {{ new_count }}</span></a>
 <a href="/bills"{% if nav == "bills" %} aria-current="page"{% endif %}>帳單</a>
+<a href="/settings"{% if nav == "settings" %} aria-current="page"{% endif %}>設定</a>
 </nav>
 </header>
 {% block content %}{% endblock %}

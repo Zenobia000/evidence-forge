@@ -183,7 +183,7 @@ def add_message_routes(
         )
     guard = BudgetGuard(
         config.data,
-        monthly_cap_micros=usd_to_micros(config.monthly_cap_usd),
+        monthly_cap_micros=config.monthly_cap_micros,
         clock=config.clock,
     )
     # 同一張單、同一段、同一次、同一個請求，這個程序裡已經送過幾次（第 n 次回放第 n 份）

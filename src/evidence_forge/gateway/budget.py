@@ -4,9 +4,9 @@
 
 1. **這張工單**：`job.md` 的 `budget.usd` − 這張單帳本的總花費 − 這張單預留中的金額。
    對話本身的呼叫換成對話的 `conversation.json` 的 `budget_usd` 與對話的帳本（ADR-0021 §3.3）。
-2. **這個月**：月上限（設定值，預設 US$10，Q-30）− 本月所有工單帳本、對話帳本與投入帳本的花費
-   − 所有預留中的金額。
-   月份依 Asia/Taipei 的日曆月切。
+2. **這個月**：月上限 − 本月所有工單帳本、對話帳本與投入帳本的花費 − 所有預留中的金額。
+   月份依 Asia/Taipei 的日曆月切。月上限每次預留都重問一次（費用設定頁改了不用重開）；
+   **沒設（None）就不檢查這一道**，只靠第 1 道擋（ADR-0027 §3.6，預設不設）。
 
 Tavily credits（`web_search`）另有一道：`job.md` 的 `budget.tavily_credits` − 這張單帳本的
 `credits` 總和 − 這張單預留中的 credits（`CreditGuard`）。credits 沒有月上限（票 #69 沒要求）。
@@ -191,9 +191,10 @@ class BudgetGuard:
         self,
         data: DataDir,
         *,
-        monthly_cap_micros: int,
+        monthly_cap_micros: Callable[[], int | None],
         clock: Callable[[], datetime],
     ) -> None:
+        """`monthly_cap_micros()` 回這一刻的月上限（微美元），None 是不設。"""
         self._tally = SpendTally(data)
         self._cap = monthly_cap_micros
         self._clock = clock
@@ -207,6 +208,8 @@ class BudgetGuard:
         self, job_id: str, *, job_budget_micros: int, micros: int
     ) -> Reservation:
         """預留 `micros`；任一道上限不夠就丟 `BudgetExceeded`，什麼都不預留。"""
+        # 在鎖外面讀設定檔：讀檔慢一點也不卡住別的預留
+        cap = self._cap()
         with self._lock:
             # 還沒進帳本、但要算進上限的：預留中的，加上帳本寫不進去的花費。
             # 工單預算不分月份；月額度只算這個月的那幾筆（預留中的都是這一刻還在跑的呼叫）
@@ -220,17 +223,18 @@ class BudgetGuard:
                     f"工單預算不夠：這次要預留 US${micros / 1e6:.6f}，"
                     f"剩 US${max(job_left, 0) / 1e6:.6f}",
                 )
-            month = taipei_month(self._clock())
-            held = sum(r.micros for r in self._outstanding.values()) + sum(
-                u.micros for u in self._unbooked if u.month == month
-            )
-            month_left = self._cap - self._tally.month_micros(month) - held
-            if micros > month_left:
-                raise BudgetExceeded(
-                    "month",
-                    f"本月額度不夠（{month}，上限 US${self._cap / 1e6:.2f}）："
-                    f"這次要預留 US${micros / 1e6:.6f}，剩 US${max(month_left, 0) / 1e6:.6f}",
+            if cap is not None:
+                month = taipei_month(self._clock())
+                held = sum(r.micros for r in self._outstanding.values()) + sum(
+                    u.micros for u in self._unbooked if u.month == month
                 )
+                month_left = cap - self._tally.month_micros(month) - held
+                if micros > month_left:
+                    raise BudgetExceeded(
+                        "month",
+                        f"本月額度不夠（{month}，上限 US${cap / 1e6:.2f}）："
+                        f"這次要預留 US${micros / 1e6:.6f}，剩 US${max(month_left, 0) / 1e6:.6f}",
+                    )
             reservation = Reservation(next(self._ids), job_id, micros)
             self._outstanding[reservation.id] = reservation
             return reservation
