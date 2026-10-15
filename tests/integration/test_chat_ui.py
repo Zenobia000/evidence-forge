@@ -190,7 +190,9 @@ def test_串流片段_你的訊息_agent_回答_結果卡都在(world: tuple[str
     assert "<strong>兩個</strong>" in html
     assert "分析報告 v1・完成" in html
     assert 'data-open="report"' in html and 'data-job="a1"' in html
-    assert "作者認為超長上下文" in html
+    assert "長上下文還撐不起大多數檢索場景" in html  # 報告第一個標題前的那一句話
+    assert re.search(r"可以寫的題材 <span[^>]*>2</span> 個", html)
+    assert "研究題材" not in html
     assert "US$0.31" in html
     assert 'data-latest-job="a1"' in html and 'data-latest-done="true"' in html
 
@@ -242,10 +244,17 @@ def test_報告分頁_五節_查證排序_每條附來源(world: tuple[str, Chat
 
     html = httpx.get(f"{url}/ui/c/{cid}/panel", params={"tab": "report"}).text
 
-    for heading in ("作者在說什麼", "事實與觀點", "查證", "研究題材", "來源清單"):
-        assert heading in html
+    titles = re.findall(r'<span class="ch-sec__n">\d</span>([^<]+)', html)
+    assert [title.strip() for title in titles] == ["作者在說什麼", "查證", "作者的看法", "可以寫的題材", "來源清單"]
+    assert "▶ 下一步" in html
+    assert '<p class="ch-nextstep__lead">長上下文還撐不起' in html
     order = [html.index(label) for label in ("有爭議", "查不到", "有佐證")]
     assert order == sorted(order)
+    # 報告裡沒有內部編號：來源用名字（ADR-0024）
+    assert not re.search(r">S\d+ ", html)
+    # 來源清單預設收起來
+    assert re.search(r"<details[^>]*>\s*<summary[^>]*>.*?來源清單", html, flags=re.DOTALL)
+    assert not re.search(r"<details[^>]*\bopen\b[^>]*>\s*<summary[^>]*>.*?來源清單", html, flags=re.DOTALL)
     assert 'href="https://pricing.example/list"' in html
     assert "10/13 15:01 抓取" in html
     assert 'data-verdict="disputed"' in html and 'data-verdict="unfound"' in html

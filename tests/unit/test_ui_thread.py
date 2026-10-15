@@ -141,8 +141,8 @@ def test_結果卡_完成的分析_疑慮與佐證與查不到的數字(folder: 
 
     assert job is not None
     assert (job.state, job.outcome) == ("done", "complete")
-    assert (job.doubtful, job.supported, job.unfound, job.topics) == (1, 1, 1, 1)
-    assert job.lead.startswith("作者認為")
+    assert (job.doubtful, job.supported, job.unfound, job.topics) == (1, 1, 1, 2)
+    assert job.lead.startswith("長上下文還撐不起")
     assert job.can_open
 
 

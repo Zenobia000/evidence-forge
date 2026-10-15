@@ -197,7 +197,10 @@ _INVESTIGATE: dict[str, Any] = {
         {"claim": "K1", "verdict": "supported", "sources": ["S2"]},
         {"claim": "K2", "verdict": "not_found", "sources": []},
     ],
-    "topics": [{"title": "一個題材", "sources": ["S2"]}],
+    "topics": [
+        {"title": "一個可以寫的題材", "sources": ["S2"]},
+        {"title": "另一個可以寫的題材", "sources": ["S2"]},
+    ],
 }
 
 
@@ -242,8 +245,12 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
             },
             "/fact_checks/0/sources",
         ),
-        ({"topics": [{"title": "沒有相關文章", "sources": []}]}, "/topics/0/sources"),
+        (
+            {"topics": [{"title": "沒有相關文章", "sources": []}, {"title": "b", "sources": ["S2"]}]},
+            "/topics/0/sources",
+        ),
         ({"topics": []}, "/topics"),
+        ({"topics": [{"title": "只有一個", "sources": ["S2"]}]}, "/topics"),
     ],
     ids=[
         "有佐證卻沒來源",
@@ -253,6 +260,7 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
         "有爭議的兩邊是同一個來源",
         "題材沒附文章",
         "沒有題材",
+        "只有一個題材沒得挑",
     ],
 )
 def test_investigate_的_schema_擋下不合格的查證與題材(

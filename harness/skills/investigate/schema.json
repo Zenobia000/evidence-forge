@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "investigate 段的產出 sources.json",
-  "description": "查證與找題材段的來源清單、查證結果與研究題材（FR-IV-01、ADR-0020）。來源清單沿用 research 段的格式：只有清單，正文由執行器從這一次真的抓過的網頁放進 input/sources/（runner/sources.py）。查證與題材引用的編號要在清單上（checks/analysis.py）。",
+  "description": "查證與找題材段的來源清單、查證結果與可以寫的題材（FR-IV-01、ADR-0020、ADR-0024）。報告（report.md）裡不放這裡的 K、S 編號，編號只在這份檔裡。來源清單沿用 research 段的格式：只有清單，正文由執行器從這一次真的抓過的網頁放進 input/sources/（runner/sources.py）。查證與題材引用的編號要在清單上（checks/analysis.py）。",
   "type": "object",
   "properties": {
     "queries": {
@@ -11,7 +11,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "sources": {
-      "description": "這一段抓過、拿來查證或當研究題材的網頁；編號從 S2 依序（S1 是原文）",
+      "description": "這一段抓過、拿來查證或給題材用的網頁；編號從 S2 依序（S1 是原文）",
       "type": "array",
       "minItems": 1,
       "maxItems": 10,
@@ -62,9 +62,9 @@
       }
     },
     "topics": {
-      "description": "可以借題發揮的研究題材，每個附至少一篇抓過的相關文章",
+      "description": "可以寫的題材，順序跟報告裡的編號一樣（「寫第 N 個」就是第 N 個）；至少 2 個，每個附至少一篇抓過的相關文章",
       "type": "array",
-      "minItems": 1,
+      "minItems": 2,
       "maxItems": 6,
       "items": {
         "type": "object",

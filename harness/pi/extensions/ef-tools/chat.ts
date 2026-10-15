@@ -148,7 +148,12 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
           from_job: Type.String({ description: "The analysis job, or the previous rewrite job when revising" }),
           persona: Type.Optional(Type.String({ description: "Persona name from list_personas" })),
           genre: Type.Optional(Type.String({ description: "Target genre" })),
-          goal: Type.Optional(Type.String({ description: "What the article should achieve, if the creator said" })),
+          goal: Type.Optional(
+            Type.String({
+              description:
+                "What the article should achieve. When the creator picked a topic from the report (「寫第 N 個」), that topic's working title and angle, copied from the report, plus anything the creator said",
+            }),
+          ),
           feedback: Type.Optional(Type.String({ description: "The creator's change request when revising" })),
         }),
         async execute(_id, params) {

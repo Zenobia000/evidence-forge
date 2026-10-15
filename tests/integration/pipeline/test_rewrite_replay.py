@@ -17,17 +17,20 @@ ADR-0014：錄音會進公開 repo，**種子、來源、作家設定、標題�
         uv run ef new --budget-usd 3 --text "$(cat tests/fixtures/articles/library-night.md)"
     EF_DATA=$D EF_GATEWAY_MODE=replay EF_GATEWAY_REPLAY_DIR=$PWD/tests/fixtures/recordings/analyze-library \\
         uv run ef serve --once
-    # 2. 正式跑重構（花錢）
-    EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef new --from <分析工單> --persona me \\
-        --genre opinion --goal "寫給台灣上班族看、有自己觀點的短文" --budget-usd 0.5
-    EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef serve --once --parallel 1
+    # 2. 正式跑重構（花錢）；$H 是配方釘在 conftest.py RECORDED_STAGES 那幾行的 harness 複本
+    EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef new --harness $H --from <分析工單> \\
+        --persona me --genre opinion --goal "$(cat <GOAL 那一行>)" --budget-usd 0.05
+    EF_DATA=$D EF_SECRETS=$S EF_GATEWAY_MODE=live uv run ef serve --harness $H --once --parallel 1 \\
+        --port <沒人用的埠>
     # 把重構那張單的 ledger.jsonl 與它指到的 blobs/ 複製進 recordings/rewrite-library/。
     # 複製前先看模型請求裡有沒有工單 id（agent 讀了 job.md 之類的檔），有就重錄
 
-2026-10-13 錄的這一份：一次就過（沒有回去修），花 US$0.067；文章結尾列了原文（貼上的文字，只有標題）
-與三份來源，跟原文、各來源的 8-gram 重疊率都在 1% 上下。
+2026-10-15 重錄的這一份（#100：骨架不當標題、內文不提原文與原作者、照創作者挑的題材寫）：
+重構段直接用 `fast`（Claude Haiku 5.5），一次就過（沒有回去修），花 US$0.0048。目標是對話的 agent 在創作者說
+「寫第 1 個」時會帶的樣子：那個題材的暫定標題與角度。文章結尾第一條是原文（貼上的文字，只有標題），
+再列兩份用到的來源；跟其中兩份來源的 8-gram 重疊率約 9%，有一段 37 個詞的共同片段（只提醒、不擋）。
 
-ADR-0022 之後配方改成本機優先；重播用錄音當時的配方等級（`conftest.py`）。
+錄音只准用本機與 Haiku（月底額度）；重播用錄音當時的配方等級（`conftest.py`）。
 重播時模型回應從錄音回放；開單、放參考資料、程式檢查照樣真的跑。不需要 Ollama，不打任何付費 API。
 """
 
@@ -47,7 +50,12 @@ from evidence_forge.ledger_models import LedgerEntry
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 ARTICLE = FIXTURES / "articles" / "library-night.md"
 RECORDINGS = FIXTURES / "recordings"
-GOAL = "寫給台灣上班族看、有自己觀點的短文"
+# 創作者說「寫第 1 個」時，對話的 agent 帶的目標：那個題材的暫定標題與角度（chat-system-prompt.md、ADR-0024）
+GOAL = (
+    "題材 1：夜間開館的人數曲線：頭三個月的高峰之後，數字要看哪一段。"
+    "角度：開館初期的人數常常最高，真正要看的是新鮮感退去後穩定下來的那一段。"
+    "寫給台灣上班族看的短文。"
+)
 
 PI_BIN = default_harness().pi.pi_bin
 
@@ -147,7 +155,14 @@ def test_自己寫的短文_重播跑完分析再重構_文章合格_結尾列�
     headings = re.findall(r"^## (.+)$", article, flags=re.MULTILINE)
     assert headings[-1] == "參考來源"
     original = ARTICLE.read_text(encoding="utf-8").splitlines()[0].lstrip("# ")
-    assert original in article.split("## 參考來源", 1)[1]
+    body, references = article.split("## 參考來源", 1)
+    # 參考來源第一條是原文；內文不提原文（ADR-0024）
+    first = next(line for line in references.splitlines() if line.strip())
+    assert original in first
+    assert original not in body and "原作者" not in body and "這篇談的是" not in body
+    # 文類骨架只是思考順序，不當標題
+    skeleton = re.compile(r"^(?:先講|我的)?(?:結論|論據|反方|建議)")
+    assert not [h for h in re.findall(r"^#{1,6} (.+)$", body, flags=re.MULTILINE) if skeleton.match(h)]
     # 不掛逐句引用編號
     assert not re.search(r"\[\^?S\d+\]", article)
 
@@ -157,7 +172,10 @@ def test_自己寫的短文_重播跑完分析再重構_文章合格_結尾列�
     ]
     assert report.passed
     summaries = [e for e in report.entries if e.check == "C3" and e.location is None]
-    assert [e.reason.split("：", 1)[0] for e in summaries] == ["原文", "S2", "S3", "S4"]
+    assert [e.reason.split("：", 1)[0] for e in summaries] == ["原文", "S2", "S3", "S4", "S5"]
+    # 新的兩項文章檢查都跑了，而且過了
+    reasons = [e.reason for e in report.entries if e.check == "C5" and e.status == "pass"]
+    assert "標題沒有用文類骨架的字" in reasons and "內文沒有提原文的標題與原作者" in reasons
 
 
 @pytest.mark.promise("FR-RW-01")
@@ -185,4 +203,4 @@ def test_重構段全部從錄音回放_錄音沒有讀原文也沒有上網(
     recorded = _ledger(RECORDINGS / "rewrite-library" / "ledger.jsonl")
     assert len(ledger) == len(recorded)
     assert {e.kind for e in recorded} == {"llm"}
-    assert all(e.tier == "strong" for e in recorded)
+    assert all(e.tier == "fast" for e in recorded)

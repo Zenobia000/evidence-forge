@@ -61,24 +61,34 @@ BRIEF_JSON = {
     "topics": ["預約制", "剩食"],
     "key_claims": [{"id": "K1", "claim": "改成預約制之後賣剩的麵包少了一半以上"}],
 }
-REPORT_MD = """# 巷口麵包店改成預約制之後
+# 報告的樣子照 ADR-0024：一句話、下一步、五節，沒有 K、S 編號，可以寫的題材有編號
+REPORT_MD = """巷口麵包店改成預約制，賣剩的麵包少了一半。
+
+▶ 下一步：下面有 2 個可以寫的題材，說「寫第 2 個」就開始。
 
 ## 作者在說什麼
 作者主張預約制值得。
 
-## 事實與觀點
-報廢量少了一半是事實；值得推廣是觀點。
-
 ## 查證
-- K1 有佐證：另一家店也降了很多 [S2]。
+- 【有佐證】改成預約制之後賣剩的麵包少了一半以上：另一家店也降了很多（預約制麵包店一年後）。
 
-## 研究題材
-- 剩食發生的時段 [S3]：補了原文沒有的時段分布。
+## 作者的看法
+- 值得推廣：作者的判斷，不是事實。
+
+## 可以寫的題材
+
+### 1. 剩食發生在哪個時段
+- 角度：從打烊前一小時講起。
+- 會用到的資料：烘焙業的剩食
+
+### 2. 預約制適合哪種店
+- 角度：小店與連鎖店的差別。
+- 會用到的資料：預約制麵包店一年後
 
 ## 來源清單
-- S1 巷口麵包店改成預約制之後
-- S2 預約制麵包店一年後，https://bakery.example/preorder
-- S3 烘焙業的剩食，https://food.example/waste
+- 原文：巷口麵包店改成預約制之後
+- 預約制麵包店一年後，https://bakery.example/preorder
+- 烘焙業的剩食，https://food.example/waste
 """
 
 PI_BODY = """
@@ -101,7 +111,10 @@ else:
             for i, url in enumerate(LISTED_BY_ATTEMPT.get(ATTEMPT, LISTED))],
         "fact_checks": FACT_CHECKS or [
             {"claim": "K1", "verdict": "supported", "sources": [CITED]}],
-        "topics": [{"title": "剩食的時段", "sources": ["S2"]}],
+        "topics": [
+            {"title": "剩食發生在哪個時段", "sources": ["S2"]},
+            {"title": "預約制適合哪種店", "sources": ["S2"]},
+        ],
     })
     write("report.md", REPORT_BY_ATTEMPT.get(ATTEMPT, REPORT_MD))
 event(type="agent_end")
@@ -229,17 +242,17 @@ def test_本機的_brief_兩次都少一節_升到_fast_再試_帳本記升級(
 
 
 @pytest.mark.promise("FR-IV-01")
-def test_報告少了研究題材一節_四次都一樣就以失敗進待審_寫明少哪一節_不放來源(
+def test_報告少了可以寫的題材一節_四次都一樣就以失敗進待審_寫明少哪一節_不放來源(
     world_for: Callable[[str], World],
 ) -> None:
-    broken = REPORT_MD.replace("## 研究題材\n", "## 延伸閱讀\n")
+    broken = REPORT_MD.replace("## 可以寫的題材\n", "## 延伸閱讀\n")
     world = world_for(_script(report_by_attempt=_every_attempt(broken)))
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "failed"
-    assert "研究題材" in job.result.reason
+    assert "可以寫的題材" in job.result.reason
     assert not (world.data.job_dir(job_id) / "input" / "sources").exists()
 
 
@@ -314,15 +327,28 @@ def _failed_reason(world: World, job_id: str) -> str:
 
 
 @pytest.mark.promise("FR-IV-01")
-def test_報告內文引用了清單上沒有的編號_查證段不合格(
+def test_報告露出內部編號_查證段不合格(
     world_for: Callable[[str], World],
 ) -> None:
-    report = REPORT_MD.replace("另一家店也降了很多 [S2]", "另一家店也降了很多 [S9]")
+    # ADR-0024：K、S 編號只留在 sources.json，報告裡來源用名字
+    report = REPORT_MD.replace("（預約制麵包店一年後）", " [S2]")
     world = world_for(_script(report_by_attempt=_every_attempt(report)))
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
-    assert "S9" in _failed_reason(world, job_id)
+    assert "內部編號 S2" in _failed_reason(world, job_id)
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_可以寫的題材只有一個_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    single = REPORT_MD[: REPORT_MD.index("### 2.")] + REPORT_MD[REPORT_MD.index("## 來源清單") :]
+    world = world_for(_script(report_by_attempt=_every_attempt(single)))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "至少 2 個有編號的題材" in _failed_reason(world, job_id)
 
 
 @pytest.mark.promise("FR-IV-01")
@@ -384,12 +410,35 @@ DISPUTED_FIRST: list[dict[str, Any]] = [
 def test_有爭議與有佐證並存_有爭議的排前面而且附兩邊的來源_合格(
     world_for: Callable[[str], World],
 ) -> None:
-    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=DISPUTED_FIRST))
+    # 報告的查證一條一條跟 fact_checks 對得上：先有爭議、再有佐證（T3 第一輪）
+    report = REPORT_MD.replace(
+        "- 【有佐證】",
+        "- 【有爭議】多數客人願意提前一天預約：兩篇說法不同（預約制麵包店一年後、烘焙業的剩食）。\n- 【有佐證】",
+    )
+    world = world_for(
+        _script(
+            brief_json=TWO_CLAIMS,
+            fact_checks=DISPUTED_FIRST,
+            report_by_attempt=_every_attempt(report),
+        )
+    )
     job_id = world.job(recipe="analyze")
     world.runner.run_once()
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
+
+
+@pytest.mark.promise("FR-IV-01")
+def test_報告的查證跟_fact_checks_對不上_查證段不合格(
+    world_for: Callable[[str], World],
+) -> None:
+    # sources.json 有兩條，報告只寫了一條：畫面接不回來源，算這一次不合格
+    world = world_for(_script(brief_json=TWO_CLAIMS, fact_checks=DISPUTED_FIRST))
+    job_id = world.job(recipe="analyze")
+    world.runner.run_once()
+
+    assert "fact_checks 一條一條對上" in _failed_reason(world, job_id)
 
 
 @pytest.mark.promise("FR-IV-01")

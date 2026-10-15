@@ -1,0 +1,84 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Cg3oPD7LGv6a6EcTFjTWu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1617,"cache_read_input_tokens":4532,"cache_creation":{"ephemeral_5m_input_tokens":1617,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}   }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS0QcKEAgSGAI4AUIIdGhpbmtpbmcSDOiY+gvFoP9aA6EFQxoM7VDFrlGI2NB2rzrcIjCJJM/bvsd7ZynnByZ/73DNAq/2tsd9630HQyMB0nCTmlO51dqBkwkzvUhYZg5mzAAq7gZk7Mo2TJnEEaJVBmXHH0Mv/sZ81wYts3wVZSZr7jYz1+QUVstAdxZobU1a8KXPR0mdrJsyrpX9XW1DU7lLWQDxvtFC+OpEtejeyyZfgGHdeMWuRnZ6tWGRa60RJHxzITeUSVPgRxFIheo1AbmW/i244i78wWsrxduIXer48A87xJ5o1oelbeuKNL172d6F0zwzsYYju2pxO+pItCcyukHVvdW+1i1ingJDXIkfjR2ta60qhHtb/vG3I/h7QE7msURy1KMtl7xp4a3WGRniIKDACkgtx3E63/YlcA1PCZcsm98hYh6KpmQwdAmgYf+4qufN8NO+LZveS7+1GZzMcHrpwh/KOii8W1qlDVCgg0lCdGTLJbWLoLBfZ4urEqOxbdGuEIxkJgvX5bblmvZa10v3L63K98iEUZKeJirFDM1XwElE7WwoNGqEr2dH7Boct9JXPyQ5hfwD+jrsOZAqjk1+C+ckmGrl6MFklRaALyPE5LH7n6w9oCm/ZsfIIesMnG0xjgMZSTEesnAeal3Mi7CYEn6nnt/mjd9X0oD/abOT/G5h0xy92ZQiLXBbUrRbKA0uCMbPhuTtsFB9F6y/mKlInAFXHFYT2hqEu5Wx9oMb+bUwmOMVXOwH5zJ766v2Ir9iokloddzac9348hUzMkmtlkvMHaZZE2EsBllA8712FzlMX1hXGAPvD2L0YBl5Kd3X7RDvBQP8U0I1ZrNntMFq6MU13hfr0txrOr0Ku4zRUdzjRZzJz/78FGpO+PUL+M7C85ZSQTVX9QF9w6Hkv7quy9kPol+9DpmW/Se3AYK0N7D527qVlHnugLQEVMVmCC2J8q2/IEDCFaVscMH2RaCuPUaS67Og7zyEv+HLnRceJpUZ60PQaAHFPZ47YSeSOcrIxu9nTG45xpbytDl/q2/6B0xPXYd4K3ghatkwjzWrYcgA731wPHPsrX5CuuRlK9pIkhIW2oWkzfLYhj5HuZm+hmFm3jtl1SRXDNqgeujM0d8DaEwvKyF6c1cyLv8URg/fJaH7fJqDeskq2+UDbLf3fn3zxXrIeDlQ8ptHRyQmsXLrvnpwJ6+BeFu7KexUgG1Kty1ldvPl/2xXFXVm+34PTQrB2u4Gy16j/6+djSdDrR0k+0VLKo25kd43S0dB+HQynaRotehRkKRWVElpnBgB"}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01F2vVeM7dWaXRw9JptRZF7b","name":"web_search","input":{},"caller":{"type":"direct"}}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"河"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"濱社區圖書館"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 延長開放 "}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"晚上十點 "}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"讀者人數"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"}"}  }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1           }
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_018X8sGrfknzZhwHN7ixKhRW","name":"web_search","input":{},"caller":{"type":"direct"}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"public library extended ev"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ening hours study"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" patrons us"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"age ev"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"aluation report"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\", \"max_results\": 5"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"}"}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2      }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1617,"cache_read_input_tokens":4532,"output_tokens":303,"output_tokens_details":{"thinking_tokens":122}}   }
+
+event: message_stop
+data: {"type":"message_stop"              }
+

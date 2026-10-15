@@ -1,6 +1,6 @@
 ---
 name: investigate
-description: Fact-check the brief's key claims on the web and find related articles worth building on, then write the analysis report (report.md) and the list of sources actually fetched (sources.json).
+description: Fact-check the brief's key claims on the web, then offer the creator numbered topics they could write next, in the analysis report (report.md), with the list of sources actually fetched (sources.json).
 ---
 
 # investigate
@@ -8,9 +8,9 @@ description: Fact-check the brief's key claims on the web and find related artic
 The article in `input/content.md` was written by someone else. The previous stage wrote a brief of it. Your job has two parts:
 
 1. **Fact-check** each key claim in the brief against sources you find and fetch.
-2. **Find research topics**: directions the creator could build on, each backed by one or two related articles you fetched, saying what they add that the article does not have.
+2. **Offer topics to write**: after reading the author's view and checking it, propose new posts the creator could write and publish, in the creator's own voice. Each topic uses one or two related articles you fetched. A topic is something to write, not a reading list.
 
-Then write the analysis report for the creator. You do not write an article and you do not correct the author in their voice. Not found does not mean wrong.
+Then write the analysis report for the creator, who picks a topic from it ("寫第 2 個"). You do not write an article and you do not correct the author in their voice. Not found does not mean wrong.
 
 ## Read first
 
@@ -55,40 +55,64 @@ Call `write_file` exactly once to create `sources.json` in the output directory 
     {"claim": "K1", "verdict": "supported", "sources": ["S2"]}
   ],
   "topics": [
-    {"title": "<research topic>", "sources": ["S3"]}
+    {"title": "<working title of a topic to write>", "sources": ["S3"]}
   ]
 }
 ```
 
 - `sources`: `S2`, `S3`, ... in order. `S1` is the article itself; never list it. Copy each `url` exactly as you gave it to `fetch_url`. Leave `author` out when the page does not show one. Write `why` in Traditional Chinese, one or two sentences.
 - `fact_checks`: exactly one entry per key claim in `brief.json`, using its id; no claim missing, none twice. Order them doubtful first: `disputed`, then `outdated`, then `not_found`, and `supported` last. `sources` are the ids of the listed sources behind the verdict; every verdict except `not_found` needs at least one, and `disputed` needs at least two.
-- `topics`: 2 to 4 research topics, each with the ids of one or two listed sources.
+- `topics`: the topics to write, 3 of them (at least 2), in the same order as in report.md, each with the ids of one or two listed sources it uses.
 
 ## Write report.md
 
-Call `write_file` once more to create `report.md` in the same directory. Write it in Traditional Chinese as used in Taiwan; keep names of people, products and papers in their original form. Use your own words: no long quotes from the article or the sources. Use exactly these five level-2 headings, in this order. The second one is 事實與觀點, not the brief's 事實與數據:
+Call `write_file` once more to create `report.md` in the same directory. Write it in Traditional Chinese as used in Taiwan; keep names of people, products and papers in their original form. Use your own words: no long quotes from the article or the sources.
+
+The creator reads this report, not `sources.json`. So:
+
+- **No ids anywhere in report.md.** Never write `K1`, `S2`, `[S3]` or any other claim or source id. Name a source by its title or its publisher (for example 「市立圖書館的年報」). The ids belong only in `sources.json`.
+- Each fact appears once, in 查證. Do not repeat it elsewhere.
+
+Use exactly this shape: no level-1 heading; a first line; a next-step line; then exactly these five level-2 headings, in this order:
 
 ```markdown
-# <the article's title>
+<One sentence: what this article is about and where it lands.>
+
+▶ 下一步：下面有 3 個可以寫的題材，說「寫第 2 個」就開始。
 
 ## 作者在說什麼
-One paragraph: the author's core argument and stance.
-
-## 事實與觀點
-The facts and data the author relies on, and the opinions, each with one sentence of explanation. Keep the two apart.
+One paragraph, at most 150 characters: the author's core argument and stance.
 
 ## 查證
-One entry per key claim: the claim, the verdict (有爭議, 過時, 有佐證, 查不到) and what the sources say, citing them as [S2]. The doubtful ones go first: 有爭議, then 過時, then 查不到, and 有佐證 last.
+- 【有爭議】<the fact, in one sentence>：<what the sources say, naming them>
+- 【查不到】<the fact>：<what you searched and did not find>
+- 【有佐證】<the fact>：<what backs it, naming the source>
 
-## 研究題材
-Each topic: what the creator could write about, which source(s) to read [S3], and what they add that the article does not have.
+## 作者的看法
+- <one opinion of the author, saying plainly that it is the author's view, not a fact>
+
+## 可以寫的題材
+
+### 1. <working title>
+- 角度：<one sentence: the creator's own angle>
+- 原文沒講的：<what this adds that the article does not have>
+- 會用到的資料：<the sources it uses, by name>
+- 建議文類：<one genre, e.g. 觀點文>
+
+### 2. <working title>
+...
 
 ## 來源清單
-- S1 the article itself: its title, and its URL when the task gives one under 原文出處.
-- Each listed source: id, title, URL.
+- 原文：<the article's title>, and its URL when the task gives one under 原文出處
+- <each listed source: title and URL>
 ```
 
-The runner checks the report too: every [S<n>] you cite must be S1 or an id in `sources.json`, and every URL under 來源清單 must be a page you fetched in this stage or the URL given under 原文出處.
+- **查證**: one item per key claim, in the same order as `fact_checks` in `sources.json`: doubtful first (【有爭議】, then 【過時】, then 【查不到】) and 【有佐證】 last. Start each item with its mark. Write the fact itself, never its id. After the mark you may add a short caveat, for example 「但佐證偏弱，只有一篇轉述」.
+- **作者的看法**: the author's opinions and judgements, kept apart from the facts.
+- **可以寫的題材**: 3 topics (at least 2), numbered `### 1.`, `### 2.`, `### 3.`, in the same order as `topics` in `sources.json`. Each is a new post the creator could write in their own voice on this subject. It is not a reply to the article and not a critique of its author. The genre is one of 新聞快訊, 熱點評論, 教學文, 清單技巧, 解說文, 深度長文, 筆記摘要, 評測比較, 案例拆解, 觀點文, 故事心得, 精選彙整.
+- Put the real number of topics in the next-step line.
+
+The runner checks the report: a first line before the first `##` heading, the five headings in order, no `K<n>` or `S<n>` anywhere, at least 2 numbered topics, and every URL under 來源清單 is a page you fetched in this stage or the URL given under 原文出處.
 
 Reply with one short line saying both files were written. Do not call any other tool after that.
 

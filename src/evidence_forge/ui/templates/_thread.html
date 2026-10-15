@@ -48,7 +48,7 @@
 <span>{{ icon("warn") }}<span class="s0-mono">{{ c.doubtful }}</span> 有疑慮</span>
 <span>{{ icon("check") }}<span class="s0-mono">{{ c.supported }}</span> 有佐證</span>
 <span>{{ icon("unfound") }}<span class="s0-mono">{{ c.unfound }}</span> 查不到</span>
-{% if not c.compact %}<span>研究題材 <span class="s0-mono">{{ c.topics }}</span> 個</span>{% endif %}
+{% if not c.compact %}<span>可以寫的題材 <span class="s0-mono">{{ c.topics }}</span> 個</span>{% endif %}
 {% else %}
 <span>角色 {{ c.persona }}{% if c.genre %}・{{ c.genre }}{% endif %}</span>
 {% if c.uncalibrated %}<span class="s0-badge" data-tone="genre">{{ icon("question") }}未校準</span>{% endif %}
