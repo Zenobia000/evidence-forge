@@ -8,6 +8,8 @@
 - `read_article`：讀這個對話開過的某張重構工單的文章（#85）。
 - `job_status`：一張工單現在跑到哪。
 - `list_personas`：現有的角色與它們寫過的文類（#85；創作者說「用 me 寫」時對話的 agent 才聽得懂）。
+- `read_lessons`：一個角色 `lessons.md` 最近十筆（ADR-0026 §3.3：訪談開工前讀，#109）。只讀這一份，
+  碰不到角色資料夾的其他檔；沒給角色就是創作者自己（`me`）。對話從不寫角色資料夾。
 - `rewrite`：從這個對話的一張分析或重構工單接著做，開一張重構工單（等同 `ef new --from`，#102），
   **開了就回**，跟 `analyze` 一樣。`from_job` 一定要是這個對話自己的單（跟讀報告同一條範圍，403 不說存不存在）。
   記進 `jobs.jsonl` 時接上版本鏈（CONTEXT.md〈版本鏈〉、ADR-0019 §3.6）：`parent` 是 `from_job`；
@@ -43,19 +45,30 @@ from typing import Any, Protocol
 from starlette.concurrency import run_in_threadpool
 
 from evidence_forge import cards, conversations
+from evidence_forge.lessons import latest_lessons
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.documents import read_job
 from evidence_forge.gateway.config import GatewayConfig
 from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.models import Job
 from evidence_forge.runner.intake import PastedText, Source, WebPage, same_source
-from evidence_forge.runner.stage_inputs import job_persona
+from evidence_forge.runner.stage_inputs import AUTHOR, job_persona
 
 CARD_TOOLS = frozenset(
     {"propose_questions", "record_interpreted_answers", "add_material", "read_card"}
 )
 CHAT_TOOLS = (
-    frozenset({"analyze", "read_report", "read_article", "job_status", "list_personas", "rewrite"})
+    frozenset(
+        {
+            "analyze",
+            "read_report",
+            "read_article",
+            "job_status",
+            "list_personas",
+            "read_lessons",
+            "rewrite",
+        }
+    )
     | CARD_TOOLS
 )
 # 只有畫面能叫的入口（ADR-0025 §3.3）：閘道的 /tools/ 拿任何鑰匙來都拒絕，對話主機的 API 直接叫 `cards.py`
@@ -158,11 +171,18 @@ class ChatTools:
             return await run_in_threadpool(desk.status, self._owned_job(key, body))
         if name == "list_personas":
             return await run_in_threadpool(desk.personas)
+        if name == "read_lessons":
+            return await run_in_threadpool(self._lessons, body)
         if name == "rewrite":
             return await self._rewrite(desk, key, body)
         if name in CARD_TOOLS:
             return await run_in_threadpool(self._card_tool, desk, key, name, body)
         raise ToolRejected(404, f"沒有這個工具：{name}")
+
+    def _lessons(self, body: dict[str, Any]) -> dict[str, Any]:
+        """一個角色最近十筆 lessons（`lessons.py`）；沒給角色就是創作者自己。"""
+        persona = _optional(body, "persona") or AUTHOR
+        return {"persona": persona, "lessons": latest_lessons(self._config.data, persona)}
 
     def _card_tool(
         self, desk: Desk, key: ConversationKey, name: str, body: dict[str, Any]

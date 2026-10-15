@@ -441,6 +441,32 @@ def test_讀得到自己開的文章_列得出角色(env: Env) -> None:
     assert personas.json()["personas"][0]["name"] == "me"
 
 
+@pytest.mark.promise("FR-RW-04")
+def test_read_lessons_讀角色最近十筆_只讀不寫(env: Env) -> None:
+    rows = "\n".join(f"- 規則 {n}" for n in range(1, 13))
+    lessons = env.data.authors / "me" / "lessons.md"
+    lessons.write_text(f"# 規則\n\n{rows}\n", encoding="utf-8")
+    before = lessons.read_bytes()
+
+    response = env.call("read_lessons", env.mine, persona="me")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "persona": "me",
+        "lessons": [f"規則 {n}" for n in range(3, 13)],
+    }
+    assert lessons.read_bytes() == before
+    # 沒給角色就是創作者自己；還沒有 lessons.md 的角色是空的
+    assert env.call("read_lessons", env.mine).json()["persona"] == "me"
+    assert env.call("read_lessons", env.mine, persona="ally").json()["lessons"] == []
+
+
+@pytest.mark.parametrize(("persona", "status"), [("nobody", 404), ("../me", 400), (3, 400)])
+def test_read_lessons_沒有的角色或不合格的名稱被拒(env: Env, persona: object, status: int) -> None:
+    response = env.call("read_lessons", env.mine, persona=persona)
+    assert response.status_code == status
+
+
 # --- rewrite ----------------------------------------------------------------
 
 
@@ -621,6 +647,7 @@ def test_對話不能用段的工具(env: Env, tool: str, body: dict[str, object
         ("read_article", {"job_id": "x"}),
         ("job_status", {"job_id": "x"}),
         ("list_personas", {}),
+        ("read_lessons", {"persona": "me"}),
         ("rewrite", {"from_job": "x"}),
     ],
 )
