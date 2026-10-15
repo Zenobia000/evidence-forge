@@ -175,7 +175,7 @@ def test_從分析開重構_拿到報告與來源_沒有原文全文_文章合�
 
     job = world.read(job_id)
     assert job.result is not None and job.result.outcome == "complete", job.result
-    # me 還沒有觀點文的文類風格：結果上標未校準（rewrite.feature）
+    # me 還沒有隨筆的文體風格：結果上標未校準（rewrite.feature）
     assert "未校準" in job.result.reason and "essay" in job.result.reason
     inputs = world.data.job_dir(job_id) / "input"
     assert (inputs / "report.md").read_text(encoding="utf-8") == REPORT

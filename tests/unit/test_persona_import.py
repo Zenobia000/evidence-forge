@@ -437,6 +437,14 @@ def test_來源裡有兩份寫作系統_拒絕(tmp_path: Path) -> None:
         read_source(root)
 
 
+def test_SKILL_md_找不到聲音的節_拒絕_不寫一份空的聲音(tmp_path: Path) -> None:
+    # 換錯來源時不能用一份只有檔頭的 voice.md 蓋掉原本的聲音
+    root = _folder(tmp_path)
+    (root / ".claude" / "skills" / "fake-writing" / "SKILL.md").write_text("# 沒有編號的節\n", encoding="utf-8")
+    with pytest.raises(PersonaImportError, match="聲音"):
+        build_persona(read_source(root), "me", default_genre="explainer", now=NOW)
+
+
 def test_預設文體不在_7_種裡_拒絕(tmp_path: Path) -> None:
     with pytest.raises(PersonaImportError, match="opinion"):
         build_persona(read_source(_zip(tmp_path)), "me", default_genre="opinion", now=NOW)

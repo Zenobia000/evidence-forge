@@ -229,6 +229,11 @@ def _frontmatter(fields: dict[str, Any], comment: str) -> str:
 def _voice(source: SourceTree, persona: str, name: str, default_genre: str, stamp: str) -> str:
     skill = source.get(SKILL) or ""
     parts = [s for n in _VOICE_SECTIONS if (s := _numbered(skill, n)) is not None]
+    if not parts:
+        # 換錯來源時寧可停下來，也不要用一份只有檔頭的聲音蓋掉原本的
+        raise PersonaImportError(
+            f"{SKILL} 裡找不到聲音的節（§{'、§'.join(_VOICE_SECTIONS)}），不寫 voice.md"
+        )
     gates = _numbered(skill, _VOICE_GATE[0])
     gate = _section(gates, 3, lambda t: t == _VOICE_GATE[1]) if gates else None
     if gate is not None:
