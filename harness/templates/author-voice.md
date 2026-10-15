@@ -1,8 +1,8 @@
 ---
-# 作家聲音（ADR-0015）。一位作家一份，放 $EF_DATA/authors/<作家>/voice.md。跨文類不變。
+# 角色的聲音（ADR-0015、ADR-0026 §3.3）。一個角色一份，放 $EF_DATA/authors/<角色>/voice.md。跨文體不變；沒有這份就不是一個角色。
 id: me
 name: 你的名字或筆名
-default_genre: explainer        # 工單與訂閱源都沒指定目標文類時，用這一類
+default_genre: explainer        # 工單與訂閱源都沒指定目標文體時用這一種；harness/genres/ 的 7 種 slug 之一
 samples: []                     # 學這份聲音用的範本，路徑相對於 $EF_DATA，例：style/diffusion-model.md
 calibrated: false               # 創作者確認過內容後改成 true
 ---

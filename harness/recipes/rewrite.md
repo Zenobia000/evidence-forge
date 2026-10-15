@@ -17,21 +17,21 @@ Claude Haiku 5.5、Sonnet 5.5 各試一次。輸入大到本機模型的上下�
 不在本機再試，直接升到 `fast`。程式檢查沒過的「回去修」（`auto_fix`）在當下那一級做；
 修完還沒過，升到下一級重寫。
 
-開單：`ef new --from <分析工單> --persona me --genre opinion --goal "..."`（帶 `--from` 時 `--recipe` 預設就是 `rewrite`）。
+開單：`ef new --from <分析工單> --persona me --genre explainer --goal "..."`（帶 `--from` 時 `--recipe` 預設就是 `rewrite`）。
 `needs: [report.md]`：一定要 `--from`，而且那張單要有過了程式檢查的分析報告，不然不開單。
 執行器開工前把那張單的產出放進新工單的 `input/`（`runner/stage_inputs.py`）：
 
 - `input/report.md`、`input/brief.md`、`input/brief.json`：分析報告與 brief；
 - `input/sources/S<n>.md`：查證段抓過的來源正文；
-- `input/author/`：角色的聲音與它在目標文類的風格（`$EF_DATA/authors/<角色>/`）；沒有校準過的風格就是未校準，結果上會標；
-- `input/target-genre.md`、`input/conversions/`：文類骨架與轉換說明；
+- `input/author/`：角色的聲音與它在目標文體的風格（`$EF_DATA/authors/<角色>/`）；沒有校準過的風格就是未校準，結果上會標；
+- `input/target-genre.md`：目標文體的通用定義（ADR-0026 的 7 種之一：主證據、必要內容、骨架）；
 - `input/headline-punchline.md`：標題與金句規則（`$EF_DATA/style/headline-punchline-system.md`，不進 repo）。
 
 **原文全文不放**（`input/content.md` 不在重構工單裡）：重構只讀分析報告與來源（FR-RW-01）。
 原文出處（標題、作者、網址）由執行器寫進任務說明，文章結尾的參考來源照抄。
 
 執行器的程式檢查（`checks/article.py`）：文章是標準 Markdown、最後一節「參考來源」列了原文出處、
-標題不用文類骨架的字、參考來源以外的內文不提原文標題與原作者（ADR-0024）、`article.json` 合 schema；沒過就帶著結果回這一段修，每一級最多 `auto_fix` 次，還沒過就升到下一級重寫，
+標題不用文體骨架的字、參考來源以外的內文不提原文標題與原作者（ADR-0024）、`article.json` 合 schema；沒過就帶著結果回這一段修，每一級最多 `auto_fix` 次，還沒過就升到下一級重寫，
 最後一級也修不好以未完成結束。
 跟原文、跟每一份來源的逐字重疊率照樣算出來寫進檢查結果，只顯示、不擋。
 

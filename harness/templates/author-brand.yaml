@@ -1,0 +1,24 @@
+# 角色的品牌設定（ADR-0026 §3.3、ADR-0027）。放 $EF_DATA/authors/<角色>/brand.yaml。
+# 配圖用的色票、字型、封面用語。只寫要蓋掉的欄位，沒寫的照中性預設值；沒有這份就全部用預設值。
+# 打錯欄位名稱會被拒絕，不會默默忽略。完整欄位說明見 src/evidence_forge/figures/__init__.py。
+# 下面的值就是預設值，只是示範格式。
+name: ""                        # 圖頁尾右側的品牌名；空字串就不印
+palette:                        # #RRGGBB；accent 一張圖只標一個重點，warn 只標失敗、衰退、風險
+  paper: "#F5F5F5"
+  ink: "#1F1F1F"
+  graphite: "#4A4A4A"
+  accent: "#2F6DB5"
+  warn: "#B5483A"
+  mist: "#C8C8C8"
+  grid: "#E3E3E3"
+font:
+  family: "Noto Sans TC"
+  regular: "NotoSansTC-Regular"
+  bold: "NotoSansTC-Bold"
+cover:                          # 封面三層：形式 forms、媒材 media、風格 styles（整張字典一起換）
+  forms:
+    painting: "A painting composed to occupy the entire image, with no border around it."
+  media:
+    oil: {forms: [painting], description: "Oil paint, with the strokes still showing."}
+  styles:
+    realism: "Realism: things look as they do in life."

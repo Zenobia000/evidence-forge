@@ -1,14 +1,15 @@
 """開段之前，執行器把 agent 要讀的參考資料放進工單的 `input/`（ADR-0015 §3.7、ADR-0018）。
 
 agent 只看得到系統提示裡的 `SKILL.md`，與工單資料夾裡的檔（`read_file` 只能讀工單資料夾）。
-文類定義（`harness/genres/`）、轉換說明（`harness/conversions/`）、作家設定
-（`$EF_DATA/authors/<作家>/`）都不在工單裡，所以由這裡複製進去：
+文體定義（`harness/genres/`）與角色設定（`$EF_DATA/authors/<角色>/`）都不在工單裡，所以由這裡複製進去：
 
-- `input/genres.md`：12 種文類的定義接成一份，整理段用來判斷文類、照抽取欄位整理；
-- `input/target-genre.md`：目標文類的定義（骨架），重構段用；
-- `input/author/voice.md`：作家聲音；
-- `input/author/genre-style.md`：作家在目標文類的風格；作家沒寫這一類就沒有這個檔（未校準）；
-- `input/conversions/<來源>--<目標>.md`：轉換說明，全部放進去，重構段照 brief 的主文類挑。
+- `input/genres.md`：7 種文體的通用定義接成一份（ADR-0026；同資料夾的主題清單 `themes.md` 不算），
+  brief 段用來判斷原文的文體、查證段替題材建議文體；
+- `input/target-genre.md`：目標文體的定義（主證據、必要內容、骨架），重構段用；
+- `input/author/voice.md`：角色的聲音；
+- `input/author/genre-style.md`：角色在目標文體的風格；角色沒寫這一種就沒有這個檔（未校準）。
+
+舊的轉換說明（`harness/conversions/`）是用舊 12 種文類寫的，ADR-0026 §3.4 之後不再放。
 
 - `input/headline-punchline.md`：標題與金句規則（`$EF_DATA/style/headline-punchline-system.md`，
   創作者自己的寫作系統，跨角色共用、不進 repo），重構段用；
@@ -50,7 +51,6 @@ TARGET_GENRE = "input/target-genre.md"
 AUTHOR_DIR = "input/author/"
 VOICE = AUTHOR_DIR + "voice.md"
 GENRE_STYLE = AUTHOR_DIR + "genre-style.md"
-CONVERSIONS = "input/conversions/"
 # 查證段之後，執行器照 sources.json 放的來源正文（`sources.py`，#70）
 SOURCES_DIR = "input/sources/"
 HEADLINE_RULES = "input/headline-punchline.md"
@@ -74,7 +74,6 @@ PROVIDED = (
     GENRES,
     TARGET_GENRE,
     AUTHOR_DIR,
-    CONVERSIONS,
     SOURCES_DIR,
     HEADLINE_RULES,
     *CARRIED.values(),
@@ -197,8 +196,8 @@ def uncalibrated(job_dir: Path, job: Job) -> str | None:
         return None
     persona = job_persona(job)
     return (
-        f"未校準：角色 {persona} 還沒有校準過的 {genre} 文類風格"
-        f"（authors/{persona}/genres/{genre}.md），照文類骨架與聲音寫"
+        f"未校準：角色 {persona} 還沒有校準過的 {genre} 文體風格"
+        f"（authors/{persona}/genres/{genre}.md），照文體的通用定義與聲音寫"
     )
 
 
@@ -240,20 +239,19 @@ def prepare_inputs(harness: Harness, data: DataDir, job_dir: Path, job: Job) -> 
         put_once(job_dir, relative, content)
         placed.append(relative)
 
-    definitions = sorted(harness.genres.glob("*.md"))
+    definitions = harness.genre_files()
     if definitions:
         put(
             GENRES,
             "\n\n".join(path.read_text(encoding="utf-8") for path in definitions),
         )
-    for conversion in sorted(harness.conversions.glob("*.md")):
-        put(CONVERSIONS + conversion.name, conversion.read_bytes())
 
     target = job.target_genre
     if target is not None:
-        definition = harness.genres / f"{target}.md"
-        if not definition.is_file():
-            raise InputError(f"目標文類 {target} 不在 harness/genres/ 裡")
+        # 只認文體定義檔：同資料夾的主題清單、舊工單的 12 種文類 id 都不是（ADR-0026 §3.4）
+        definition = next((p for p in definitions if p.stem == target), None)
+        if definition is None:
+            raise InputError(f"目標文體 {target} 不在 harness/genres/ 的 7 種裡")
         put(TARGET_GENRE, definition.read_bytes())
 
     author = author_dir(data, job_persona(job))

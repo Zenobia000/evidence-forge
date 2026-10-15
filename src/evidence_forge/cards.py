@@ -63,8 +63,10 @@ from pydantic import (
 )
 
 from evidence_forge import conversations
+from evidence_forge.documents import read_frontmatter
 from evidence_forge.gateway.ledger import append_line
 from evidence_forge.gateway.scope import ToolRejected
+from evidence_forge.harness import default_harness
 from evidence_forge.jobkey import InvalidJobKey, check_name
 from evidence_forge.paths import DataDir
 
@@ -87,12 +89,14 @@ PICK_FOR_ME_NOTE = "交給 AI 選"
 OTHER_LABEL = "其他"
 
 # 文體（ADR-0026 §3.1）。第 1 關的文體卡每個選項帶其中一個 slug（`value`）。
-# `harness/genres/` 換成這 7 種是 #106；在那之前資料夾裡還是舊的 12 種，所以照這份清單驗，不讀資料夾
-GENRES = frozenset(
-    {"essay", "research-review", "product-case", "benchmark", "postmortem", "explainer", "trend"}
+# 清單只有一份：`harness/genres/` 的文體定義檔（主題清單 themes.md 不算）
+_GENRE_FILES = default_harness().genre_files()
+GENRES = frozenset(path.stem for path in _GENRE_FILES)
+# 不需要作者自己經驗的文體（定義檔的 `needs_author_evidence: false`）：
+# 「你幫我選」在第 1 關只能選這幾種（ADR-0025 §3.2、ADR-0026 §3.1）
+SELF_FREE_GENRES = frozenset(
+    path.stem for path in _GENRE_FILES if read_frontmatter(path).get("needs_author_evidence") is False
 )
-# 不需要作者自己經驗的文體：「你幫我選」在第 1 關只能選這三種（ADR-0025 §3.2、ADR-0026 §3.1）
-SELF_FREE_GENRES = frozenset({"research-review", "explainer", "trend"})
 # 主證據是作者自己的使用、測試或專案：第 3 關不能答「沒有例子」（ADR-0025 §3.2）
 AUTHOR_EVIDENCE_GENRES = frozenset({"product-case", "benchmark", "postmortem"})
 

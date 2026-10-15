@@ -37,7 +37,7 @@ test("只收 Markdown、純文字、PDF，太大的擋下", () => {
 });
 
 test("建議按鈕：剛分析完和剛寫完各三個；其他時候沒有", () => {
-  assert.deepEqual(suggestions("analysis", "me"), ["用 me 寫一篇觀點文", "再查一下有疑慮的那條", "這篇的立場是什麼？"]);
+  assert.deepEqual(suggestions("analysis", "me"), ["用 me 寫一篇理論教學", "再查一下有疑慮的那條", "這篇的立場是什麼？"]);
   assert.equal(suggestions("rewrite", "me").length, 3);
   assert.deepEqual(suggestions("", "me"), []);
 });

@@ -11,6 +11,9 @@ from evidence_forge.runner.pi_launch import PiHarness
 # 專案根目錄：本檔在 src/evidence_forge/ 底下，往上兩層（同 paths.py）。
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# 主題清單的檔名：跟文體定義放在同一個資料夾（ADR-0026 §3.2）
+THEMES_FILE = "themes.md"
+
 
 @dataclass(frozen=True)
 class Harness:
@@ -37,13 +40,17 @@ class Harness:
 
     @property
     def genres(self) -> Path:
-        """12 種文類的定義，一類一個 `<文類>.md`。"""
+        """文體的通用定義（ADR-0026），一種一個 `<slug>.md`；同一個資料夾還放主題清單 `themes.md`。"""
         return self.root / "genres"
 
     @property
-    def conversions(self) -> Path:
-        """文類轉換說明：`<來源>--<目標>.md`。"""
-        return self.root / "conversions"
+    def themes(self) -> Path:
+        """主題清單（ADR-0026 §3.2）：8 個 slug 與一句通用說明。"""
+        return self.genres / THEMES_FILE
+
+    def genre_files(self) -> list[Path]:
+        """7 種文體的定義檔，依檔名排序。主題清單跟它們放在同一個資料夾，但不是文體，要跳過。"""
+        return sorted(p for p in self.genres.glob("*.md") if p.name != THEMES_FILE)
 
     def skill_dir(self, name: str) -> Path:
         return self.root / "skills" / name
