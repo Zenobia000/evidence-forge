@@ -35,7 +35,7 @@ def test_ef_new_沒指定配方就開分析_寫素材項目並開一張排隊中
     job = read_job(ef_data / "jobs" / job_id / "job.md").job
     assert (job.status, job.recipe, job.goal) == ("queued", "analyze", "一段話說明重點")
     # 分析配方的查證段有搜尋額度：沒指定 credits 就用配方各段的總和
-    assert job.budget.tavily_credits == 12
+    assert job.budget.tavily_credits == 24
     item_dir = ef_data / job.feed.item
     assert item_dir.parent == ef_data / "inbox" / "manual"
     assert (item_dir / "content.md").read_text(encoding="utf-8") == text
@@ -178,3 +178,78 @@ def test_資料目錄不可寫_ef_serve_不啟動並點名這一項(
     finally:
         readonly.chmod(0o755)
     assert "資料目錄不可寫" in capsys.readouterr().err
+
+
+def _finished_analysis(ef_data: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    """開一張分析工單，當成它跑完了：查證段交了一份過了檢查的報告。"""
+    from datetime import UTC, datetime
+
+    from evidence_forge.checks import CheckEntry, ChecksReport, write_checks_report
+    from evidence_forge.documents import JobDocument, write_job
+    from evidence_forge.models import JobResult
+
+    assert main(["new", "--text", "# 夜間圖書館\n\n原文。"]) == 0
+    job_id = capsys.readouterr().out.strip().splitlines()[-1]
+    job_dir = ef_data / "jobs" / job_id
+    (job_dir / "stages" / "investigate" / "1").mkdir(parents=True)
+    for name in ("report.md", "sources.json"):
+        (job_dir / "stages" / "investigate" / "1" / name).write_text(
+            "x", encoding="utf-8"
+        )
+    write_checks_report(
+        job_dir,
+        ChecksReport(
+            stage="investigate",
+            attempt=1,
+            files=(
+                "stages/investigate/1/report.md",
+                "stages/investigate/1/sources.json",
+            ),
+            created_at=datetime(2026, 10, 13, tzinfo=UTC),
+            entries=(CheckEntry(check="C5", status="pass", reason="測試"),),
+        ),
+    )
+    doc = read_job(job_dir / "job.md")
+    done = doc.job.model_copy(
+        update={"status": "review", "result": JobResult(outcome="complete")}
+    )
+    write_job(job_dir / "job.md", JobDocument(job=done))
+    (ef_data / "authors" / "me").mkdir(parents=True)
+    return job_id
+
+
+@pytest.mark.promise("FR-RW-01", "FR-RW-02")
+def test_ef_new_from_開重構工單_預設配方是_rewrite_帶角色與文體(
+    ef_data: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parent = _finished_analysis(ef_data, capsys)
+    args = ["new", "--from", parent, "--persona", "me", "--genre", "opinion"]
+    assert main([*args, "--goal", "寫給 PM"]) == 0
+
+    job_id = capsys.readouterr().out.strip()
+    job = read_job(ef_data / "jobs" / job_id / "job.md").job
+    assert (job.recipe, job.parent, job.persona, job.target_genre, job.goal) == (
+        "rewrite",
+        parent,
+        "me",
+        "opinion",
+        "寫給 PM",
+    )
+
+
+@pytest.mark.promise("FR-RW-02")
+def test_ef_new_from_角色不存在_不開單_列出現有的角色(
+    ef_data: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parent = _finished_analysis(ef_data, capsys)
+    assert main(["new", "--from", parent, "--persona", "ghost"]) == 2
+    err = capsys.readouterr().err
+    assert "ghost" in err and "me" in err
+    assert len(list((ef_data / "jobs").iterdir())) == 1
+
+
+def test_ef_new_重構配方沒帶_from_就拒絕(
+    ef_data: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["new", "--recipe", "rewrite", "--text", "文章"]) == 2
+    assert "--from" in capsys.readouterr().err

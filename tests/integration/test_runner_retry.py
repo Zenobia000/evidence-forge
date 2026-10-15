@@ -23,7 +23,10 @@ from evidence_forge.models import Recipe, RecipeStage
 
 
 def _recipe(
-    *, max_attempts: int = 2, escalate_to: str | None = "strong", auto_fix: int = 0
+    *,
+    max_attempts: int = 2,
+    escalate_to: str | list[str] | None = "strong",
+    auto_fix: int = 0,
 ) -> Recipe:
     return Recipe.model_validate(
         {
@@ -36,7 +39,7 @@ def _recipe(
                         "skill": "echo",
                         "tier": "local",
                         "output": ["summary.json"],
-                        "escalate_to": escalate_to,
+                        **({"escalate_to": escalate_to} if escalate_to else {}),
                     }
                 )
             ],
@@ -78,6 +81,102 @@ def test_產出一直不合格_本級試到上限再升一級試一次_仍失敗
         for entry in world.ledger(job_id)
     ]
     assert calls == [(1, "local", None), (2, "local", None), (3, "strong", "local")]
+
+
+@pytest.mark.promise("NFR-RUN-03", "FR-MD-01")
+def test_升級鏈_本機試滿兩次_再照順序_fast_strong_各試一次_仍失敗才失敗(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(
+        BAD_OUTPUT, recipes={"retry": _recipe(escalate_to=["fast", "strong"])}
+    )
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "failed"
+    assert "第 4 次" in job.result.reason
+    calls = [
+        (entry.attempt, entry.tier, entry.escalated_from)
+        for entry in world.ledger(job_id)
+    ]
+    # 升上來的每一級都記「從配方這一段的等級升上來」，不是從前一級
+    assert calls == [
+        (1, "local", None),
+        (2, "local", None),
+        (3, "fast", "local"),
+        (4, "strong", "local"),
+    ]
+
+
+@pytest.mark.promise("NFR-RUN-03")
+def test_升級鏈_升到_fast_就合格_不再往上(world_for: Callable[..., World]) -> None:
+    script = (
+        FAKE_PI_LIB
+        + """
+ask()
+write("summary.json", {"summary": "fast 才對"} if ATTEMPT == "3" else {"x": 1})
+"""
+    )
+    world = world_for(
+        script, recipes={"retry": _recipe(escalate_to=["fast", "strong"])}
+    )
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete"
+    assert [entry.tier for entry in world.ledger(job_id)] == ["local", "local", "fast"]
+
+
+_TOO_LONG_FOR_LOCAL = (
+    FAKE_PI_LIB
+    + """
+status, _ = ask("長" * 20000 if TIER == "local" else None)
+if status == 200:
+    write("summary.json", {"summary": "雲端讀得下全部"})
+event(type="agent_end")
+"""
+)
+
+
+@pytest.mark.promise("NFR-RUN-03", "FR-MD-01")
+def test_提示大到本機模型的上下文放不下_本機不再試第二次_直接升到_fast_做完(
+    world_for: Callable[..., World],
+) -> None:
+    # 閘道估起來放不下就不轉送給 Ollama（不讓它默默截掉提示），也不算後端故障；
+    # 同一份輸入在本機再試一次也一樣放不下，所以直接升級鏈的下一級
+    world = world_for(
+        _TOO_LONG_FOR_LOCAL,
+        recipes={"retry": _recipe(escalate_to=["fast", "strong"])},
+    )
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "complete"
+    calls = [
+        (entry.attempt, entry.tier, entry.status) for entry in world.ledger(job_id)
+    ]
+    assert calls == [(1, "local", "error"), (2, "fast", "ok")]
+
+
+@pytest.mark.promise("NFR-RUN-03")
+def test_本機的上下文放不下又沒有升級鏈_試一次就失敗_原因寫上下文(
+    world_for: Callable[..., World],
+) -> None:
+    world = world_for(_TOO_LONG_FOR_LOCAL, recipes={"retry": _recipe(escalate_to=None)})
+    job_id = world.job(recipe="retry")
+
+    world.runner.run_once()
+
+    job = world.read(job_id)
+    assert job.result is not None and job.result.outcome == "failed"
+    assert "上下文" in job.result.reason
+    assert [entry.attempt for entry in world.ledger(job_id)] == [1]
 
 
 @pytest.mark.promise("NFR-RUN-03")

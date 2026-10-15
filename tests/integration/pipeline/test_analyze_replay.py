@@ -4,6 +4,7 @@
 所以**種子與「搜到的」文章全部是為測試寫的虛構短文**，跟 `restructure` 的重播用同一組：
 種子是 `tests/fixtures/articles/library-night.md`，相關文章在 `tests/fixtures/web/pages/`。
 錄音時模型是真的（brief 段本機 qwen3.5:9b、查證與找題材段 Anthropic strong），網路是假的
+（ADR-0022 之後配方改成本機優先，重播用錄音當時的配方等級，見 `conftest.py`）
 （`tests/fixtures/web/fake_web.py`）。作家設定用 `tests/fixtures/authors/`（分析用不到，但開單照樣放）。
 
 重錄（改了 system-prompt、skill、任務說明、文類定義、自寫文章或升了 Pi，請求就會變；
@@ -44,7 +45,7 @@ from evidence_forge.checks import ChecksReport
 from evidence_forge.cli import main
 from evidence_forge.documents import read_job
 from evidence_forge.gateway.blobs import BlobStore
-from evidence_forge.harness import default_harness
+from evidence_forge.harness import Harness, default_harness
 from evidence_forge.ledger_models import LedgerEntry
 from evidence_forge.models import FetchRecord
 
@@ -80,13 +81,19 @@ def ef_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def job_dir(ef_data: Path, capsys: pytest.CaptureFixture[str], port: int) -> Path:
+def job_dir(
+    ef_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    port: int,
+    recorded_harness: Harness,
+) -> Path:
     # 錄音時用 shell 的 `$(cat …)` 開單，結尾換行被吃掉；多一個換行請求就對不上。
-    # 不帶 --recipe：分析是 `ef new` 的預設配方
+    # 不帶 --recipe：分析是 `ef new` 的預設配方。配方用錄音當時的等級（conftest.py）
     text = ARTICLE.read_text(encoding="utf-8").rstrip("\n")
-    assert main(["new", "--budget-usd", "3", "--text", text]) == 0
+    harness = ["--harness", str(recorded_harness.root)]
+    assert main(["new", *harness, "--budget-usd", "3", "--text", text]) == 0
     job_id = capsys.readouterr().out.strip().splitlines()[-1]
-    assert main(["serve", "--once", "--port", str(port)]) == 0
+    assert main(["serve", *harness, "--once", "--port", str(port)]) == 0
     return ef_data / "jobs" / job_id
 
 

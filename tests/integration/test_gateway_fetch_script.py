@@ -104,7 +104,8 @@ def env(
     (data.job_dir(JOB) / "input" / "content.md").write_text("a b c", encoding="utf-8")
     skill_dir = _skill(tmp_path / "harness")
     stages = ActiveStages()
-    stages.activate(KEY, skill_dir=skill_dir)
+    # 這把鑰匙的段可以上網（配方給了搜尋額度）；不能上網的段見下面的測試
+    stages.activate(KEY, skill_dir=skill_dir, online=True)
     # 抓取要真的連（假的外網）：重播模式只回放錄音（見本檔最後的重播測試）
     config = GatewayConfig(data=data, mode="live", clock=lambda: NOW)
     fetcher = Fetcher(
@@ -174,6 +175,25 @@ def test_fetch_url_要正在跑的鑰匙(env: Env, fake_web: "FakeWeb") -> None:
     assert fake_web.requests == []
 
 
+@pytest.mark.promise("FR-RW-01", "NFR-SEC-02")
+def test_配方沒讓這一段上網_fetch_url_回_403_不連網也不記帳(
+    env: Env, fake_web: "FakeWeb"
+) -> None:
+    # 重構段不准讀原文全文：原文網址就在任務說明裡，抓取快取又會直接回全文，
+    # 所以不能只靠提示詞，由閘道擋（#92 審查）
+    offline = JobKey(JOB, "rewrite", 1)
+    env.stages.activate(offline, skill_dir=env.skill_dir, online=False)
+    fake_web.route("news.example", "/robots.txt", 404)
+    fake_web.route("news.example", "/p/1", body=ARTICLE)
+
+    response = env.call("fetch_url", offline, url="http://news.example/p/1")
+
+    assert response.status_code == 403
+    assert "上網" in response.json()["error"]
+    assert fake_web.requests == []
+    assert not (env.job_dir / "ledger.jsonl").exists()
+
+
 # --- run_script -------------------------------------------------------------
 
 
@@ -220,7 +240,7 @@ def test_run_script_清單上的名字指到符號連結也拒絕(env: Env) -> N
 @pytest.mark.promise("NFR-SEC-02")
 def test_run_script_這一段沒有登記_skill_就不能跑腳本(env: Env) -> None:
     key = JobKey(JOB, "compose", 1)
-    env.stages.activate(key)
+    env.stages.activate(key, online=True)
     assert env.call("run_script", key, script="count.py").status_code == 403
 
 
@@ -275,7 +295,7 @@ def test_重播模式的_fetch_url_從錄音回放_不連網_沒錄過就報錯(
     data.ensure()
     (data.job_dir(JOB) / "input").mkdir(parents=True)
     stages = ActiveStages()
-    stages.activate(KEY)
+    stages.activate(KEY, online=True)
     config = GatewayConfig(
         data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
     )
@@ -324,7 +344,7 @@ def test_重播時同一段同一次抓同一個網址_第_n_次回放錄音裡�
     data.ensure()
     (data.job_dir(JOB) / "input").mkdir(parents=True)
     stages = ActiveStages()
-    stages.activate(KEY)
+    stages.activate(KEY, online=True)
     config = GatewayConfig(
         data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
     )
@@ -358,7 +378,7 @@ def test_只差片段的網址命中快取_錄音與重播對得上(
     data.ensure()
     (data.job_dir(JOB) / "input").mkdir(parents=True)
     stages = ActiveStages()
-    stages.activate(KEY)
+    stages.activate(KEY, online=True)
     config = GatewayConfig(
         data=data, mode="replay", replay_dir=recording, clock=lambda: NOW
     )

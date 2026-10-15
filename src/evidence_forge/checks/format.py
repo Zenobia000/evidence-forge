@@ -6,8 +6,8 @@
 「標準 Markdown」任何文字都能解析，所以這裡擋的是模型常犯、會讓稿子壞掉或變成別種格式的寫法：
 空的稿子、整份包在程式碼區塊裡、程式碼區塊沒關（後面全被吃掉）、
 HTML 文件（`<html>`、`<body>`、`<script>`…）、MDX（`import`／`export` 敘述、大寫開頭的元件標籤）。
-開頭的 YAML frontmatter 允許（執行器可能在稿子上記版本資訊）。行內的小段 HTML 不擋，
-`<img>` 由 C4 管。
+開頭的 YAML frontmatter 允許（執行器可能在稿子上記版本資訊）。行內的小段 HTML 不擋
+（`<img>` 也不擋：管圖的 C4 已經退場，ADR-0020）。
 """
 
 import re

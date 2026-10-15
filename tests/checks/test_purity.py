@@ -61,6 +61,6 @@ def test_checks_module_imports_nothing_that_reaches_a_network_or_a_model(
 
 def test_the_guard_actually_sees_the_modules() -> None:
     # 防止路徑算錯、一個模組都沒掃到，上面那條就空轉通過
-    assert {"quotes.py", "citations.py", "overlap.py", "assets.py", "format.py"} <= {
+    assert {"analysis.py", "article.py", "overlap.py", "format.py", "job.py"} <= {
         path.name for path in CHECKS_DIR.glob("*.py")
     }

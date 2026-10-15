@@ -10,6 +10,8 @@
 
 Tavily credits（`web_search`）另有一道：`job.md` 的 `budget.tavily_credits` − 這張單帳本的
 `credits` 總和 − 這張單預留中的 credits（`CreditGuard`）。credits 沒有月上限（票 #69 沒要求）。
+執行器登記了這一次的上限時，還有一道「這一段這一次」的：上限 − 這一次帳本的 credits − 這一次預留中的
+（ADR-0022：本機那幾次用不光整張單的額度，升級上來的那一次還有得搜）。
 credits 不夠時只拒絕那一次搜尋，不擋下那一段；單子在全部段跑完後以未完成進待審（`CREDITS_REASON`）。
 
 結算的順序是「先把實際金額寫進帳本，再放掉預留」，中間沒有空檔讓這筆錢兩邊都沒算到。
@@ -65,6 +67,8 @@ class _FileTally:
     total: int = 0
     # Tavily credits 的總和（不分月份：credits 只有工單上限）
     credits: int = 0
+    # 每一段每一次的 credits：（段, 第幾次）→ 加總
+    credits_by_attempt: dict[tuple[str, int], int] = field(default_factory=dict)
 
 
 class SpendTally:
@@ -119,7 +123,14 @@ class SpendTally:
             return False
         tally.by_month[month] = tally.by_month.get(month, 0) + micros
         tally.total += micros
-        tally.credits += _credits(row)
+        credits = _credits(row)
+        tally.credits += credits
+        stage, attempt = row.get("stage"), row.get("attempt")
+        if credits and isinstance(stage, str) and isinstance(attempt, int):
+            slot = (stage, attempt)
+            tally.credits_by_attempt[slot] = (
+                tally.credits_by_attempt.get(slot, 0) + credits
+            )
         return True
 
     def month_micros(self, month: str) -> int:
@@ -131,6 +142,11 @@ class SpendTally:
 
     def job_credits(self, job_id: str) -> int:
         return self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl").credits
+
+    def attempt_credits(self, job_id: str, attempt: tuple[str, int]) -> int:
+        """一張工單某一段某一次用掉的 Tavily credits。"""
+        tally = self._refresh(self._data.owner_dir(job_id) / "ledger.jsonl")
+        return tally.credits_by_attempt.get(attempt, 0)
 
 
 def _credits(row: dict[str, object]) -> int:
@@ -241,6 +257,8 @@ class CreditReservation:
     id: int
     job_id: str
     credits: int
+    # 哪一段第幾次的預留；沒有這一次的上限時是 None
+    attempt: tuple[str, int] | None = None
 
 
 class CreditGuard:
@@ -256,12 +274,38 @@ class CreditGuard:
         self._ids = itertools.count(1)
         self._outstanding: dict[int, CreditReservation] = {}
         self._unbooked: dict[str, int] = {}
+        # 帳本沒寫進去的 credits，照（工單, 段, 第幾次）記；這一次的上限也要算到它們
+        self._unbooked_by_attempt: dict[tuple[str, str, int], int] = {}
 
     def reserve(
-        self, job_id: str, *, job_credits: int, credits: int
+        self,
+        job_id: str,
+        *,
+        job_credits: int,
+        credits: int,
+        attempt: tuple[str, int] | None = None,
+        attempt_credits: int | None = None,
     ) -> CreditReservation:
-        """預留 `credits`；這張單剩下的不夠就丟 `BudgetExceeded("job")`，什麼都不預留。"""
+        """預留 `credits`；這張單剩下的不夠，或這一段這一次（`attempt`）用到上限
+        `attempt_credits`，就丟 `BudgetExceeded("job")`，什麼都不預留。"""
         with self._lock:
+            if attempt is not None and attempt_credits is not None:
+                held_here = sum(
+                    r.credits
+                    for r in self._outstanding.values()
+                    if r.job_id == job_id and r.attempt == attempt
+                ) + self._unbooked_by_attempt.get((job_id, *attempt), 0)
+                left_here = (
+                    attempt_credits
+                    - self._tally.attempt_credits(job_id, attempt)
+                    - held_here
+                )
+                if credits > left_here:
+                    raise BudgetExceeded(
+                        "job",
+                        f"這一次的 Tavily credits 用完了：上限 {attempt_credits}，"
+                        f"剩 {max(left_here, 0)}",
+                    )
             held = sum(
                 r.credits for r in self._outstanding.values() if r.job_id == job_id
             ) + self._unbooked.get(job_id, 0)
@@ -272,7 +316,7 @@ class CreditGuard:
                     f"這張單的 Tavily credits 不夠：這次要 {credits}，"
                     f"剩 {max(left, 0)}（上限 {job_credits}）",
                 )
-            reservation = CreditReservation(next(self._ids), job_id, credits)
+            reservation = CreditReservation(next(self._ids), job_id, credits, attempt)
             self._outstanding[reservation.id] = reservation
             return reservation
 
@@ -286,3 +330,8 @@ class CreditGuard:
                 self._unbooked[released.job_id] = (
                     self._unbooked.get(released.job_id, 0) + unbooked_credits
                 )
+                if released.attempt is not None:
+                    slot = (released.job_id, *released.attempt)
+                    self._unbooked_by_attempt[slot] = (
+                        self._unbooked_by_attempt.get(slot, 0) + unbooked_credits
+                    )

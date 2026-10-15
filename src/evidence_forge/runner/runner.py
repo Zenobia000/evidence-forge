@@ -3,9 +3,10 @@
 每一段（S0.6）：
 - 開 Pi 之前記下版本（`provenance.py`）；Pi 跑的時候把「在等什麼」寫進 `job.md`。
 - Pi 結束後依序看：預算擋下 → `incomplete`；後端故障 → `failed`，不重試不升級；
-  產出不合 schema、整理段的 C1／C5 沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
-  就升一級再試一次，仍不行 → `failed`（附最後一次的錯誤）；
-  二創段的 C2～C5 沒過 → 帶著結果回二創段修，到 `auto_fix` 次還沒過 → `incomplete`。
+  產出不合 schema、分析段的程式檢查沒過 → 同一級再試到 `max_attempts`，有 `escalate_to`
+  就照升級鏈一級各試一次，最後一級仍不行 → `failed`（附最後一次的錯誤）（ADR-0022）；
+  重構段的程式檢查沒過 → 帶著結果回重構段修，每一級最多 `auto_fix` 次；修完還沒過就升到
+  升級鏈的下一級重寫，最後一級也修不好 → `incomplete`（ADR-0022）。
 - 搜尋額度（Tavily credits）用完、或 Tavily 故障，都不擋下那一段：agent 用已經找到的資料收尾，
   後面的段照跑；全部段跑完時看帳本（`search_shortfalls`）：有被拒的搜尋，或某段最後一次碰到
   Tavily 故障之後沒再搜成功過，就以 `incomplete` 結束，都沒有才是 `complete`。
@@ -54,6 +55,7 @@ from evidence_forge.models import (
     RecipeStage,
     SearchFailure,
     StageProgress,
+    Tier,
     Waiting,
 )
 from evidence_forge.paths import DataDir
@@ -69,8 +71,6 @@ from evidence_forge.transitions import transition
 from evidence_forge.write_once import write_once
 
 TAIPEI = ZoneInfo("Asia/Taipei")
-# 任務說明裡「原文出處」的標題最多幾個字
-ORIGIN_TITLE_MAX = 200
 
 _log = logging.getLogger(__name__)
 
@@ -86,45 +86,37 @@ def stage_prompt(
     goal: str,
     fix: str = "",
     upstream: Sequence[str] = (),
-    cited: Mapping[str, sources.Source] | None = None,
+    original: sources.Original | None = None,
+    *,
+    seed_in_job: bool = True,
+    feedback: str | None = None,
 ) -> str:
     """這一段給 agent 的任務說明。只放段、次、目標、檔名，不放工單 id 與時間：
     同樣的素材與目標送出的請求要逐位元組相同，快取與重播才對得上。
 
-    `fix` 是回二創段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
-    `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
-    `cited` 是這張單的來源（`sources.job_sources`）；補料段放了來源之後才列：每個來源的編號、
-    正文在哪，與稿子結尾要照抄的註腳（標題＋網址，種子也附出處）。只有種子時，種子有網址才多一行
-    原文出處（分析報告的來源清單要列，#78）；貼上的文字、上傳的檔案沒有網址，一個字都不多
-    （錄音的種子都是貼上的文字，錄好的請求照樣對得上）。
+    - `fix` 是回重構段修時，上一次沒過的檢查（`hard_checks.fix_request`）。
+    - `upstream` 是前面各段合格那一次的產出（`upstream_outputs`）；第一段沒有，說明一個字都不多。
+    - `original` 是原文的出處（`sources.original`）。原文有網址就多一行原文出處：分析報告的來源清單、
+      文章結尾的參考來源都要列（PRD §5、§6）。貼上的文字、上傳的檔案沒有網址，分析工單一個字都不多
+      （錄音的種子都是貼上的文字，錄好的請求照樣對得上）；重構工單讀不到原文（`seed_in_job` 是 False），
+      所以沒有網址也照樣給標題。
+    - `seed_in_job`：工單裡有原文全文（`input/content.md`）。重構工單沒有（FR-RW-01）。
+    - `feedback` 是再改時創作者對上一版的一句意見（FR-RW-03）。
     """
     output_dir = f"stages/{stage.id}/{attempt}/"
     outputs = "、".join(f"{output_dir}{name}" for name in stage.output)
+    material = "素材在 input/content.md。\n" if seed_in_job else ""
     earlier = f"前面各段的產出：{'、'.join(upstream)}\n" if upstream else ""
-    listed = ""
-    if cited is not None and len(cited) == 1:
-        seed = cited.get(sources.SEED_ID)
-        if seed is not None and seed.url:
-            # 只有種子、種子有網址：分析報告的來源清單要列原文出處（PRD §5），agent 讀不到素材項目
-            # 標題可能是網頁的 og:title：壓成一行、限制長度，不讓它拆亂或塞爆任務說明
-            title = " ".join(seed.title.split())
-            if len(title) > ORIGIN_TITLE_MAX:
-                title = title[:ORIGIN_TITLE_MAX] + "…"
-            listed = f"原文出處：{title}，{seed.url}\n"
-    elif cited is not None and len(cited) > 1:
-        paths = "、".join(
-            f"{sid} {source.path.as_posix()}" for sid, source in cited.items()
-        )
-        footnotes = "".join(
-            f"{source.footnote(sid)}\n" for sid, source in cited.items()
-        )
-        listed = f"來源（引用編號：正文）：{paths}\n註腳（稿子結尾照抄）：\n{footnotes}"
+    credited = original is not None and (original.url or not seed_in_job)
+    credit = f"原文出處：{original.credit}\n" if original is not None and credited else ""
+    revise = f"創作者對上一版的意見：{feedback}\n" if feedback else ""
     prompt = (
         f"配方「{recipe.name}」的「{stage.id}」段，第 {attempt} 次。\n"
         f"目標：{goal}\n"
-        f"素材在 input/content.md。\n"
+        f"{material}"
         f"{earlier}"
-        f"{listed}"
+        f"{credit}"
+        f"{revise}"
         f"照系統提示裡的 skill 完成這一段，用 write_file 寫出：{outputs}"
     )
     return f"{prompt}\n\n{fix}" if fix else prompt
@@ -203,6 +195,8 @@ class _Tried:
     problems: list[str] = field(default_factory=list)
     stop: JobResult | None = None
     fix: ChecksReport | None = None
+    # 閘道擋下了提示：這一級的上下文放不下，同一級再試也沒用（ADR-0022）
+    too_long: bool = False
 
 
 def open_tool(log_path: Path) -> str | None:
@@ -236,9 +230,10 @@ BACKEND_NAMES = {"ollama": "Ollama", "anthropic": "Anthropic", "tavily": "Tavily
 
 
 def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
-    """補料沒做完整的原因（給結果卡看），照先後排；沒有就是空的。從帳本判斷：
+    """搜尋沒做完整的原因（給結果卡看），照先後排；沒有就是空的。從帳本判斷：
 
-    - credits 不夠被拒（`search` 的 `budget_exceeded`）：`CREDITS_REASON`。
+    - credits 不夠被拒（`search` 的 `budget_exceeded`），而且是那一段最後一次被拒：`CREDITS_REASON`。
+      前面幾次的產出已經丟掉（重試、升級），它們搜不夠不影響交出去的產出（ADR-0022）。
     - Tavily 故障（429 用完、逾時、連不上、金鑰或方案、5xx；閘道回 agent 的狀態碼在
       `OUTAGE_STATUSES`），而且那一段最後一次在故障之後沒有再搜成功過：產出就算合格，
       也只是用手上的資料湊的（#70）。查詢本身被 Tavily 退回的 400 不算。
@@ -248,17 +243,19 @@ def search_shortfalls(data: DataDir, job_dir: Path) -> list[str]:
     """
     blobs = BlobStore(data.blobs)
     refused: list[str] = []
-    entries = [e for e in ledger.read(job_dir / "ledger.jsonl") if e.kind == "search"]
+    every = ledger.read(job_dir / "ledger.jsonl")
+    entries = [e for e in every if e.kind == "search"]
+    # 每一段最後一次：看全部的帳（含模型呼叫），最後一次沒有搜尋也算得對
     last_attempt: dict[str, int] = {}
-    for entry in entries:
+    for entry in every:
         last_attempt[entry.stage] = max(last_attempt.get(entry.stage, 0), entry.attempt)
     # 每一段最後一次：還沒恢復的 Tavily 故障（沒有就是 None）
     outages: dict[str, str | None] = {}
     for entry in entries:
-        if entry.status == "budget_exceeded" and entry.stage not in refused:
-            refused.append(entry.stage)
         if entry.attempt != last_attempt[entry.stage]:
             continue
+        if entry.status == "budget_exceeded" and entry.stage not in refused:
+            refused.append(entry.stage)
         if entry.status in ("ok", "cache_hit"):
             outages[entry.stage] = None
             continue
@@ -287,6 +284,15 @@ def _search_failure(blobs: BlobStore, digest: str | None) -> SearchFailure | Non
         return SearchFailure.model_validate_json(raw)
     except ValidationError:
         return None
+
+
+def writing_mark(job_dir: Path, job: Job, recipe: Recipe) -> str | None:
+    """寫文章的配方（有一段交 `article.md`）跑完時，要標在結果上的「未校準」；其他配方是 None。"""
+    writes = any(
+        hard_checks.checked_output(stage) == hard_checks.ARTICLE_OUTPUT
+        for stage in recipe.stages
+    )
+    return stage_inputs.uncalibrated(job_dir, job) if writes else None
 
 
 def pi_error(events: Sequence[Mapping[str, object]]) -> str | None:
@@ -630,8 +636,10 @@ class Runner:
             doc, result = self._run_stage(job_dir, doc, recipe, stage, progress)
             if result is not None:
                 if result.outcome == "incomplete":
-                    # 後面的段自己沒做完：補料沒做完整的事也一起寫，創作者才看得到全貌
+                    # 後面的段自己沒做完：搜尋沒做完整、未校準的事也一起寫，創作者才看得到全貌
                     notes = search_shortfalls(self.data, job_dir)
+                    if note := writing_mark(job_dir, doc.job, recipe):
+                        notes.append(note)
                     if notes:
                         result = JobResult(
                             outcome="incomplete",
@@ -640,15 +648,21 @@ class Runner:
                 self._set(job_dir, doc, "done", result.reason, result=result)
                 return
         notes = search_shortfalls(self.data, job_dir)
+        # 寫文章的配方：角色在目標文類還沒校準，結果上標「未校準」（ADR-0015 §3.6、FR-RW-02）
+        marks = [note] if (note := writing_mark(job_dir, doc.job, recipe)) else []
         if notes:
             # 搜尋額度用完或 Tavily 故障：那一段用已經找到的資料收尾、後面照跑，
             # 但這張單沒做完（NFR-COST-01、#70）
-            reason = "；".join(notes)
+            reason = "；".join([*notes, *marks])
             result = JobResult(outcome="incomplete", reason=reason)
             self._set(job_dir, doc, "done", reason, result=result)
             return
         self._set(
-            job_dir, doc, "done", "全部段完成", result=JobResult(outcome="complete")
+            job_dir,
+            doc,
+            "done",
+            "全部段完成",
+            result=JobResult(outcome="complete", reason="；".join(marks)),
         )
 
     def _set_aside(self, job_dir: Path, progress: StageProgress) -> None:
@@ -684,8 +698,10 @@ class Runner:
     ) -> tuple[JobDocument, JobResult | None]:
         """跑一段到合格，或到重試與升級都用完（NFR-RUN-03、ADR-0011 §3.3）。
 
-        同一級最多試 `max_attempts` 次；還不合格而配方有 `escalate_to`，升一級再試一次；
-        再不合格就回傳失敗的結果。每一次（含升級）的編號往上加，產出各自一個目錄。
+        配方這一段的等級最多試 `max_attempts` 次；還不合格而配方有升級鏈（`escalate_to`），
+        照順序往上一級各試一次；鏈的最後一級也不合格就回傳失敗的結果（ADR-0022）。
+        程式檢查沒過的「回去修」在當下那一級做；修完還沒過，有更高的一級就升上去重寫。
+        每一次（含升級）的編號往上加，產出各自一個目錄。
         回傳 None 表示這一段合格。
         """
         while True:
@@ -701,9 +717,27 @@ class Runner:
                 return doc, tried.stop
             problems = tried.problems
             if not problems and tried.fix is not None:
-                # 二創的 C2～C5 沒過：帶著結果回這一段修，最多 auto_fix 次
+                # 重構文章的程式檢查沒過：帶著結果回這一段修，每一級最多 auto_fix 次；
+                # 這一級修完還沒過，升級鏈還有更高的一級就升上去重寫（ADR-0022 §3.3）
                 failed = "、".join(tried.fix.failed_checks)
-                if progress.fixes >= recipe.auto_fix:
+                if progress.fixes < recipe.auto_fix:
+                    self._stage_event(
+                        job_dir,
+                        stage.id,
+                        progress.attempt,
+                        f"{label}的自動檢查沒過：{failed}，回 {stage.id} 段修",
+                    )
+                    progress = progress.model_copy(
+                        update={
+                            "attempt": progress.attempt + 1,
+                            "failures": 0,
+                            "fixes": progress.fixes + 1,
+                            "started_at": self.clock(),
+                        }
+                    )
+                    continue
+                upper = stage.tier_after(tier)
+                if upper is None:
                     return doc, JobResult(
                         outcome="incomplete",
                         reason=f"自動檢查沒過：{failed}（{label}，"
@@ -713,45 +747,53 @@ class Runner:
                     job_dir,
                     stage.id,
                     progress.attempt,
-                    f"{label}的自動檢查沒過：{failed}，回 {stage.id} 段修",
+                    f"{label}的自動檢查沒過：{failed}，{tier} 已自動修 "
+                    f"{progress.fixes} 次，升級到 {upper} 重寫",
                 )
-                progress = progress.model_copy(
-                    update={
-                        "attempt": progress.attempt + 1,
-                        "failures": 0,
-                        "fixes": progress.fixes + 1,
-                        "started_at": self.clock(),
-                    }
-                )
+                progress = self._climb(progress, upper)
                 continue
             if not problems:
                 return doc, None
             failures = progress.failures + 1
-            if not escalated and failures < recipe.max_attempts:
-                next_tier = tier
-            elif not escalated and stage.escalate_to is not None:
-                next_tier = stage.escalate_to
-                failures = 0
-            else:
+            if not escalated and failures < recipe.max_attempts and not tried.too_long:
+                self._stage_event(
+                    job_dir,
+                    stage.id,
+                    progress.attempt,
+                    f"{label}不合格，同一級再試：" + "；".join(problems),
+                )
+                progress = progress.model_copy(
+                    update={
+                        "attempt": progress.attempt + 1,
+                        "failures": failures,
+                        "started_at": self.clock(),
+                    }
+                )
+                continue
+            # 升級鏈的下一級；升上來的每一級只試一次
+            upper = stage.tier_after(tier)
+            if upper is None:
                 reason = f"{label}失敗：" + "；".join(problems)
                 return doc, JobResult(outcome="failed", reason=reason)
             self._stage_event(
                 job_dir,
                 stage.id,
                 progress.attempt,
-                f"{label}不合格，"
-                + (f"升級到 {next_tier} 再試" if next_tier != tier else "同一級再試")
-                + "："
-                + "；".join(problems),
+                f"{label}不合格，升級到 {upper} 再試：" + "；".join(problems),
             )
-            progress = progress.model_copy(
-                update={
-                    "attempt": progress.attempt + 1,
-                    "tier": next_tier,
-                    "failures": failures,
-                    "started_at": self.clock(),
-                }
-            )
+            progress = self._climb(progress, upper)
+
+    def _climb(self, progress: StageProgress, upper: Tier) -> StageProgress:
+        """升到升級鏈的下一級：新的一次、新的一級，重試與自動修的次數都從 0 算起。"""
+        return progress.model_copy(
+            update={
+                "attempt": progress.attempt + 1,
+                "tier": upper,
+                "failures": 0,
+                "fixes": 0,
+                "started_at": self.clock(),
+            }
+        )
 
     def _attempt(
         self,
@@ -772,8 +814,9 @@ class Runner:
         stage_dir = job_dir / "stages" / stage.id / str(attempt)
         stage_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = self.harness.skill_dir(stage.skill)
-        # 種子的素材項目：任務說明的 S1 註腳、補料段認出種子、C3 認出註腳裡的出處都用它
+        # 種子的素材項目：查證段認出種子、任務說明的原文出處、重構段的出處檢查與重疊率都用它
         seed = sources.seed_item(self.data, doc.job.feed.item)
+        original = sources.original(self.data, job_dir, doc.job.feed.item)
         record = provenance.record_path(job_dir, stage.id, attempt)
         if not record.exists():
             # 開 Pi 之前寫：版本鎖在這一次的產出上（NFR-RUN-06）。放在 stages/ 外，
@@ -801,10 +844,12 @@ class Runner:
                 doc.job.goal,
                 self._fix(job_dir, stage, progress),
                 upstream_outputs(job_dir, recipe, stage),
-                sources.job_sources(job_dir, seed),
+                original,
+                seed_in_job=(job_dir / sources.SEED).is_file(),
+                feedback=doc.job.feedback,
             ),
             base_env=self._base_env(),
-            web_search=stage.tavily_credits > 0,
+            web_search=stage.online,
         )
         # 重開 `ef serve` 重跑同一次時鑰匙跟當機前一模一樣：前一個 `ef serve` 被硬殺時
         # 留下、還活著的 Pi 要在登記之前殺掉，不然它的請求與寫檔會被接受（SEAM-12）
@@ -822,6 +867,10 @@ class Runner:
             key,
             skill_dir=skill_dir,
             escalated_from=stage.tier if tier != stage.tier else None,
+            # 配方沒給搜尋額度的段不准上網：閘道拒絕 fetch_url、web_search（#92 審查）
+            online=stage.online,
+            # 這一次最多搜幾次：這一段的額度平分給每一次嘗試（ADR-0022）
+            search_credits=recipe.search_credits_per_attempt(stage),
         )
         try:
             result = self._run_pi(
@@ -883,9 +932,12 @@ class Runner:
             reason = f"{name} 沒回應（{stage.id} 段第 {attempt} 次：{outage.message}）"
             self._stage_event(job_dir, stage.id, attempt, reason)
             return _Tried(stop=JobResult(outcome="failed", reason=reason))
+        too_long = self.board.too_long(key) if self.board is not None else None
+        if problems and too_long is not None:
+            problems = [f"本機模型的上下文放不下：{too_long}", *problems]
         if problems:
             self._stage_event(job_dir, stage.id, attempt, "產出不合格")
-            return _Tried(problems)
+            return _Tried(problems, too_long=too_long is not None)
         try:
             report = hard_checks.run_hard_checks(
                 self.data,
@@ -894,7 +946,7 @@ class Runner:
                 attempt,
                 self.harness.schema_file(stage.skill),
                 self.clock,
-                seed,
+                original,
                 upstream_outputs(job_dir, recipe, stage),
             )
         except hard_checks.ChecksUnavailable as exc:

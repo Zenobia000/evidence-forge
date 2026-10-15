@@ -1,14 +1,14 @@
 """skill 與配方的契約（S0.8）：
 
-- C1、C2 只認叫 `quote`、`fact` 的欄位（`checks/stages.py`）。skill 的 schema 改了欄位名，
-  C5 照樣過、C1／C2 卻變成每次都過；所以這裡讀 schema，斷言兩個欄位真的有宣告、而且是必填。
 - agent 只看得到系統提示裡的 `SKILL.md` 與工單資料夾（ADR-0018）：`SKILL.md` 提到的路徑
   都要是執行器真的放進工單的（`stage_inputs.PROVIDED`）或這一段的產出目錄。
 - skill 的腳本不准寫檔，結果只印到 stdout（PR #55 審查）。
-- 預設配方 `restructure`：整理用本機（NFR-COST-07）。補料與二創用 `strong`（#70、#63），只有補料段有搜尋額度；
-  補料段用 `strong` 是 MVP 暫時偏離 NFR-COST-07（創作者 2026-10-12 決定），所以那條斷言不標它。
-- 分析配方 `analyze`（#78）：brief 在本機、失敗升級 `strong`；查證與找題材用 `strong`、有搜尋額度。
-  `brief.json` 不收逐字引句；`sources.json` 的來源一筆沿用 research 的格式，另外有查證結果與研究題材。
+- 分析配方 `analyze`（#78）：兩段都先用本機，失敗照 `fast`、`strong` 往上升（ADR-0022）；
+  查證與找題材有搜尋額度，夠四次嘗試用。
+  `brief.json` 不收逐字引句；`sources.json` 有來源清單、查證結果與研究題材。
+- 重構配方 `rewrite`（#79）：一段，先用本機、失敗照 `fast`、`strong` 往上升；
+  要從分析工單接著做（`needs: [report.md]`），
+  交 `article.md` 才會跑文章的程式檢查；SKILL.md 不叫 agent 讀原文全文。
 """
 
 import json
@@ -19,8 +19,8 @@ from typing import Any
 import pytest
 
 from evidence_forge.checks.format import check_schema
-from evidence_forge.checks.stages import FACT_FIELD, QUOTE_FIELD
 from evidence_forge.harness import default_harness
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.runner import hard_checks, sources
 from evidence_forge.runner.recipes import load_recipes
 from evidence_forge.runner.stage_inputs import PROVIDED
@@ -38,95 +38,13 @@ def _schema(skill: str) -> dict[str, Any]:
     return loaded
 
 
-def _item_schema(schema: dict[str, Any], array: str) -> dict[str, Any]:
-    assert array in schema["required"]
-    prop: dict[str, Any] = schema["properties"][array]
-    assert prop["type"] == "array"
-    assert prop.get("minItems", 0) >= 1, f"{array} 要至少一筆"
-    items: dict[str, Any] = prop["items"]
-    return items
-
-
-@pytest.mark.promise("FR-DG-01", "FR-VF-01")
-def test_digest_的_schema_每條主張都要有_C1_認得的_quote_欄位() -> None:
-    claim = _item_schema(_schema("digest"), "claims")
-    assert QUOTE_FIELD in claim["required"]
-    assert claim["properties"][QUOTE_FIELD]["type"] == "string"
-    assert claim["properties"][QUOTE_FIELD]["minLength"] >= 1
-
-
-@pytest.mark.promise("FR-CP-01", "FR-VF-01")
-def test_compose_的_schema_每句事實句都要有_C2_認得的_fact_欄位() -> None:
-    fact = _item_schema(_schema("compose"), "facts")
-    assert FACT_FIELD in fact["required"]
-    assert fact["properties"][FACT_FIELD]["type"] == "string"
-    assert fact["properties"][FACT_FIELD]["minLength"] >= 1
-
-
-# research 的產出：合格的最小樣本只有一個來源（額度用完時用手上的收尾，#70 審查第 7 條）
-_RESEARCH_SOURCE = {
+# 來源清單的一筆：查證段交的 sources.json 裡的格式
+_SOURCE = {
     "id": "S2",
     "url": "https://a.example/report",
     "title": "一份報告",
     "why": "補了種子沒有的數字",
 }
-
-
-def _research_output(**changes: str | None) -> dict[str, Any]:
-    """`sources.json` 的樣本：只有一個來源；`changes` 改那一個來源的欄位，值是 None 就拿掉。"""
-    source = dict(_RESEARCH_SOURCE)
-    for name, value in changes.items():
-        if value is None:
-            source.pop(name)
-        else:
-            source[name] = value
-    return {"queries": ["specific query"], "sources": [source]}
-
-
-def _research_failures(payload: object) -> set[str | None]:
-    """不符合 research schema 的位置（JSON pointer）；合格是空的。"""
-    return {
-        entry.location.pointer if entry.location is not None else None
-        for entry in check_schema(payload, _schema("research"), file="sources.json")
-        if entry.status == "fail"
-    }
-
-
-@pytest.mark.promise("FR-RS-01")
-def test_research_的_schema_只找到一個來源也合格() -> None:
-    # 單子是否未完成由 search_shortfalls 決定，不是讓這一段失敗
-    assert _research_failures(_research_output()) == set()
-
-
-@pytest.mark.promise("FR-RS-01")
-@pytest.mark.parametrize(
-    ("payload", "pointer"),
-    [
-        ({"queries": ["specific query"], "sources": []}, "/sources"),
-        (_research_output(id="S1"), "/sources/0/id"),
-        (_research_output(why=None), "/sources/0"),
-        (_research_output(note="多寫的欄位"), "/sources/0"),
-        (_research_output(url="ftp://a.example/report"), "/sources/0/url"),
-    ],
-    ids=["零個來源", "編號寫成S1", "缺why", "多一個欄位", "網址不是http"],
-)
-def test_research_的_schema_擋下不合格的來源清單(
-    payload: dict[str, Any], pointer: str
-) -> None:
-    assert _research_failures(payload) == {pointer}
-
-
-@pytest.mark.promise("FR-DG-02")
-def test_digest_的_schema_文類只收_harness_genres_裡的_12_種() -> None:
-    allowed = set(_schema("digest")["$defs"]["genre_id"]["enum"])
-    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
-    assert len(allowed) == 12
-
-
-def test_compose_的_schema_目標文類跟_harness_genres_一致() -> None:
-    # 新增文類只改了 genres/ 與 digest，compose 的清單沒跟上，C5 會每次都擋
-    allowed = set(_schema("compose")["properties"]["target_genre"]["enum"])
-    assert allowed == {path.stem for path in HARNESS.genres.glob("*.md")}
 
 
 @pytest.mark.promise("NFR-RUN-03")
@@ -219,34 +137,6 @@ def test_skill_的腳本不寫檔_結果只印到_stdout(script: Path) -> None:
     assert writes(script.read_text(encoding="utf-8")) == []
 
 
-def _restructure_stages() -> dict[str, tuple[str, str, str | None, int]]:
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["restructure"]
-    return {
-        s.id: (s.skill, s.tier, s.escalate_to, s.tavily_credits) for s in recipe.stages
-    }
-
-
-@pytest.mark.promise("NFR-COST-07")
-def test_預設配方_restructure_整理在本機() -> None:
-    assert _restructure_stages()["digest"] == ("digest", "local", None, 0)
-
-
-@pytest.mark.promise("FR-RC-01", "FR-RS-01")
-def test_預設配方_restructure_三段_補料與二創暫用_strong_只有補料能搜尋() -> None:
-    # 補料段用 strong 是暫時偏離 NFR-COST-07（PRD 要本機）：創作者 2026-10-12 決定，
-    # 為了品質與工具呼叫可靠度，S1 評估時再跟本機比。二創改回 strong 是 #63
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["restructure"]
-    assert _restructure_stages() == {
-        "digest": ("digest", "local", None, 0),
-        "research": ("research", "strong", None, 12),
-        "compose": ("compose", "strong", None, 0),
-    }
-    assert [s.id for s in recipe.stages] == ["digest", "research", "compose"]
-    assert recipe.on_feedback == "compose"
-    assert (recipe.max_attempts, recipe.auto_fix) == (2, 1)
-    assert recipe.default_goal
-
-
 # --- 分析配方（#78）-----------------------------------------------------------
 
 _BRIEF: dict[str, Any] = {
@@ -302,7 +192,7 @@ def test_brief_的_schema_文類跟_harness_genres_一致() -> None:
 
 _INVESTIGATE: dict[str, Any] = {
     "queries": ["specific query"],
-    "sources": [dict(_RESEARCH_SOURCE)],
+    "sources": [dict(_SOURCE)],
     "fact_checks": [
         {"claim": "K1", "verdict": "supported", "sources": ["S2"]},
         {"claim": "K2", "verdict": "not_found", "sources": []},
@@ -337,7 +227,11 @@ def test_investigate_的_schema_查不到可以沒有來源() -> None:
             "/fact_checks/0/sources/0",
         ),
         (
-            {"fact_checks": [{"claim": "K1", "verdict": "disputed", "sources": ["S2"]}]},
+            {
+                "fact_checks": [
+                    {"claim": "K1", "verdict": "disputed", "sources": ["S2"]}
+                ]
+            },
             "/fact_checks/0/sources",
         ),
         (
@@ -368,28 +262,27 @@ def test_investigate_的_schema_擋下不合格的查證與題材(
     assert pointer in _failures("investigate", payload, "sources.json")
 
 
-def test_investigate_的來源清單格式沿用_research() -> None:
-    # 來源一筆的欄位跟 research 一樣：執行器用同一套規則放正文（runner/sources.py）
-    research = _schema("research")["properties"]["sources"]["items"]
-    investigate = _schema("investigate")["properties"]["sources"]["items"]
-    assert investigate["required"] == research["required"]
-    assert set(investigate["properties"]) == set(research["properties"])
-
-
 @pytest.mark.promise("FR-RC-01", "FR-AN-01", "FR-IV-01", "NFR-COST-07")
-def test_分析配方_brief_在本機失敗升級_查證用_strong_有搜尋額度() -> None:
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+def test_分析配方兩段都先用本機_失敗升_fast_再升_strong_搜尋額度夠四次嘗試() -> None:
+    recipe = load_recipes(HARNESS, TIER_ORDER)["analyze"]
     stages = {
         s.id: (s.skill, s.tier, s.escalate_to, s.tavily_credits, s.output)
         for s in recipe.stages
     }
     assert stages == {
-        "brief": ("brief", "local", "strong", 0, ("brief.md", "brief.json")),
+        "brief": (
+            "brief",
+            "local",
+            ("fast", "strong"),
+            0,
+            ("brief.md", "brief.json"),
+        ),
+        # skill 一次最多搜 6 次 × 4 次嘗試（本機兩次、fast、strong 各一次）
         "investigate": (
             "investigate",
-            "strong",
-            None,
-            12,
+            "local",
+            ("fast", "strong"),
+            24,
             ("report.md", "sources.json"),
         ),
     }
@@ -400,9 +293,53 @@ def test_分析配方_brief_在本機失敗升級_查證用_strong_有搜尋額�
 @pytest.mark.promise("FR-AN-01", "FR-IV-01")
 def test_分析配方兩段都有程式檢查_查證段交來源清單() -> None:
     # 執行器看產出檔名決定跑哪些檢查：配方改了產出名，這裡先壞，不會默默不檢查
-    recipe = load_recipes(HARNESS, ("local", "strong", "max"))["analyze"]
+    recipe = load_recipes(HARNESS, TIER_ORDER)["analyze"]
     brief, investigate = recipe.stages
     assert hard_checks.checked_output(brief) == hard_checks.BRIEF_OUTPUT
     assert hard_checks.checked_output(investigate) == hard_checks.REPORT_OUTPUT
     assert sources.collects_sources(investigate)
     assert not sources.collects_sources(brief)
+
+
+# --- 重構配方（#79）-----------------------------------------------------------
+
+
+@pytest.mark.promise("FR-RC-01", "FR-RW-01", "NFR-COST-07")
+def test_重構配方一段_先用本機_失敗升_fast_再升_strong_不搜尋_要從分析工單拿報告() -> (
+    None
+):
+    recipe = load_recipes(HARNESS, TIER_ORDER)["rewrite"]
+    [stage] = recipe.stages
+    assert (
+        stage.id,
+        stage.skill,
+        stage.tier,
+        stage.escalate_to,
+        stage.tavily_credits,
+    ) == ("rewrite", "rewrite", "local", ("fast", "strong"), 0)
+    assert stage.output == ("article.md", "article.json")
+    assert recipe.needs == ("report.md",)
+    assert recipe.default_goal and recipe.auto_fix >= 1
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_重構段交文章_跑文章的程式檢查_沒過回這一段修() -> None:
+    [stage] = load_recipes(HARNESS, TIER_ORDER)["rewrite"].stages
+    assert hard_checks.checked_output(stage) == hard_checks.ARTICLE_OUTPUT
+    assert hard_checks.fixable(stage)
+    assert not sources.collects_sources(stage)
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_重構的_SKILL_md_不叫_agent_讀原文全文() -> None:
+    text = (HARNESS.skill_dir("rewrite") / "SKILL.md").read_text(encoding="utf-8")
+    assert "input/content.md" not in text
+    for path in ("input/report.md", "input/sources/", "input/headline-punchline.md"):
+        assert path in text
+
+
+@pytest.mark.promise("FR-RW-01")
+def test_rewrite_的_schema_收標題與候選標題() -> None:
+    good = {"title": "標題", "title_candidates": ["標題", "另一個"]}
+    assert _failures("rewrite", good, "article.json") == set()
+    assert _failures("rewrite", {"title": "標題"}, "article.json") == {""}

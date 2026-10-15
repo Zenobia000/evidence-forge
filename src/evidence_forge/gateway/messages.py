@@ -14,7 +14,8 @@
 4. 雲端模型先預留：工單剩下的預算或本月剩下的額度不夠，就回 `budget_exceeded`，不轉送（NFR-COST-01）。
    對話鑰匙（`conv:<對話 id>:<第幾次開>`）用對話的預算與對話的帳本（ADR-0021 §3.3）。
 5. 本機模型一次只服務一個請求，其餘排隊；排隊時間記在 `queue_ms`（NFR-PAR-02）。
-6. 用 `models.yaml` 的值改寫 `model`、`max_tokens`、`thinking` 後轉送；雲端 429 退避重試，
+6. 用 `models.yaml` 的值改寫 `model`、`max_tokens`、`thinking`；本機模型的上下文估起來放不下就
+   不轉送、回請求錯誤（不算後端故障，執行器照升級鏈往上，ADR-0022）。然後轉送；雲端 429 退避重試，
    等待時間也算進 `queue_ms`（NFR-PAR-03）。Ollama 連不上就報錯，不改送付費模型（NFR-RUN-05）。
 7. 串流逐位元組原樣回傳。結束時（不管是完整收到、後端斷線、Pi 斷線）**先寫帳本**，
    再放掉預留與 GPU、最後才關後端連線：關連線可能被取消打斷，帳本不能跟著漏記。
@@ -541,6 +542,16 @@ def add_message_routes(
         # 改寫後真的送出去的本文也存一份（回頭查「後端到底收到什麼」）；
         # 帳本的 request_hash 仍是 Pi 送來的原文，見模組說明
         blobs.put(content)
+        if not alias.fits(content):
+            # 本機模型的上下文放不下：Ollama 會默默截掉提示的前面。不轉送，回請求錯誤。
+            # 這不是後端故障（不記成故障）；告示板記下「放不下」，執行器就不在同一級
+            # 再試，直接升級鏈的下一級（ADR-0022）
+            message = (
+                f"提示太長，{call.tier}（{alias.model}）的上下文 {alias.context_window} "
+                "token 放不下；這一次不送出"
+            )
+            board.report_too_long(call.key, message)
+            return fail(call, "error", 400, message)
 
         if call.price is not None:
             try:

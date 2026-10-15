@@ -9,7 +9,7 @@ ADR-0014 規定錄音與原文會進公開 repo，所以重播 fixture 不能錄
   （加上一篇只在搜尋結果裡、抓不到的候選）。閘道用 `EF_TAVILY_URL` 指到它。
 
 重播時用不到這支：搜尋與抓取都從錄音回放（閘道的重播模式）。
-錄音步驟見 `tests/integration/pipeline/test_restructure_replay.py` 的說明。
+錄音步驟見 `tests/integration/pipeline/test_analyze_replay.py` 的說明（重構段不上網，`test_rewrite_replay.py` 用不到這支）。
 """
 
 import argparse

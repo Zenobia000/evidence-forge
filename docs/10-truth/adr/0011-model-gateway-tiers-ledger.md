@@ -3,6 +3,7 @@
 > **狀態：** 已接受（S1 評估後重新檢視分級） | **日期：** 2026-10-10 | **決策者：** 專案擁有者（與架構 session 討論後拍板）
 > 依 `docs/templates/vibecoding/04_architecture_decision_record_template.md` 撰寫。
 > **修正 ADR-0002**（模型分工）。**修正 ADR-0004** 的實作：冪等改由閘道的請求 hash 快取保證。
+> **後續修正：ADR-0022**——§3.1 多一個等級 `fast`（Claude Haiku 5.5），由低到高 `local` < `fast` < `strong` < `max`；§3.2 配方只用 `local`、`fast`、`strong`，`max` 只留給舊紀錄與手動指定；§3.3 的升級改成升級鏈：本級試滿 `max_attempts` 次，再照 `escalate_to` 的順序一級各試一次。
 
 ## 1. 背景與問題
 

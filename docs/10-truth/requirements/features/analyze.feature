@@ -1,5 +1,5 @@
 Feature: 分析：brief、查證與找題材，交出分析報告
-  # 需求：FR-AN-01、FR-IV-01、NFR-COST-07、NFR-RUN-03｜故事：US-22、US-23｜決策：ADR-0020
+  # 需求：FR-AN-01、FR-IV-01、NFR-COST-07、NFR-RUN-03｜故事：US-22、US-23｜決策：ADR-0020、ADR-0022
   # 搜尋、抓取與額度的情境在 research.feature
 
   @happy-path @smoke
@@ -41,11 +41,21 @@ Feature: 分析：brief、查證與找題材，交出分析報告
     And 重試用完仍失敗，工單結束，結果是「失敗」並寫明原因
 
   @sad-path
-  Scenario: 本機 brief 失敗就升級
-    Given 配方的 brief 段是 local，失敗升級到 strong
+  Scenario: 本機 brief 失敗就一級一級往上
+    Given 配方的 brief 段是 local，升級鏈是 fast、strong
     And brief 段在 local 上兩次都沒通過程式檢查
     When 執行器處理第二次失敗
-    Then 改用 strong 再試，帳本記這次升級
+    Then 改用 fast 再試一次，帳本記這次升級
+    And fast 也沒通過時，改用 strong 再試一次
+    And strong 也沒通過，這一段才算失敗
+
+  @sad-path
+  Scenario: 本機模型的上下文放不下就升級，不被截掉
+    Given 查證段是 local，升級鏈是 fast、strong
+    And 這一次的提示估起來超過本機模型的上下文
+    When agent 呼叫模型
+    Then 閘道不轉送給 Ollama，回請求錯誤
+    And 這一次算不合格，照升級鏈往上，不算後端故障
 
   Scenario: 補查產生新版報告
     Given 對話裡已經有一份報告

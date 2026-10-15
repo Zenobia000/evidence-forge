@@ -44,6 +44,14 @@ class DataDir:
         return self.root / "authors"
 
     @property
+    def headline_rules(self) -> Path:
+        """標題與金句規則：跨角色共用，是創作者自己的寫作系統，不進 repo（FR-RW-02）。
+
+        重構段開工前由執行器放進工單的 `input/`，跟作家設定同一套放法。
+        """
+        return self.root / "style" / "headline-punchline-system.md"
+
+    @property
     def fetch_cache(self) -> Path:
         """抓網頁的快取：`cache/fetch/<網址 hash>/<抓取時間>.json`，跨工單共用、只增不改。"""
         return self.cache / "fetch"

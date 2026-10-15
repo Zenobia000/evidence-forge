@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from evidence_forge.harness import Harness, default_harness
+from evidence_forge.models import TIER_ORDER
 from evidence_forge.runner.recipes import RecipeError, load_recipes
 
 TIERS = ("local",)
@@ -31,7 +32,7 @@ on_feedback: first
 
 @pytest.mark.promise("FR-RC-01")
 def test_repo_裡的配方都讀得進來_含打通用的_echo() -> None:
-    recipes = load_recipes(default_harness(), ("local", "strong", "max"))
+    recipes = load_recipes(default_harness(), TIER_ORDER)
     echo = recipes["echo"]
     assert [(s.id, s.skill, s.tier) for s in echo.stages] == [("echo", "echo", "local")]
 
@@ -51,6 +52,11 @@ def test_新增一份配方檔就讀得到_不改程式(tmp_path: Path) -> None:
         (GOOD.replace("skill: echo", "skill: nope"), "mine.md 的 stages[0].skill"),
         (GOOD.replace("tier: local", "tier: strong"), "mine.md 的 stages[0].tier"),
         (GOOD.replace("tier: local", "tier: huge"), "mine.md 的 stages[0].tier"),
+        # 升級鏈的每一級都要在對照表裡
+        (
+            GOOD.replace("tier: local", "tier: local, escalate_to: [fast, strong]"),
+            "mine.md 的 stages[0].escalate_to",
+        ),
         (GOOD.replace("name: mine", "name: other"), "mine.md 的 name"),
         # 段 id 會拼進工單鑰匙與 stages/<段>/ 路徑；不合格的要在啟動時擋，不是跑到一半才炸
         (GOOD.replace("first", "摘要"), "mine.md 的 stages[0].id"),

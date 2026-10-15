@@ -2,8 +2,11 @@
 
 - `ef new --url <網址> | --text "<內容>" | --file <md|txt|pdf>`：先抓取與抽文字，在
   `inbox/manual/` 寫一個素材項目，開一張排隊中的工單；配方預設 `analyze`（先分析，#78）；可帶 `--goal`、`--recipe`、
-  `--genre`、`--budget-usd`、`--budget-credits`（Tavily credits；沒給就用配方各段的總和）。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
+  `--genre`、`--persona`、`--budget-usd`、`--budget-credits`（Tavily credits；沒給就用配方各段的總和）。同一份素材、同樣的目標已有工單就印那一張的 id，不另開。
   網址讀不到（403、付費牆、robots、內網位址）不開單，結束碼 1，提示改用 `--text` 或 `--file`。
+- `ef new --from <工單> [--persona <角色>] [--genre <文類>] [--goal ...] [--feedback "<一句意見>"]`：
+  從上一張工單接著做，開一張新工單（ADR-0019 §3.6）；配方預設 `rewrite`。從分析工單開是重構，
+  從重構工單開帶 `--feedback` 是再改。角色不存在、上一張單還沒跑完或交不出要的檔，都不開單（結束碼 2）。
 - `ef serve`：常駐程序，裡面有閘道（只綁 127.0.0.1）與執行器（v0.3 §1：S0 先放同一個程序）。
   啟動時與每張單開跑前做開跑前檢查（NFR-RUN-01，含 `harness/pi/` 的 Pi 有沒有裝）；同時最多跑 `--parallel` 張（預設 2）；
   重開後先接著跑上次沒跑完的單（NFR-RUN-04）。`--once` 跑完就結束，被開跑前檢查擋下時結束碼 1。
@@ -42,6 +45,7 @@ from evidence_forge.runner.intake import (
     UploadedFile,
     WebPage,
     open_job,
+    open_job_from,
 )
 from evidence_forge.runner.pi_launch import prepare_agent_dir
 from evidence_forge.runner.preflight import Preflight
@@ -82,15 +86,34 @@ def _credits(value: str) -> int:
 
 def _new(args: argparse.Namespace) -> int:
     recipes = _recipes(_harness(args.harness))
-    recipe = recipes.get(args.recipe)
+    # 從上一張單接著做，預設是重構；投入新素材，預設是分析
+    name = args.recipe or ("rewrite" if args.from_job else "analyze")
+    recipe = recipes.get(name)
     if recipe is None:
         print(
-            f"沒有配方 {args.recipe}（有：{', '.join(sorted(recipes))}）",
+            f"沒有配方 {name}（有：{', '.join(sorted(recipes))}）",
             file=sys.stderr,
         )
         return 2
     data = resolve_data_dir()
     data.ensure()
+    if args.from_job:
+        job = open_job_from(
+            data,
+            recipe,
+            args.from_job,
+            goal=args.goal,
+            now=taipei_now(),
+            persona=args.persona,
+            genre=args.genre,
+            feedback=args.feedback,
+            budget_usd=args.budget_usd,
+            budget_credits=args.budget_credits,
+        )
+        print(job.id)
+        return 0
+    if args.feedback:
+        raise ValueError("--feedback 只用在再改：要跟 --from 一起用")
     try:
         intake = open_job(
             data,
@@ -101,6 +124,7 @@ def _new(args: argparse.Namespace) -> int:
             budget_usd=args.budget_usd,
             budget_credits=args.budget_credits,
             genre=args.genre,
+            persona=args.persona,
         )
     except SourceUnreadable as exc:
         print(
@@ -265,9 +289,20 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--url", help="文章網址（先抓回正文再開單）")
     source.add_argument("--text", help="文章內容")
     source.add_argument("--file", help="Markdown、純文字或 PDF 檔")
+    source.add_argument(
+        "--from",
+        dest="from_job",
+        help="從這張工單接著做（重構、再改）；不投入新素材",
+    )
     new.add_argument("--goal", help="這張工單的目標（沒填就用配方的預設目標）")
-    new.add_argument("--recipe", default="analyze", help="配方名稱（預設 analyze）")
+    new.add_argument(
+        "--recipe", help="配方名稱（預設 analyze；帶 --from 時預設 rewrite）"
+    )
     new.add_argument("--genre", help="目標文類（例：explainer）")
+    new.add_argument(
+        "--persona", help="角色：$EF_DATA/authors/ 底下的資料夾名（預設 me）"
+    )
+    new.add_argument("--feedback", help="再改時對上一版的一句意見（跟 --from 一起用）")
     new.add_argument(
         "--budget-usd", type=float, default=0.5, help="這張工單的預算（美元）"
     )
@@ -303,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         help="對話的 Pi 閒置幾分鐘就關掉（預設 10）；再有訊息時接回同一份紀錄",
     )
     serve.add_argument(
-        "--chat-tier", default="strong", help="對話本身用哪一級模型（預設 strong）"
+        "--chat-tier", default="fast", help="對話本身用哪一級模型（預設 fast）"
     )
     serve.set_defaults(handler=_serve)
 

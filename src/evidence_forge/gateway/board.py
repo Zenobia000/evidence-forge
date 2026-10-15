@@ -9,6 +9,8 @@
   Pi 只看到一個錯誤，結束碼可能還是 0；執行器在 Pi 結束後來這裡問，
   這一段沒交出合格產出又碰到故障，就直接標失敗，不重試也不升級（ADR-0011 §3.3、NFR-RUN-05）。
   每個後端各記各的：模型呼叫成功只說明模型後端好了，不能洗掉 Tavily 的故障。
+- **上下文放不下**：閘道估起來本機模型讀不下這個提示，沒有轉送（ADR-0022）。這不是故障，
+  執行器照樣當成這一次不合格；但同一份輸入在同一級再試也一樣放不下，所以直接升級鏈的下一級。
 
 閘道與執行器在同一個 `ef serve` 程序、不同執行緒，所以上鎖。重開 `ef serve` 就清空——
 重開之後執行器會從所在段重跑，到時候閘道會再擋一次、再記一次。
@@ -45,6 +47,8 @@ class JobBoard:
         self._outages: dict[Principal, dict[str, Outage]] = {}
         # 等待狀態變了要通知誰（對話主機推進度用，#85）
         self._listeners: list[Callable[[str], None]] = []
+        # 段與次 → 閘道擋下的原因（本機上下文放不下）
+        self._too_long: dict[Principal, str] = {}
 
     def listen(self, listener: Callable[[str], None]) -> None:
         """等待狀態一變（開始等、換一種等、等完）就呼叫 `listener(擁有者 id)`。
@@ -123,3 +127,14 @@ class JobBoard:
         with self._lock:
             found = self._outages.get(key)
             return next(iter(found.values()), None) if found else None
+
+    # --- 本機上下文放不下 -------------------------------------------------------
+
+    def report_too_long(self, key: Principal, message: str) -> None:
+        with self._lock:
+            self._too_long.setdefault(key, message)
+
+    def too_long(self, key: Principal) -> str | None:
+        """這一段這一次有沒有提示被擋下，因為本機模型的上下文放不下；有的話回原因。"""
+        with self._lock:
+            return self._too_long.get(key)
