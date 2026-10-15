@@ -35,7 +35,17 @@ QUESTIONS = [
             {"label": "explainer", "description": "把計價方式講清楚", "value": "explainer"},
             {"label": "trend", "description": "兩年內這筆帳會怎麼變", "value": "trend"},
         ],
-    }
+    },
+    # 第 1 關也一定有一張主題卡（ADR-0026 §3.2、#109）
+    {
+        "kind": "theme",
+        "header": "主題",
+        "question": "讀者做決定時最在意哪一個？",
+        "options": [
+            {"label": "工具選型", "description": "讀者要挑工具", "value": "tools"},
+            {"label": "落地導入", "description": "讀者要導入", "value": "adoption"},
+        ],
+    },
 ]
 
 # 第 2 關以後的問題卡：選項不帶文體的 value
@@ -69,11 +79,14 @@ class World:
         return card_id
 
     def submit(self, cid: str, card_id: str, station: int, choice: str = "explainer") -> httpx.Response:
+        """第一張問題卡選 `choice`、附補充；其他的（第 1 關的主題卡）選第一個選項。"""
         state = cards.read_card(self.data, cid, card_id).stations[station - 1]
-        question = next(q.id for q in state.questions if q.current)
+        first, *rest = [q for q in state.questions if q.current]
+        answers = [{"question": first.id, "choice": choice, "note": "就這個"}]
+        answers += [{"question": q.id, "choice": q.options[0].label} for q in rest]
         return httpx.post(
             f"{self.url}/api/conversations/{cid}/cards/{card_id}/stations/{station}/submit",
-            json={"answers": [{"question": question, "choice": choice, "note": "就這個"}]},
+            json={"answers": answers},
             timeout=10,
         )
 
@@ -145,8 +158,9 @@ def test_畫面送出一關_直接寫進決策紀錄_來源是畫面_再通知�
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert [(e["type"], e["source"], e["choice"], e["note"]) for e in body["events"]] == [
-        ("answered", "ui", "explainer", "就這個")
+    assert [(e["type"], e["source"], e["choice"], e.get("note")) for e in body["events"]] == [
+        ("answered", "ui", "explainer", "就這個"),
+        ("answered", "ui", "工具選型", None),
     ]
     assert body["card"]["stations"][0]["status"] == "decided"
     last = body["events"][-1]["n"]
@@ -241,7 +255,7 @@ def test_讀卡_列出這個對話的卡_單張帶完整決策紀錄(world: Worl
 
     assert [c["card_id"] for c in listed["cards"]] == [card_id]
     assert detail["card"]["stations"][0]["decided"] is True
-    assert [e["type"] for e in detail["events"]] == ["questions_proposed", "answered"]
+    assert [e["type"] for e in detail["events"]] == ["questions_proposed", "answered", "answered"]
 
 
 @pytest.mark.promise("FR-UI-13")
@@ -258,7 +272,7 @@ def test_訂閱先拿到每張卡的現況_之後每次變化推_ef_card(world: 
     assert [(e["card_id"], e["card"]["stations"][0]["status"]) for e in snapshots] == [(card_id, "asking")]
     change = next(e for e in got if e["type"] == "ef_card" and e["events"])
     assert change["card_id"] == card_id
-    assert [(e["type"], e["source"]) for e in change["events"]] == [("answered", "ui")]
+    assert [(e["type"], e["source"]) for e in change["events"]] == [("answered", "ui"), ("answered", "ui")]
     assert change["card"]["stations"][0]["status"] == "decided"
     assert isinstance(change["seq"], int)
 

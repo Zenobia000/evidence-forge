@@ -86,6 +86,10 @@ class Desk:
     def recipe_name(self) -> str:
         return self._recipe_name
 
+    @property
+    def rewrite_recipe(self) -> str:
+        return self._rewrite_recipe
+
     def _budget(self, kind: Literal["analysis", "rewrite"]) -> float:
         if self._budget_usd is not None:
             return self._budget_usd

@@ -3,6 +3,7 @@
 其他模組要找這些檔，一律從 `Harness` 拿路徑，不自己拼。
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 主題清單的檔名：跟文體定義放在同一個資料夾（ADR-0026 §3.2）
 THEMES_FILE = "themes.md"
+# 主題清單表格的一列：| `slug` | 說明 |
+_THEME_ROW = re.compile(r"^\|\s*`([a-z0-9-]+)`\s*\|")
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,11 @@ class Harness:
     def themes(self) -> Path:
         """主題清單（ADR-0026 §3.2）：8 個 slug 與一句通用說明。"""
         return self.genres / THEMES_FILE
+
+    def theme_slugs(self) -> frozenset[str]:
+        """主題清單裡的 slug（`themes.md` 表格的第一欄）。"""
+        text = self.themes.read_text(encoding="utf-8")
+        return frozenset(m.group(1) for line in text.splitlines() if (m := _THEME_ROW.match(line)))
 
     def genre_files(self) -> list[Path]:
         """7 種文體的定義檔，依檔名排序。主題清單跟它們放在同一個資料夾，但不是文體，要跳過。"""
