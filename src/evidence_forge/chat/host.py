@@ -23,6 +23,14 @@
 - 送出去但沒送成（ef-tools 的指令丟錯，Pi 發 `extension_error` 卻照樣回成功；或指令被拒）：
   過 `notice_retry_s` 秒再送，同一個 Pi 最多重試 `MAX_NOTICE_RETRIES` 次，之後等下次接回。
 
+**編輯卡（ADR-0025 §3.3）**
+- 創作者在畫面上點的（送出一關、沿用、重問）由這裡直接叫 `cards.py` 寫進決策紀錄（`source: ui`），不經 agent 轉述；
+  閘道的 `/tools/` 沒有這三個，對話的 Pi 叫不到。
+- 寫完排一件事給工作執行緒：對這個對話的 Pi 送 `/ef-card <卡> <最後一筆的 n> <submit|keep|reask> <關>`
+  （Pi 沒開就先開）。ef-tools 放一則 `ef-card` 通知、觸發一輪，agent 讀編輯卡接著往下；同一筆照紀錄去重。
+  沒送成只推一則 `ef_error`，不重試：點選已經記下了，創作者在聊天裡說一句 agent 一樣讀得到。
+- 不管誰寫的（畫面，或閘道替 agent 寫完叫 `card_changed`），都推一則 `ef_card` 給畫面。
+
 **進度**
 - 每次工單有變，算一次 `ef_job` 事件（`progress.py`），跟上次不一樣才推給訂閱這個對話的畫面。
 - 訂閱時先送一份現況（Pi 開著沒有、每張工單的進度），之後只送變化。現況與變化排同一個順序：
@@ -37,6 +45,8 @@
 - `ef_pi`：`{"state": "starting"|"running"|"stopped", "launch", "reason", "busy"}`；`reason` 是
   `idle`（閒置關掉）、`shutdown`（主機關機）、`exited`（Pi 自己結束，帶 `returncode`）。
 - `ef_conversation`：標題變了（`{"title"}`）。
+- `ef_card`：`{"card_id", "events": [這次寫的事件], "card": 編輯卡}`；`events` 的欄位見 `cards.py`，`card` 是 `card.json`
+  的樣子（`cards.CardState`）。訂閱時每張卡先送一則 `events: []` 的現況。畫面照 `card` 整張換掉就好。
 - `ef_error`：`{"message"}`，例如 Pi 開不起來、指令被 Pi 拒絕。
 """
 
@@ -52,7 +62,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from evidence_forge import conversations
+from evidence_forge import cards, conversations
 from evidence_forge.budget import micros_to_usd
 from evidence_forge.chat.pi_rpc import (
     PiExited,
@@ -68,6 +78,7 @@ from evidence_forge.documents import read_job
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.budget import SpendTally
+from evidence_forge.gateway.scope import ToolRejected
 from evidence_forge.harness import Harness
 from evidence_forge.models import Item, Recipe
 from evidence_forge.paths import DataDir
@@ -170,6 +181,8 @@ class _Live:
     notified: set[str] = field(default_factory=set)
     # 送出去、還沒收到回應的通知指令：指令 id → 工單
     notice_ids: dict[str, str] = field(default_factory=dict)
+    # 送出去、還沒收到回應的 /ef-card 指令 id
+    card_notice_ids: set[str] = field(default_factory=set)
     # 這次開的 Pi 每張單重送過幾次
     retries: dict[str, int] = field(default_factory=dict)
     # Pi 正在回答（agent_start 到 agent_settled）
@@ -404,7 +417,15 @@ class ConversationHost:
                     "reason": None,
                     "busy": live.busy if live is not None else False,
                 }
-            for event in [state, *self.jobs(conversation_id)]:
+            snapshot = [
+                state,
+                *self.jobs(conversation_id),
+                *(
+                    _card_event(card.card_id, [], card)
+                    for card in cards.list_cards(self._data, conversation_id)
+                ),
+            ]
+            for event in snapshot:
                 subscription.put(self._stamp(event))
             with self._lock:
                 self._subscribers.setdefault(conversation_id, set()).add(subscription)
@@ -423,6 +444,88 @@ class ConversationHost:
     def stop_conversation(self, conversation_id: str, reason: str = "idle") -> None:
         """關掉這個對話的 Pi（閒置計時器用；測試也用它模擬閒置關掉）。"""
         self._stop(conversation_id, reason)
+
+    # --- 編輯卡（ADR-0025 §3.3） -----------------------------------------------------------
+
+    def list_cards(self, conversation_id: str) -> list[dict[str, Any]]:
+        self._read(conversation_id)
+        return [c.model_dump(mode="json") for c in cards.list_cards(self._data, conversation_id)]
+
+    def card(self, conversation_id: str, card_id: str) -> dict[str, Any]:
+        """一張卡的編輯卡與完整的決策紀錄（決策分頁要列問過的、沒選的）。"""
+        self._read(conversation_id)
+        return {
+            "card": cards.read_card(self._data, conversation_id, card_id).model_dump(mode="json"),
+            "events": cards.read_events(self._data, conversation_id, card_id),
+        }
+
+    def submit_station(
+        self, conversation_id: str, card_id: str, station: object, answers: object
+    ) -> dict[str, Any]:
+        """畫面的「確認並送出這一關」。錯誤丟 `ToolRejected`（帶 HTTP 狀態碼）。"""
+        self._read(conversation_id)
+        written = cards.submit_station(
+            self._data, conversation_id, card_id, station, answers, now=self._clock()
+        )
+        return self._clicked(conversation_id, written, "submit", station)
+
+    def keep_decision(self, conversation_id: str, card_id: str, station: object) -> dict[str, Any]:
+        """畫面的「沿用」。"""
+        self._read(conversation_id)
+        written = cards.keep_decision(self._data, conversation_id, card_id, station, now=self._clock())
+        return self._clicked(conversation_id, written, "keep", station)
+
+    def reask_station(self, conversation_id: str, card_id: str, station: object) -> dict[str, Any]:
+        """畫面的「重問這一關」。"""
+        self._read(conversation_id)
+        written = cards.reask_station(self._data, conversation_id, card_id, station, now=self._clock())
+        return self._clicked(conversation_id, written, "reask", station)
+
+    def card_changed(
+        self, conversation_id: str, card_id: str, events: list[dict[str, Any]]
+    ) -> None:
+        """閘道替對話的 agent 寫了編輯卡（工作台的 `on_card`）：推給畫面。可能在閘道的執行緒上，不做慢的事。"""
+        try:
+            card = cards.read_card(self._data, conversation_id, card_id)
+        except ToolRejected:
+            return
+        self._emit(conversation_id, _card_event(card_id, events, card))
+
+    def _clicked(
+        self, conversation_id: str, written: cards.Written, action: str, station: object
+    ) -> dict[str, Any]:
+        """畫面寫完：推給畫面，再排一則 `/ef-card` 給這個對話的 Pi（工作執行緒送，不讓畫面等 Pi 開起來）。
+
+        推給畫面的卡在推的當下重讀（`card_changed`），不用寫入時算的那一份：agent 剛好接著寫了一筆的話，
+        較舊的那一份不會晚到、蓋掉較新的。畫面另外可以照 `card.events` 丟掉筆數比手上少的。
+        """
+        self.card_changed(conversation_id, written.card_id, written.events)
+        if written.events:
+            last = written.events[-1]["n"]
+            self._enqueue(("card", f"{conversation_id} {written.card_id} {last} {action} {station}"))
+        return {"card": written.card.model_dump(mode="json"), "events": written.events}
+
+    def _deliver_card(self, conversation_id: str, command: str) -> None:
+        """把 `/ef-card …` 送進這個對話的 Pi（沒開就接回）；沒送成告訴畫面，不重試。"""
+        try:
+            with self._conversation_lock(conversation_id):
+                live = self._ensure(conversation_id)
+                with self._lock:
+                    live.pending += 1
+                    live.last_active = self._monotonic()
+                try:
+                    request_id = live.pi.send({"type": "prompt", "message": command})
+                except BaseException:
+                    self._settle_pending(live)
+                    raise
+                with self._lock:
+                    live.card_notice_ids.add(request_id)
+        except Exception as exc:
+            _log.warning("編輯卡的通知沒送到對話 %s", conversation_id, exc_info=True)
+            self._emit(
+                conversation_id,
+                {"type": "ef_error", "message": f"編輯卡的變化已經記下，但沒通知到對話：{exc}"},
+            )
 
     # --- 事件的入口（執行器、告示板、工作台） --------------------------------------------
 
@@ -593,7 +696,9 @@ class ConversationHost:
                     live.hold_until = 0.0
                 elif kind == "response":
                     notice = live.notice_ids.pop(str(record.get("id")), None)
-                    if notice is not None:
+                    card_notice = str(record.get("id")) in live.card_notice_ids
+                    live.card_notice_ids.discard(str(record.get("id")))
+                    if notice is not None or card_notice:
                         # 擴充指令的回應在處理函式跑完之後才來
                         live.pending = max(0, live.pending - 1)
                         if record.get("success"):
@@ -668,6 +773,9 @@ class ConversationHost:
                 elif kind == "retry":
                     for job_id in self._unnotified(value):
                         self._deliver(value, job_id)
+                elif kind == "card":
+                    conversation_id, command = value.split(" ", 1)
+                    self._deliver_card(conversation_id, f"/ef-card {command}")
             except Exception:
                 _log.exception("對話主機處理 %s %s 時出錯", kind, value)
 
@@ -918,3 +1026,7 @@ def _notice_job(message: dict[str, Any]) -> str | None:
     details = message.get("details")
     job_id = details.get("job_id") if isinstance(details, dict) else None
     return job_id if isinstance(job_id, str) else None
+
+
+def _card_event(card_id: str, events: list[dict[str, Any]], card: cards.CardState) -> Event:
+    return {"type": "ef_card", "card_id": card_id, "events": events, "card": card.model_dump(mode="json")}

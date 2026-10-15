@@ -2,8 +2,10 @@
 
 - `POST /tools/<名稱>`：ef-tools 的工具呼叫。段（工單鑰匙）用 `read_file`、`list_files`、
   `write_file`、`fetch_url`、`web_search`、`run_script`；對話（對話鑰匙）只能用 `analyze`、
-  `read_report`、`read_article`、`job_status`、`list_personas`、`rewrite`
-  （`chat_tools.py`、ADR-0021）。兩邊互相拿對方的工具一律 403。
+  `read_report`、`read_article`、`job_status`、`list_personas`、`rewrite`，與編輯卡的
+  `propose_questions`、`record_interpreted_answers`、`add_material`、`read_card`
+  （`chat_tools.py`、ADR-0021、ADR-0025）。兩邊互相拿對方的工具一律 403。
+  畫面才能叫的 `submit_station`、`keep_decision`、`reask_station` 拿任何鑰匙來都 403（對話主機的 API 才有）。
 - `POST /v1/messages`：Pi 的模型請求（Anthropic Messages 格式），見 `messages.py`。
 - `GET /health`、`GET /health/anthropic`：執行器的開跑前檢查用（閘道活著、金鑰有效）。
 
@@ -25,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from evidence_forge.convkey import ConversationKey
 from evidence_forge.gateway import ledger, scope, scripts
-from evidence_forge.gateway.chat_tools import CHAT_TOOLS, ChatTools, Desk
+from evidence_forge.gateway.chat_tools import CHAT_TOOLS, UI_ONLY_TOOLS, ChatTools, Desk
 from evidence_forge.gateway.active import ActiveStages
 from evidence_forge.gateway.board import JobBoard
 from evidence_forge.gateway.config import GatewayConfig, require_active_key
@@ -125,6 +127,9 @@ def create_app(
             raise scope.ToolRejected(400, "請求內容要是 JSON") from None
         if not isinstance(body, dict):
             raise scope.ToolRejected(400, "請求內容要是 JSON 物件")
+        if name in UI_ONLY_TOOLS:
+            # 創作者點的東西只由畫面經對話主機記（ADR-0025 §3.3）：對話的 agent 不能替他點，段更不行
+            raise scope.ToolRejected(403, f"{name} 只有畫面能叫")
         # 對話鑰匙只能用對話的工具；段的工具（讀寫檔、抓網頁、搜尋、跑腳本）只給工單鑰匙（NFR-SEC-02）
         if isinstance(key, ConversationKey):
             if name not in CHAT_TOOLS:

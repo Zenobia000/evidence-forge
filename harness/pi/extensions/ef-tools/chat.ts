@@ -7,6 +7,8 @@
 // - rewrite：從這個對話的一張分析（或上一版重構）開一張重構工單，開了就回，跟 analyze 一樣（#102）。
 //   創作者說「寫第 N 個」時，goal 帶那個題材的標題與角度、suggested_genre 帶報告的建議文類；
 //   genre 只放創作者明說的文類（對不上就不開單）；再改時 feedback 帶創作者的話。
+// - 編輯卡的 propose_questions、record_interpreted_answers、add_material、read_card 與 /ef-card 指令在 cards.ts
+//   （ADR-0025 §3.3），這裡一起註冊。
 // - /ef-job-done <工單 id>：對話主機在工單結束時送進來的指令（不是模型能叫的工具）。
 //   它向閘道問那張單的狀態，用 sendMessage 把一則 ef-job 通知放進對話並叫模型接著回答。
 //   同一張單已經通知過（對話紀錄裡已有那則 ef-job）就什麼都不做，所以主機可以放心重送：
@@ -15,6 +17,7 @@
 // 範圍檢查全部在閘道（gateway/chat_tools.py）：別的對話的工單一律被拒。這裡只轉送。
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerCardTools } from "./cards.ts";
 
 type CallGateway = (tool: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -188,6 +191,8 @@ export function registerChatTools(pi: ExtensionAPI, callGateway: CallGateway): v
       },
     }),
   );
+
+  registerCardTools(pi, callGateway);
 
   pi.registerCommand("ef-job-done", {
     description: "Internal: the chat host reports that a job of this conversation ended.",

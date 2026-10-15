@@ -55,6 +55,7 @@ class Desk:
         budget_usd: float | None = None,
         on_opened: Callable[[str, str], None] | None = None,
         rewrite_recipe: str = "rewrite",
+        on_card: Callable[[str, str, list[dict[str, Any]]], None] | None = None,
     ) -> None:
         """`recipe_name` 是 `analyze` 開的配方、`rewrite_recipe` 是 `rewrite` 開的；
         找不到不擋啟動，開單時才說（`ef serve` 照樣能跑工單）。
@@ -65,6 +66,9 @@ class Desk:
         `on_opened(對話 id, 工單 id)` 在閘道把單記進對話的 `jobs.jsonl` 之後呼叫（`recorded`）：
         對話主機據此馬上推一次進度，單已經跑完就送結束通知。不在開單當下叫：那時主機在 `jobs.jsonl`
         還找不到這張單，跑得快的單結束通知會丟掉。
+
+        `on_card(對話 id, 卡 id, 新事件)` 在閘道替對話的 agent 寫完編輯卡的事件之後呼叫（ADR-0025 §3.3）：
+        對話主機據此推 `ef_card` 給畫面（例如 agent 剛提出的問題卡）。
         """
         self._data = data
         self._recipes = recipes
@@ -74,6 +78,7 @@ class Desk:
         self._budget_usd = budget_usd
         self._on_opened = on_opened
         self._rewrite_recipe = rewrite_recipe
+        self._on_card = on_card
 
     @property
     def recipe_name(self) -> str:
@@ -202,6 +207,13 @@ class Desk:
         """閘道已經把這張單記進對話的 `jobs.jsonl`：通知對話主機（見 `on_opened`）。"""
         if self._on_opened is not None:
             self._on_opened(conversation_id, job_id)
+
+    def card_changed(
+        self, conversation_id: str, card_id: str, events: list[dict[str, Any]]
+    ) -> None:
+        """閘道替對話的 agent 寫了編輯卡的事件：通知對話主機（見 `on_card`）。"""
+        if self._on_card is not None:
+            self._on_card(conversation_id, card_id, events)
 
     def _tidy(self, reason: str) -> str:
         """原因要交給對話的模型：資料目錄的絕對路徑換成相對路徑。"""
