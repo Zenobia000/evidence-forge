@@ -586,8 +586,22 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   chmod +x "$mainr/.githooks/pre-push"
   printf '# 工作副本自己的改動\n' >> "$wt/.githooks/pre-commit"
   tb 0 "git commit -m x" "工作副本：只改自己那份（不會被跑到），比對的是主 checkout 的 HEAD，放行" "" "$wt"
+  cp -p "$mainr/.githooks/pre-commit" "$bt/main-pre-commit.orig"
   printf '# 直接改主 checkout\n' >> "$mainr/.githooks/pre-commit"
   tb 2 "git commit -m x" "工作副本：主 checkout 那份 hook 被改過，擋" "不一樣" "$wt"
+  cp -p "$bt/main-pre-commit.orig" "$mainr/.githooks/pre-commit"
+  # 分支自己 commit 一份 exit 0 的 hook：工作副本的 HEAD 不算數，永遠比主 checkout 的 HEAD
+  git -C "$mainr" config core.hooksPath .githooks
+  printf '#!/bin/sh\nexit 0\n' > "$wt/.githooks/pre-commit"
+  git -C "$wt" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -am disable
+  tb 2 "git commit -m x" "工作副本：分支 commit 了一份 exit 0 的 pre-commit（相對路徑），擋" "主 checkout 的 HEAD" "$wt"
+  # .githooks 本身是符號連結（指到主 checkout 那份，內容一樣）也擋
+  cp -p "$bt/main-pre-commit.orig" "$wt/.githooks/pre-commit"
+  git -C "$wt" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -am restore
+  mv "$wt/.githooks" "$bt/wt-hooks"; ln -s "$mainr/.githooks" "$wt/.githooks"
+  tb 2 "git commit -m x" "工作副本：.githooks 是指到主 checkout 的符號連結，擋" "符號連結" "$wt"
+  rm "$wt/.githooks"; mv "$bt/wt-hooks" "$wt/.githooks"
+  tb 0 "git commit -m x" "工作副本：換回真的資料夾、內容跟主 checkout 的 HEAD 一樣，放行" "" "$wt"
 
   # 守衛 2c：共用 git 資料夾不叫 .git（--separate-git-dir）時，它的上一層不算主 checkout
   sep="$bt/sep"; mkdir -p "$sep/.githooks"
@@ -599,9 +613,9 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   git -C "$sep/work" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false add .githooks
   git -C "$sep/work" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -m hooks
   git -C "$sep/work" config core.hooksPath "$sep/.githooks"
-  tb 2 "git commit -m x" "分開的 git 資料夾：指到 store.git 的上一層（hook 齊全），擋" "只接受" "$sep/work"
+  tb 2 "git commit -m x" "分開的 git 資料夾：指到 store.git 的上一層（hook 齊全），擋" "主 checkout" "$sep/work"
   git -C "$sep/work" config core.hooksPath .githooks
-  tb 0 "git commit -m x" "分開的 git 資料夾：相對路徑（自己的 .githooks）照舊放行" "" "$sep/work"
+  tb 2 "git commit -m x" "分開的 git 資料夾：相對路徑也擋（認不出主 checkout，沒有可信的版本可比對）" "主 checkout" "$sep/work"
 
   # 守衛 2d：hook 要是 commit 進去的那一份（不是符號連結、內容沒改）
   idr="$bt/ident"; mkdir -p "$idr/.githooks"
@@ -624,6 +638,18 @@ if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   tb 2 "GIT_INDEX_FILE=$bt/other-index git commit -m x" "GIT_INDEX_FILE 改道，擋" "改道"
   tb 2 "export GIT_DIR=$plain/.git; git push origin HEAD" "export GIT_DIR 之後 push，擋" "改道"
   tb 0 "GIT_DIR=$plain/.git git status" "改道變數配上不是 commit／push 的指令，不擋"
+  tb 0 "git commit -m 'Document GIT_DIR= behavior'" "改道變數只出現在 -m 訊息（引號裡）：不算，放行"
+
+  # 守衛 2f：同一條指令裡也碰 .githooks/、或環境從看不到的地方來（source／. ／set -a／eval）
+  tb 2 "echo 'exit 0' > .githooks/pre-commit && git commit -m x" "同一條指令先寫 hook 再 commit，擋" "分開跑"
+  tb 2 "cp $bt/x .githooks/pre-push; git push origin HEAD" "同一條指令先 cp 蓋 hook 再 push，擋" "分開跑"
+  tb 2 "chmod -x .githooks/pre-commit && git commit -m x" "同一條指令改 hook 權限再 commit，擋" "分開跑"
+  tb 0 "git commit -m 'explain .githooks/pre-commit'" "只在 -m 訊息裡提到 .githooks：放行"
+  tb 2 "source ./env.sh && git commit -m x" "source 之後 commit，擋" "source"
+  tb 2 ". ./env.sh; git push origin HEAD" "「.」之後 push，擋" "source"
+  tb 2 "set -a; git commit -m x" "set -a 之後 commit，擋" "source"
+  tb 2 "eval 'git commit -m x'" "eval 包著 commit，擋" "eval"
+  tb 0 "set -euo pipefail; git commit -m x" "set -euo pipefail 不是 set -a：放行"
 
   # 守衛 3：把 hook 關掉的寫法
   tb 2 "git -c core.hooksPath=/dev/null commit -m x" "私人內容：-c core.hooksPath= 擋（即使目標有啟用）" "core.hooksPath"

@@ -24,13 +24,19 @@ def _commit_all(repo: Path) -> None:
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
 
 
+REAL_HOOKS = Path(__file__).resolve().parents[2] / ".githooks"
+
+
 def _hook_dir(at: Path) -> Path:
-    """在 `at/.githooks` 放三個可執行的 hook，回傳那個資料夾。"""
+    """在 `at/.githooks` 放這個 repo 真的那三支 hook 的複本（可執行），回傳那個資料夾。
+
+    用真的腳本而不是 `exit 0`：放行的案例要證明的是「真的 hook 會過」，不是「空殼也會過」。
+    """
     hooks = at / ".githooks"
     hooks.mkdir(parents=True)
     for name in ("pre-commit", "commit-msg", "pre-push"):
         hook = hooks / name
-        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.write_bytes((REAL_HOOKS / name).read_bytes())
         hook.chmod(0o755)
     return hooks
 
@@ -290,18 +296,59 @@ def test_工作副本_比對的是主checkout的HEAD_改主checkout那份擋_改
     assert any("pre-commit" in p and "commit 進去的那一份不一樣" in p for p in _check("git commit -m x", wt))
 
 
-def test_共用git資料夾不叫_git_上一層不算主checkout(tmp_path: Path) -> None:
+def test_共用git資料夾不叫_git_認不出主checkout_一律擋(tmp_path: Path) -> None:
     root = tmp_path / "sep"
     work = root / "work"
     _hook_dir(work)
-    _hook_dir(root)  # 「共用 git 資料夾的上一層」那裡也放齊 hook：位置不對，齊了也不行
+    _hook_dir(root)  # 「共用 git 資料夾的上一層」那裡也放齊 hook：它不是 checkout，齊了也不行
     _git(tmp_path, "init", "-q", f"--separate-git-dir={root / 'store.git'}", str(work))
     _commit_all(work)
     _git(work, "config", "core.hooksPath", str(root / ".githooks"))
 
-    assert any("core.hooksPath" in p and "只接受" in p for p in _check("git commit -m x", work))
+    assert any("主 checkout" in p for p in _check("git commit -m x", work))
+    # 自己的 .githooks 也一樣：沒有可信的主 checkout HEAD 可以比對
     _git(work, "config", "core.hooksPath", ".githooks")
-    assert _check("git commit -m x", work) == []
+    assert any("主 checkout" in p for p in _check("git commit -m x", work))
+
+
+def test_工作副本_分支上commit了一份exit0的hook_相對路徑也擋(main_and_worktree: tuple[Path, Path]) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", ".githooks")
+    (wt / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _git(wt, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
+         "-c", "core.hooksPath=/dev/null", "commit", "-q", "-am", "disable")  # fmt: skip
+
+    problems = _check("git commit -m x", wt)
+    assert any("pre-commit" in p and "主 checkout 的 HEAD" in p for p in problems), problems
+
+
+def test_hook資料夾是符號連結就擋_即使內容一樣(hooked: Path) -> None:
+    real = hooked / "real-hooks"
+    (hooked / ".githooks").rename(real)
+    (hooked / ".githooks").symlink_to(real, target_is_directory=True)
+
+    assert any("符號連結" in p for p in _check("git commit -m x", hooked))
+
+
+def test_工作副本_githooks是指到主checkout的符號連結也擋(main_and_worktree: tuple[Path, Path]) -> None:
+    main, wt = main_and_worktree
+    _git(main, "config", "core.hooksPath", ".githooks")
+    for f in (wt / ".githooks").iterdir():
+        f.unlink()
+    (wt / ".githooks").rmdir()
+    (wt / ".githooks").symlink_to(main / ".githooks", target_is_directory=True)
+
+    assert any("符號連結" in p for p in _check("git commit -m x", wt))
+
+
+def test_hooksPath繞過點點或符號連結到可接受的位置_不認(hooked: Path, tmp_path: Path) -> None:
+    _git(hooked, "config", "core.hooksPath", str(hooked / "sub" / ".." / ".githooks"))
+    assert any("只接受" in p for p in _check("git commit -m x", hooked))
+
+    link = tmp_path / "link"
+    link.symlink_to(hooked / ".githooks", target_is_directory=True)
+    _git(hooked, "config", "core.hooksPath", str(link))
+    assert any("只接受" in p for p in _check("git commit -m x", hooked))
 
 
 # ── hook 本身要是 commit 進去的那一份 ───────────────────────────────────
@@ -358,6 +405,67 @@ def test_改道到別的repo的環境變數_commit或push就擋(hooked: Path, cm
 def test_改道環境變數_不是commit或push的指令不擋(hooked: Path) -> None:
     assert _check("GIT_DIR=/tmp/x/.git git status", hooked) == []
     assert _check("MY_GIT_DIR=/tmp/x git commit -m x", hooked) == []
+    assert _check("GIT_DIR=/tmp/x/.git git status && git commit -m x", hooked) == []  # 設在別的指令上
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -m 'Document GIT_DIR= behavior'",
+        'git commit -m "export GIT_INDEX_FILE=x is explained here"',
+        "gh pr create --title t --body 'set GIT_WORK_TREE=. first'",
+    ],
+)
+def test_改道環境變數_只在引號裡的文字不算(hooked: Path, cmd: str) -> None:
+    assert _check(cmd, hooked) == [], cmd
+
+
+# ── 同一條指令裡動 hook、或環境從看不到的地方來 ─────────────────────────
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "echo 'exit 0' > .githooks/pre-commit && git commit -m x",
+        "printf x >.githooks/pre-commit; git commit -m x",
+        "cp /tmp/x .githooks/pre-commit && git commit -m x",
+        "mv /tmp/x .githooks/pre-push; git push origin HEAD",
+        "ln -sf /bin/true .githooks/pre-push && git push origin HEAD",
+        "echo x | tee .githooks/commit-msg && git commit -m x",
+        "sed -i s/exit/true/ .githooks/pre-push && git push origin HEAD",
+        "chmod -x .githooks/pre-commit && git commit -m x",
+        "git checkout HEAD~1 -- .githooks && git commit -m x",
+        "bash -c 'cp /tmp/x .githooks/pre-commit' && git commit -m x",
+        "git commit -m x > .githooks/pre-commit",
+    ],
+)
+def test_同一條指令裡也碰githooks_擋(hooked: Path, cmd: str) -> None:
+    assert any(".githooks/" in p and "分開跑" in p for p in _check(cmd, hooked)), cmd
+
+
+def test_同一條指令裡碰githooks_沒有commit或push就不管_訊息裡提到也不算(hooked: Path) -> None:
+    assert _check("cat .githooks/pre-commit", hooked) == []
+    assert _check("git commit -m 'explain .githooks/pre-commit'", hooked) == []
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "source ./env.sh && git commit -m x",
+        ". ./env.sh; git push origin HEAD",
+        "set -a; git commit -m x",
+        "set -o allexport && git push origin HEAD",
+        "eval 'git commit -m x'",
+        "bash -c 'source ./env.sh && git commit -m x'",
+    ],
+)
+def test_同一條指令裡有source或set_a或eval_擋(hooked: Path, cmd: str) -> None:
+    assert any("source" in p and "eval" in p for p in _check(cmd, hooked)), cmd
+
+
+def test_source或set_a_沒有commit或push就不管(hooked: Path) -> None:
+    assert _check("source ./env.sh && git status", hooked) == []
+    assert _check("set -euo pipefail; git commit -m x", hooked) == []
 
 
 def test_把hook關掉的寫法都擋(hooked: Path) -> None:
